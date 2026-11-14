@@ -212,17 +212,18 @@ impl Arr {
         for mem in &members {
             let real: Vec<usize> = mem.iter().copied().filter(|&i| !events[i].artificial).collect();
             let pool = if real.is_empty() { mem.clone() } else { real };
-            let rep = *pool.iter().min_by(|&&a, &&b| events[a].key.cmp(&events[b].key)).unwrap();
             let mut keys: Vec<VertexKey> = pool.iter().map(|&i| events[i].key.clone()).collect();
             keys.sort();
             keys.dedup();
+            let canon = VertexKey::canonical(&keys).cloned().unwrap();
+            let rep = *pool.iter().find(|&&i| events[i].key == canon).unwrap();
             let mut incs = Vec::new();
             for &i in mem {
                 incs.extend(events[i].inc.iter().copied());
             }
             nodes.push(Node {
                 uv: events[rep].uv,
-                key: keys[0].clone(),
+                key: canon,
                 keys,
                 incs,
                 artificial: mem.iter().all(|&i| events[i].artificial),
@@ -648,23 +649,33 @@ impl Glued {
 
     /// Glue an arrangement. `guard`: apply the topology guard (output
     /// stage); without it every seam between inside cells dissolves
-    /// (patch identity).
+    /// (patch identity). `forced`: glued edges removed by edits (always
+    /// dissolved; indices from a previous build of the same arrangement).
     pub fn build(arr: &Arr, guard: bool) -> Glued {
-        // Nodes by key.
-        let mut by_key: HashMap<VertexKey, usize> = HashMap::new();
+        Self::build_with(arr, guard, &[])
+    }
+
+    pub fn build_with(arr: &Arr, guard: bool, forced: &[usize]) -> Glued {
+        // Nodes sharing any key are the same glued node (seam copies).
+        let mut uf = Uf::new(arr.nodes.len());
+        let mut first: HashMap<&VertexKey, usize> = HashMap::new();
+        for (i, nd) in arr.nodes.iter().enumerate() {
+            for k in &nd.keys {
+                match first.get(k) {
+                    Some(&j) => uf.union(i, j),
+                    None => {
+                        first.insert(k, i);
+                    }
+                }
+            }
+        }
+        let mut root_g: HashMap<usize, usize> = HashMap::new();
         let mut gnodes: Vec<GNode> = Vec::new();
         let mut node_g = vec![0usize; arr.nodes.len()];
         for (i, nd) in arr.nodes.iter().enumerate() {
-            let g = *by_key.entry(nd.key.clone()).or_insert_with(|| {
-                gnodes.push(GNode {
-                    key: nd.key.clone(),
-                    keys: vec![],
-                    uv: nd.uv,
-                    incs: vec![],
-                    seam_rel: false,
-                    artificial: true,
-                    nodes: vec![],
-                });
+            let r = uf.find(i);
+            let g = *root_g.entry(r).or_insert_with(|| {
+                gnodes.push(GNode { key: nd.key.clone(), keys: vec![], uv: nd.uv, incs: vec![], seam_rel: false, artificial: true, nodes: vec![] });
                 gnodes.len() - 1
             });
             node_g[i] = g;
@@ -678,6 +689,9 @@ impl Glued {
         for g in &mut gnodes {
             g.keys.sort();
             g.keys.dedup();
+            if let Some(k) = VertexKey::canonical(&g.keys) {
+                g.key = k.clone();
+            }
             if g.nodes.len() > 1 {
                 g.seam_rel = true;
             }
@@ -795,6 +809,18 @@ impl Glued {
             uf
         };
         let mut dissolved = vec![false; ne];
+        for &e in forced {
+            if e >= ne {
+                continue;
+            }
+            // A removed line lying on a seam leaves the seam behind, which
+            // the guard then dissolves or keeps.
+            let seam = gl.gedges[e].chains.iter().find_map(|&c| arr.chains[c].seam);
+            match seam {
+                Some((dir, _)) => gl.gedges[e].owner = Owner::Seam(dir),
+                None => dissolved[e] = true,
+            }
+        }
         if !guard {
             for e in cand(&gl, None) {
                 dissolved[e] = true;
@@ -838,6 +864,13 @@ impl Glued {
                         *b.entry(uf.find(c)).or_default() += 1;
                     }
                 }
+                if std::env::var("NT_DEBUG_GUARD").is_ok() {
+                    let mut roots: Vec<_> = chi.keys().copied().collect();
+                    roots.sort();
+                    for r in roots {
+                        eprintln!("guard dir {dir}: comp {r} chi {} b {}", chi[&r], b.get(&r).copied().unwrap_or(0));
+                    }
+                }
                 for &e in &c {
                     let Some(a) = gl.left[e * 2] else { continue };
                     let r = uf.find(a);
@@ -846,6 +879,33 @@ impl Glued {
                     if x == 2 - bb {
                         dissolved[e] = true;
                     }
+                }
+            }
+        }
+        if guard {
+            // A region bordering both sides of a kept seam would wrap a full
+            // period across it, leaving only polygons that circle the
+            // surface; keep the other seam through such a region too.
+            let mut uf = comps(&gl, &dissolved);
+            let mut wrap_dirs: HashMap<usize, Vec<u8>> = HashMap::new();
+            for e in 0..ne {
+                if dissolved[e] {
+                    continue;
+                }
+                if let (Owner::Seam(d), Some(a), Some(b)) = (gl.gedges[e].owner, gl.left[e * 2], gl.left[e * 2 + 1])
+                    && uf.find(a) == uf.find(b)
+                {
+                    wrap_dirs.entry(uf.find(a)).or_default().push(d);
+                }
+            }
+            for e in 0..ne {
+                if !dissolved[e] {
+                    continue;
+                }
+                if let (Owner::Seam(d), Some(a)) = (gl.gedges[e].owner, gl.left[e * 2])
+                    && wrap_dirs.get(&uf.find(a)).is_some_and(|ds| ds.iter().any(|x| *x != d))
+                {
+                    dissolved[e] = false;
                 }
             }
         }

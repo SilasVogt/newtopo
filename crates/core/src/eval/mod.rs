@@ -221,6 +221,7 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         }
     }
     // 3. Final arrangements.
+    #[allow(unused_mut)]
     let mut faces: Vec<FaceRes> = Vec::with_capacity(nf);
     for f in ctx.topo.face_ids() {
         let (arr, glued) = face::stage3(ctx, ctx.face(f), &s1s[f.idx()], &per_face[f.idx()]);
@@ -228,10 +229,43 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     }
     // 4. Assembly.
     let mut mesh = assemble::assemble(ctx, doc, body, &faces);
-    let pole_target = pole_targets(ctx, &mesh);
-    // 5. Edits.
+    let mut pole_target = pole_targets(ctx, &mesh);
+    // 5a. Removals of generated edges happen on the glued face graphs so the
+    // topology guard can keep (re-insert) seams where a removal would make
+    // a region that isn't a disk with holes (SPEC §4.6 step 6).
+    let edits: Vec<&crate::doc::EditEntry> = doc.edits.iter().filter(|e| e.edit.body() == body).collect();
+    let mut done_at_glue: HashSet<u32> = HashSet::new();
+    let mut forced: Vec<Vec<usize>> = vec![vec![]; faces.len()];
+    for ed in &edits {
+        if let Edit::RemoveEdge { edge, .. } = &ed.edit
+            && matches!(edge, EdgeKey::Line { .. })
+            && let Some(h) = mesh.find_edge(edge, &pole_target)
+        {
+            let he = &mesh.he[h];
+            if he.src.is_empty() {
+                continue;
+            }
+            for &(fi, g) in &he.src {
+                forced[fi].push(g);
+            }
+            done_at_glue.insert(ed.id);
+        }
+    }
+    if !done_at_glue.is_empty() {
+        for (fi, fr) in faces.iter_mut().enumerate() {
+            if !forced[fi].is_empty() {
+                fr.glued = arr::Glued::build_with(&fr.arr, true, &forced[fi]);
+            }
+        }
+        mesh = assemble::assemble(ctx, doc, body, &faces);
+        pole_target = pole_targets(ctx, &mesh);
+    }
+    // 5b. Remaining edits in order.
     let mut hard: HashMap<EdgeKey, bool> = HashMap::new();
-    for ed in doc.edits.iter().filter(|e| e.edit.body() == body) {
+    for ed in &edits {
+        if done_at_glue.contains(&ed.id) {
+            continue;
+        }
         let res = apply_edit(ctx, &mut mesh, &pole_target, &ed.edit, &mut hard);
         if let Err(reason) = res {
             ev.dormant.push(ed.id);
@@ -250,6 +284,29 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     }
     // 7. Auto-fill.
     let fan = if doc.settings.autofill { bridge::autofill_all(ctx, &mut mesh, &pole_target) } else { HashSet::new() };
+    // UV orientation check of every final polygon (the reliable flip test
+    // for polygons that span a lot of curvature).
+    for (r, walks) in mesh.all_region_walks() {
+        if !mesh.regions[r].alive || walks.len() != 1 {
+            continue;
+        }
+        let chart = bridge::chart_for(ctx, &mesh, r, &walks);
+        if matches!(chart, bridge::Chart::Plane { .. }) {
+            continue;
+        }
+        let fidf = |v: usize| mesh.final_v(v, &pole_target);
+        let g = bridge::walk_geom(ctx, &mesh, &chart, &walks[0], &fidf);
+        // Exported edges are straight: test the vertex polygon.
+        let poly: Vec<DVec2> = g.occ.iter().map(|o| o.d).collect();
+        if geom2::signed_area(&poly) <= 0.0 {
+            ev.internal.push(Issue {
+                kind: IssueKind::Flipped,
+                message: format!("polygon reversed in its UV domain (face {})", mesh.regions[r].face),
+                polygon: None,
+                vertices: vec![],
+            });
+        }
+    }
     // 8. Emit.
     ev.mesh = emit::emit(ctx, body, &mesh, &pole_target, &hard, doc.settings.sharp_angle_deg, &fan);
     ev

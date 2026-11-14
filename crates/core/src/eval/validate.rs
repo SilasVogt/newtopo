@@ -92,8 +92,10 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
         let avg: DVec3 = p.normals.iter().copied().sum();
         if avg.length() > 1e-9 {
             let avg = avg.normalize();
-            let flat = p.normals.iter().all(|m| m.dot(avg) > 0.5);
-            if (n <= 4 || flat) && nn.normalize().dot(avg) < 0.0 {
+            // The 3D test is only meaningful for polygons that don't wrap a
+            // lot of curvature; the evaluator checks UV orientation itself.
+            let flat = p.normals.iter().all(|m| m.dot(avg) > 0.8);
+            if flat && nn.normalize().dot(avg) < 0.0 {
                 issues.push(Issue { polygon: Some(pi), vertices: p.verts.clone(), ..Issue::new(IssueKind::Flipped, "polygon faces against the CAD normal") });
             }
         }

@@ -462,7 +462,42 @@ pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeI
             Chart::Face { sign, .. } => [DVec2::new(*sign, 0.0), DVec2::new(0.0, 1.0)],
             Chart::Plane { .. } => [DVec2::X, DVec2::Y],
         };
-        let res = fill_polygon(&FillInput { uv: &uv, pos: &pos, rank: &rank, iso_dirs: iso });
+        let mut res = fill_polygon(&FillInput { uv: &uv, pos: &pos, rank: &rank, iso_dirs: iso });
+        // Diagonals must not duplicate an edge that already joins the same
+        // two vertices elsewhere (that would be non-manifold).
+        let n = g.occ.len();
+        let joined: HashSet<(usize, usize)> = mesh
+            .alive_he()
+            .map(|h| {
+                let (a, b) = (mesh.final_v(mesh.he[h].from, pole_target), mesh.final_v(mesh.he[h].to, pole_target));
+                (a.min(b), a.max(b))
+            })
+            .collect();
+        let bad = |polys: &[Vec<u32>]| {
+            polys.iter().any(|p| {
+                (0..p.len()).any(|k| {
+                    let (a, b) = (p[k] as usize, p[(k + 1) % p.len()] as usize);
+                    if b == (a + 1) % n || a == (b + 1) % n {
+                        return false;
+                    }
+                    let (fa, fb) = (g.occ[a].fid, g.occ[b].fid);
+                    fa == fb || joined.contains(&(fa.min(fb), fa.max(fb)))
+                })
+            })
+        };
+        if bad(&res.polys) {
+            let forbid: HashSet<(usize, usize)> = (0..n)
+                .flat_map(|a| (0..n).map(move |b| (a, b)))
+                .filter(|&(a, b)| a < b && (g.occ[a].fid == g.occ[b].fid || joined.contains(&(g.occ[a].fid.min(g.occ[b].fid), g.occ[a].fid.max(g.occ[b].fid)))))
+                .collect();
+            match ear_fill(&uv, &forbid) {
+                Some(p) => {
+                    res.polys = p;
+                    res.method = "ear-uv";
+                }
+                None => continue,
+            }
+        }
         if res.method == "fan" {
             fan.insert(r);
         }
@@ -500,8 +535,8 @@ fn apply_fill(mesh: &mut HMesh, r: usize, walk: &[usize], g: &WalkGeom, chart: &
                 ruv.reverse();
                 let rp3 = p3.as_ref().map(|v: &Vec<DVec3>| v.iter().rev().copied().collect());
                 let h = mesh.he.len();
-                mesh.he.push(super::assemble::HE { from: oa.v, to: ob.v, twin: Some(h + 1), next: h, region, owner: Owner::Fill, face, uv, p3, alive: true });
-                mesh.he.push(super::assemble::HE { from: ob.v, to: oa.v, twin: Some(h), next: h + 1, region, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true });
+                mesh.he.push(super::assemble::HE { from: oa.v, to: ob.v, twin: Some(h + 1), next: h, region, owner: Owner::Fill, face, uv, p3, alive: true, src: vec![] });
+                mesh.he.push(super::assemble::HE { from: ob.v, to: oa.v, twin: Some(h), next: h + 1, region, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true, src: vec![] });
                 diag.insert((a, b), h);
                 diag.insert((b, a), h + 1);
                 h
@@ -516,4 +551,72 @@ fn apply_fill(mesh: &mut HMesh, r: usize, walk: &[usize], g: &WalkGeom, chart: &
     for (a, b) in new_next {
         mesh.he[a].next = b;
     }
+}
+
+/// Ear clipping in the domain that never uses a forbidden diagonal, then
+/// greedy pairing of adjacent triangles into strictly convex quads.
+fn ear_fill(uv: &[DVec2], forbid: &HashSet<(usize, usize)>) -> Option<Vec<Vec<u32>>> {
+    let n = uv.len();
+    let ok = |a: usize, b: usize| !forbid.contains(&(a.min(b), a.max(b)));
+    let orient = |a: usize, b: usize, c: usize| super::geom2::orient(uv[a], uv[b], uv[c]);
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+    while idx.len() > 3 {
+        let m = idx.len();
+        let mut best: Option<(f64, usize)> = None;
+        for k in 0..m {
+            let (a, b, c) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
+            if orient(a, b, c) <= 0.0 || !ok(a, c) {
+                continue;
+            }
+            let ear = idx.iter().all(|&q| q == a || q == b || q == c || !(orient(a, b, q) >= 0.0 && orient(b, c, q) >= 0.0 && orient(c, a, q) >= 0.0));
+            if !ear {
+                continue;
+            }
+            let q = orient(a, b, c) / ((uv[b] - uv[a]).length_squared() + (uv[c] - uv[b]).length_squared() + (uv[a] - uv[c]).length_squared()).max(1e-300);
+            if best.is_none_or(|(bq, _)| q > bq) {
+                best = Some((q, k));
+            }
+        }
+        let (_, k) = best?;
+        let m = idx.len();
+        tris.push([idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]]);
+        idx.remove(k);
+    }
+    tris.push([idx[0], idx[1], idx[2]]);
+    let mut used = vec![false; tris.len()];
+    let mut out: Vec<Vec<u32>> = Vec::new();
+    for i in 0..tris.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let mut quad = None;
+        for j in i + 1..tris.len() {
+            if used[j] {
+                continue;
+            }
+            let (t1, t2) = (tris[i], tris[j]);
+            for e in 0..3 {
+                let (a, b) = (t1[e], t1[(e + 1) % 3]);
+                if let Some(f) = (0..3).find(|&f| t2[f] == b && t2[(f + 1) % 3] == a) {
+                    let q = [a, t2[(f + 2) % 3], b, t1[(e + 2) % 3]];
+                    if (0..4).all(|k| orient(q[k], q[(k + 1) % 4], q[(k + 2) % 4]) > 0.0) {
+                        quad = Some((j, q));
+                    }
+                }
+            }
+            if quad.is_some() {
+                break;
+            }
+        }
+        match quad {
+            Some((j, q)) => {
+                used[j] = true;
+                out.push(q.iter().map(|&x| x as u32).collect());
+            }
+            None => out.push(tris[i].iter().map(|&x| x as u32).collect()),
+        }
+    }
+    Some(out)
 }

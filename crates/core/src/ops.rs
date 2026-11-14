@@ -90,6 +90,13 @@ pub enum Op {
         body: Option<BodyId>,
         edge: EdgeKey,
     },
+    /// Remove several generated edges as one step (a selection + Delete,
+    /// SPEC §6.7); only the final result has to validate.
+    RemoveEdges {
+        #[serde(default)]
+        body: Option<BodyId>,
+        edges: Vec<EdgeKey>,
+    },
     /// SPEC §6.10. `confirmed` must be true (the UI asks first).
     RemoveCadEdge {
         #[serde(default)]

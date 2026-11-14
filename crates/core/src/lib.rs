@@ -9,6 +9,7 @@ pub mod mesh;
 pub mod ops;
 pub mod rename;
 pub mod scene;
+pub mod tools;
 
 pub use doc::Document;
 pub use mesh::{MeshStats, OutputMesh};

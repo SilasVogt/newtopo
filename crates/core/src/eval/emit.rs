@@ -28,6 +28,14 @@ pub fn emit(
     let mut polys: Vec<(Vec<(usize, usize)>, usize)> = Vec::new();
     for r in regions {
         for w in &walks[&r] {
+            if std::env::var("NT_DEBUG_EMIT").is_ok() {
+                for k in 0..w.len() {
+                    let (h, n) = (w[k], w[(k + 1) % w.len()]);
+                    if mesh.he[h].to != mesh.he[n].from {
+                        eprintln!("emit: broken walk in region {r}: he {h} {:?}->{:?} owner {:?} then he {n} from {:?} owner {:?}", mesh.he[h].from, mesh.he[h].to, mesh.he[h].owner, mesh.he[n].from, mesh.he[n].owner);
+                    }
+                }
+            }
             let mut corners: Vec<(usize, usize)> = w.iter().map(|&h| (fv(mesh.he[h].from), h)).collect();
             // Remove consecutive duplicates (cyclic).
             let mut out: Vec<(usize, usize)> = Vec::new();

@@ -46,6 +46,8 @@ pub struct HE {
     /// Explicit 3D path (chords across faces); else derived from `uv`.
     pub p3: Option<Vec<DVec3>>,
     pub alive: bool,
+    /// Glued edges (face index, gedge) this half-edge was built from.
+    pub src: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Debug)]
@@ -286,7 +288,8 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             let fg = ctx.face(faces[fi].face);
             Anchor::Face { face: faces[fi].face, uv: fg.wrap(faces[fi].glued.gnodes[g].uv) }
         });
-        verts.push(GVert { key: keys[0].clone(), keys, anchor, pole, pos: DVec3::ZERO, alive: true });
+        let key = VertexKey::canonical(&keys).cloned().unwrap();
+        verts.push(GVert { key, keys, anchor, pole, pos: DVec3::ZERO, alive: true });
     }
     // 3. Seam-only drops.
     let mut seam_rel = vec![false; verts.len()];
@@ -302,7 +305,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 0 => true,
                 2 => {
                     let (a, b) = (fr.glued.gedges[es[0]].owner, fr.glued.gedges[es[1]].owner);
-                    a == b && !matches!(a, Owner::Seam(_) | Owner::Fill)
+                    a == b && !matches!(a, Owner::Fill)
                 }
                 _ => false,
             };
@@ -625,6 +628,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
         l.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
     // 5. Walks → half-edges.
+    compute_positions(ctx, &mut verts);
     let mut mesh = HMesh { verts, he: vec![], regions: vec![], key_index: HashMap::new() };
     for (fi, fr) in faces.iter().enumerate() {
         let gl = &fr.glued;
@@ -634,7 +638,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             mesh.regions.push(Region { face: fr.face, alive: true, multi: false });
             for w in walks {
                 // Items: (vertex, uv) and segments between them.
-                let mut segs: Vec<(usize, usize, Owner, Vec<DVec2>)> = Vec::new();
+                let mut segs: Vec<(usize, usize, Owner, Vec<DVec2>, Vec<usize>)> = Vec::new();
                 for &gh in w {
                     let ge = &gl.gedges[gh / 2];
                     let fwd = gh % 2 == 0;
@@ -688,6 +692,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         Owner::Cad(e) => ereg.get(&e),
                         o => lreg.get(&(fi, o)),
                     };
+                    let verts_ref = &mesh.verts;
                     let sub = |v: usize, at: f64| -> usize {
                         if !dropped[v] {
                             return v;
@@ -703,7 +708,8 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                             {
                                 d = d.min((t - at + p).abs()).min((t - at - p).abs());
                             }
-                            if d <= margin.max(1e-9 * span.max(1e-12)) {
+                            let same_place = (verts_ref[w].pos - verts_ref[v].pos).length() <= tol;
+                            if d <= margin.max(1e-9 * span.max(1e-12)) || same_place {
                                 return w;
                             }
                         }
@@ -729,7 +735,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         }
                     }
                     for (a, b, path) in pieces {
-                        segs.push((a, b, ge.owner, path));
+                        segs.push((a, b, ge.owner, path, vec![gh / 2]));
                     }
                 }
                 // Merge across dropped vertices.
@@ -742,11 +748,12 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 } else {
                     continue;
                 }
-                let mut merged: Vec<(usize, usize, Owner, Vec<DVec2>)> = Vec::new();
-                for (a, b, o, path) in segs {
+                let mut merged: Vec<(usize, usize, Owner, Vec<DVec2>, Vec<usize>)> = Vec::new();
+                for (a, b, o, path, src) in segs {
                     if let Some(last) = merged.last_mut()
                         && dropped[a]
                     {
+                        last.4.extend(src);
                         let end = *last.3.last().unwrap();
                         let shifted: Vec<DVec2> = {
                             let s = fg.lift_near(path[0], end) - path[0];
@@ -756,7 +763,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         last.1 = b;
                         continue;
                     }
-                    merged.push((a, b, o, path));
+                    merged.push((a, b, o, path, src));
                 }
                 // Drop zero-length self segments.
                 merged.retain(|s| !(s.0 == s.1 && super::geom2::poly_len(&s.3.iter().map(|p| fg.m(*p)).collect::<Vec<_>>()) <= fg.eps));
@@ -773,8 +780,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 }
                 let base = mesh.he.len();
                 let n = merged.len();
-                for (k, (a, b, o, path)) in merged.into_iter().enumerate() {
+                for (k, (a, b, o, path, src)) in merged.into_iter().enumerate() {
                     mesh.he.push(HE {
+                        src: src.into_iter().map(|g| (fi, g)).collect(),
                         from: a,
                         to: b,
                         twin: None,

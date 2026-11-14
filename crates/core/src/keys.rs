@@ -74,6 +74,20 @@ pub enum VertexKey {
 }
 
 impl VertexKey {
+    /// Transient keys (crossings of a seam) lose to any other key naming
+    /// the same vertex.
+    pub fn is_seam_crossing(&self) -> bool {
+        matches!(
+            self,
+            VertexKey::OnBoundary { on: EdgeOrSplit::Seam(..), .. } | VertexKey::SplitEnd { on: EdgeOrSplit::Seam(..), .. }
+        )
+    }
+
+    /// Pick the canonical key among aliases: the smallest non-seam key.
+    pub fn canonical(keys: &[VertexKey]) -> Option<&VertexKey> {
+        keys.iter().filter(|k| !k.is_seam_crossing()).min().or_else(|| keys.iter().min())
+    }
+
     /// True for keys anchored to CAD topology (used by collapse priority).
     pub fn is_cad(&self) -> bool {
         matches!(self, VertexKey::Cad(_) | VertexKey::Pole(..))

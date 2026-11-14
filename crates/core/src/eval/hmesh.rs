@@ -282,8 +282,8 @@ impl HMesh {
         let mut ruv = uv.clone();
         ruv.reverse();
         let rp3 = p3.as_ref().map(|v| v.iter().rev().copied().collect());
-        self.he.push(HE { from: x, to: y, twin: Some(cr), next: hy, region: r, owner: Owner::Fill, face, uv, p3, alive: true });
-        self.he.push(HE { from: y, to: x, twin: Some(c), next: hx, region: r, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true });
+        self.he.push(HE { from: x, to: y, twin: Some(cr), next: hy, region: r, owner: Owner::Fill, face, uv, p3, alive: true, src: vec![] });
+        self.he.push(HE { from: y, to: x, twin: Some(c), next: hx, region: r, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true, src: vec![] });
         self.he[px].next = c;
         self.he[py].next = cr;
         c
