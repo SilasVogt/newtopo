@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280" width="400" height="280" role="img"><title>Cut: a path of points across three faces</title><style>
+svg{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#c9d0d6}
+@media (prefers-color-scheme:light){svg{--lo:#6b7883;--hi:#e3e8ec;--cad:#20272d;--ln:#0b72b5;--fe:#b0620c;--edge:#e9edf0;--edge-q:#0b72b5;--soup:#3a434b}}
+.l0{--f:color-mix(in oklab,var(--hi) 0%,var(--lo))}.l1{--f:color-mix(in oklab,var(--hi) 4%,var(--lo))}.l2{--f:color-mix(in oklab,var(--hi) 8%,var(--lo))}.l3{--f:color-mix(in oklab,var(--hi) 12%,var(--lo))}.l4{--f:color-mix(in oklab,var(--hi) 17%,var(--lo))}.l5{--f:color-mix(in oklab,var(--hi) 21%,var(--lo))}.l6{--f:color-mix(in oklab,var(--hi) 25%,var(--lo))}.l7{--f:color-mix(in oklab,var(--hi) 29%,var(--lo))}.l8{--f:color-mix(in oklab,var(--hi) 33%,var(--lo))}.l9{--f:color-mix(in oklab,var(--hi) 38%,var(--lo))}.l10{--f:color-mix(in oklab,var(--hi) 42%,var(--lo))}.l11{--f:color-mix(in oklab,var(--hi) 46%,var(--lo))}.l12{--f:color-mix(in oklab,var(--hi) 50%,var(--lo))}.l13{--f:color-mix(in oklab,var(--hi) 54%,var(--lo))}.l14{--f:color-mix(in oklab,var(--hi) 58%,var(--lo))}.l15{--f:color-mix(in oklab,var(--hi) 62%,var(--lo))}.l16{--f:color-mix(in oklab,var(--hi) 67%,var(--lo))}.l17{--f:color-mix(in oklab,var(--hi) 71%,var(--lo))}.l18{--f:color-mix(in oklab,var(--hi) 75%,var(--lo))}.l19{--f:color-mix(in oklab,var(--hi) 79%,var(--lo))}.l20{--f:color-mix(in oklab,var(--hi) 83%,var(--lo))}.l21{--f:color-mix(in oklab,var(--hi) 88%,var(--lo))}.l22{--f:color-mix(in oklab,var(--hi) 92%,var(--lo))}.l23{--f:color-mix(in oklab,var(--hi) 96%,var(--lo))}.l24{--f:color-mix(in oklab,var(--hi) 100%,var(--lo))}
+[class^=l]{fill:var(--f);stroke:var(--f);stroke-width:.7;stroke-linejoin:round}
+.cad,.ln,.fe,.mk{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.cad{stroke:var(--cad);stroke-width:1.5}
+.ln{stroke:var(--ln);stroke-width:1.15}
+.fe{stroke:var(--fe);stroke-width:1.1;opacity:.95}
+.q [class^=l]{stroke:var(--edge-q);stroke-width:.85}
+.t [class^=l]{stroke:var(--soup);stroke-width:.45;stroke-opacity:.75}
+.mk{stroke:var(--ln);stroke-width:2}
+.dot{fill:var(--ln)}
+.dotc{fill:var(--cad)}
+.cadf{fill:var(--cad)}
+.ghost{fill:none;stroke:var(--cad);stroke-width:1;stroke-dasharray:4 5;opacity:.6}
+
+</style><path class="l3" fill-rule="evenodd" d="M214.3 246.2 316.8 188.7 316.8 69.1 214.3 126.5Z"/><path class="cad" pathLength="1" d="M214.3 246.2 316.8 188.7 316.8 69.1 214.3 126.5 214.3 246.2"/><path class="l11" fill-rule="evenodd" d="M83.2 201.3 214.3 246.2 214.3 126.5 83.2 81.6Z"/><path class="cad" pathLength="1" d="M83.2 201.3 214.3 246.2 214.3 126.5 83.2 81.6 83.2 201.3"/><path class="l21" fill-rule="evenodd" d="M83.2 81.6 214.3 126.5 316.8 69.1 185.7 24.2Z"/><path class="cad" pathLength="1" d="M83.2 81.6 214.3 126.5 316.8 69.1 185.7 24.2 83.2 81.6"/><path class="ln" pathLength="1" d="M116 186.8 157 140.1 171.3 111.8 225.9 101.6 262.4 99.6 288 139.4 302.4 173.4"/><circle class="dot" cx="116" cy="186.8" r="4"/><circle class="dot" cx="157" cy="140.1" r="4"/><circle class="dot" cx="171.3" cy="111.8" r="4"/><circle class="dot" cx="225.9" cy="101.6" r="4"/><circle class="dot" cx="262.4" cy="99.6" r="4"/><circle class="dot" cx="288" cy="139.4" r="4"/><circle class="dot" cx="302.4" cy="173.4" r="4"/></svg>
