@@ -237,20 +237,20 @@ impl BodyCtx {
                 let circ = ft.wires.iter().all(|w| w.coedges.iter().all(|c| topo.edge(c.edge).curve == CurveKind::Circle));
                 if circ {
                     let centre = |wi: usize| {
-                        let mut acc = DVec2::ZERO;
-                        let mut n: f64 = 0.0;
+                        let mut lo = DVec2::splat(f64::INFINITY);
+                        let mut hi = DVec2::splat(f64::NEG_INFINITY);
                         for c in &ft.wires[wi].coedges {
                             for cv in curves.iter().filter(|b| b.owner == Owner::Cad(c.edge)) {
                                 for p in &cv.pts {
-                                    acc += *p;
-                                    n += 1.0;
+                                    lo = lo.min(*p);
+                                    hi = hi.max(*p);
                                 }
                             }
                         }
-                        acc / n.max(1.0)
+                        (lo + hi) * 0.5
                     };
                     let (c0, c1) = (centre(0), centre(1));
-                    if (c0 - c1).length() < 1e-6 * span {
+                    if (c0 - c1).length() < 1e-4 * span {
                         ring = Some((c0 + c1) * 0.5);
                     }
                 }

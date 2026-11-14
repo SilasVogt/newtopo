@@ -46,6 +46,7 @@ pub struct Scene {
     coalesce: Option<bool>,
     bodies: BTreeMap<BodyId, BodyCache>,
     evals: BTreeMap<BodyId, (u64, BodyEval)>,
+    stashed: Option<(u64, BodyId, BodyEval)>,
     outputs: Vec<OutputMesh>,
 }
 
@@ -85,6 +86,7 @@ impl Scene {
             coalesce: None,
             bodies: BTreeMap::new(),
             evals: BTreeMap::new(),
+            stashed: None,
             outputs: vec![],
         }
     }
@@ -167,13 +169,63 @@ impl Scene {
         self.redo.clear();
     }
 
-    /// Apply one op as one undo step. On refusal nothing changes.
+    /// Apply one op as one undo step. On refusal nothing changes. Every op
+    /// that changes a body's evaluation is refused if the output would gain
+    /// validation problems (SPEC §11: either the output validates or the op
+    /// is refused with a reason).
     pub fn apply(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
+        let (doc, outcome) = self.run_op(&op)?;
+        if doc == *self.doc {
+            return Ok(outcome);
+        }
+        let ids: Vec<BodyId> = doc.bodies.iter().map(|b| b.id).filter(|b| self.bodies.contains_key(b)).collect();
+        let mut fresh: Vec<(BodyId, u64, BodyEval)> = Vec::new();
+        for b in ids {
+            let fp_new = self.fingerprint_of(&doc, b);
+            if self.evals.get(&b).is_some_and(|(f, _)| *f == fp_new) {
+                continue;
+            }
+            let before = self.blocking_count(b);
+            let ev = match self.stashed.take().filter(|(f, bb, _)| *f == fp_new && *bb == b) {
+                Some((_, _, ev)) => ev,
+                None => match self.eval_doc(&doc, b) {
+                    Some(e) => e,
+                    None => continue,
+                },
+            };
+            let issues: Vec<Issue> =
+                eval::validate_body(&self.bodies[&b].ctx, &ev).into_iter().filter(|i| i.kind != eval::IssueKind::FanFallback).collect();
+            if issues.len() > before {
+                return Err(Refusal::new(format!("can't do that: {}", issue_reason(&issues[0]))));
+            }
+            fresh.push((b, fp_new, ev));
+        }
+        self.commit(doc);
+        for (b, fp, ev) in fresh {
+            self.evals.insert(b, (fp, ev));
+        }
+        Ok(outcome)
+    }
+
+    /// Apply an op without the validation gate (debugging, scripts that
+    /// want to inspect an invalid result). Still one undo step.
+    pub fn apply_unchecked(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
         let (doc, outcome) = self.run_op(&op)?;
         if doc != *self.doc {
             self.commit(doc);
         }
         Ok(outcome)
+    }
+
+    fn blocking_count(&mut self, b: BodyId) -> usize {
+        self.validate(b).into_iter().filter(|i| i.kind != eval::IssueKind::FanFallback).count()
+    }
+
+    /// Keep an evaluation computed for a candidate document (saves the
+    /// second evaluation in `apply`).
+    pub(crate) fn stash_eval(&mut self, doc: &Document, body: BodyId, ev: BodyEval) {
+        let fp = self.fingerprint_of(doc, body);
+        self.stashed = Some((fp, body, ev));
     }
 
     /// Start merging subsequent ops into one undo step (a wheel gesture).
@@ -232,8 +284,11 @@ impl Scene {
     }
 
     fn fingerprint(&self, body: BodyId) -> u64 {
+        self.fingerprint_of(&self.doc, body)
+    }
+
+    fn fingerprint_of(&self, d: &Document, body: BodyId) -> u64 {
         let Some(c) = self.bodies.get(&body) else { return 0 };
-        let d = &self.doc;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let rules: Vec<&crate::doc::RuleEntry> = d.rules.iter().filter(|r| !eval::rule_faces(&r.rule, body, &c.ctx).is_empty()).collect();
         let splits: Vec<&crate::doc::SplitLine> = d.split_lines.iter().filter(|s| s.body == body).collect();
@@ -479,5 +534,20 @@ pub fn rule_owns(r: &Rule, p: &PatchId) -> bool {
         Rule::Slice { scope: crate::doc::SliceScope::Body(b), .. } => *b == p.body,
         Rule::Slice { scope: crate::doc::SliceScope::Patches(list), .. } => list.contains(p),
         _ => false,
+    }
+}
+
+/// Toast text for a validation issue that blocks an op.
+pub fn issue_reason(i: &Issue) -> &'static str {
+    use eval::IssueKind::*;
+    match i.kind {
+        Flipped => "a face would flip against the CAD surface",
+        NonManifold => "the mesh would become non-manifold",
+        Degenerate | TooFewVertices => "a face would become degenerate",
+        ZeroLengthEdge => "an edge would get zero length",
+        NotSimple | RepeatedVertex => "a polygon could not be made simple",
+        OpenBoundary | MissingEdge => "the mesh would get a hole",
+        AnchorOff => "a vertex would leave its CAD anchor",
+        FanFallback => "a polygon could only be fan-filled",
     }
 }

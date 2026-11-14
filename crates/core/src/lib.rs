@@ -9,6 +9,7 @@ pub mod mesh;
 pub mod ops;
 pub mod rename;
 pub mod scene;
+pub mod select;
 pub mod tools;
 
 pub use doc::Document;

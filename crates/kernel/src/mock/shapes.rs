@@ -304,13 +304,21 @@ impl MockBody {
     /// Solid cylinder on the XY plane, axis +Z: side face 0 (u-closed, seam
     /// edge), bottom cap face 1, top cap face 2.
     pub fn cylinder(r: f64, h: f64) -> MockBody {
+        Self::cylinder_with_seam(r, h, 0.0)
+    }
+
+    /// The same cylinder with its seam (and u = 0) rotated by `angle`
+    /// radians about the axis: identical geometry, different parameterisation.
+    pub fn cylinder_with_seam(r: f64, h: f64, angle: f64) -> MockBody {
         let mut b = MockBody::named("cylinder");
-        let v0 = b.add_vertex(DVec3::new(r, 0.0, 0.0));
-        let v1 = b.add_vertex(DVec3::new(r, 0.0, h));
-        let bot = b.circle_edge(DVec3::ZERO, DVec3::X, DVec3::Y, r, v0);
-        let top = b.circle_edge(DVec3::Z * h, DVec3::X, DVec3::Y, r, v1);
+        let x = DVec3::new(angle.cos(), angle.sin(), 0.0);
+        let y = DVec3::Z.cross(x);
+        let v0 = b.add_vertex(x * r);
+        let v1 = b.add_vertex(x * r + DVec3::Z * h);
+        let bot = b.circle_edge(DVec3::ZERO, x, y, r, v0);
+        let top = b.circle_edge(DVec3::Z * h, x, y, r, v1);
         let seam = b.line_edge(v0, v1);
-        b.cylinder_side(DVec3::ZERO, DVec3::Z, DVec3::X, r, h, false, bot, top, seam);
+        b.cylinder_side(DVec3::ZERO, DVec3::Z, x, r, h, false, bot, top, seam);
         b.disk_face(bot, -DVec3::Z);
         b.disk_face(top, DVec3::Z);
         b

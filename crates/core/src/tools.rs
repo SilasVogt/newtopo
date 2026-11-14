@@ -5,7 +5,7 @@
 
 use crate::doc::*;
 use crate::eval::lines::{Bend, Patch, bend_class, compute_slice_planes, slice_faces};
-use crate::eval::{self, BodyCtx, IssueKind};
+use crate::eval::{self, BodyCtx};
 use crate::keys::{EdgeKey, RuleId, VertexKey};
 use crate::mesh::Anchor;
 use crate::ops::{Op, OpOutcome, PatchSel, Refusal};
@@ -165,34 +165,14 @@ impl Scene {
         }
     }
 
-    /// Check an edit candidate: the edit must apply and the output must not
-    /// gain validation problems.
+    /// Check an edit candidate: the edit must apply (not go dormant). The
+    /// result's validity is checked by [`Scene::apply`] for every op.
     fn check_edit(&mut self, doc: &Document, body: BodyId, edit_id: u32) -> R<()> {
-        let before = self
-            .validate(body)
-            .into_iter()
-            .filter(|i| i.kind != IssueKind::FanFallback)
-            .count();
         let ev = self.eval_doc(doc, body).ok_or_else(|| Refusal::new("body has no CAD data"))?;
         if let Some((_, reason)) = ev.dormant_reasons.iter().find(|(id, _)| *id == edit_id) {
             return Err(Refusal::new(format!("can't do that: {reason}")));
         }
-        let c = self.ctx(body).ok_or_else(|| Refusal::new("body has no CAD data"))?;
-        let issues: Vec<_> = eval::validate_body(c, &ev).into_iter().filter(|i| i.kind != IssueKind::FanFallback).collect();
-        if issues.len() > before {
-            let what = match issues[0].kind {
-                IssueKind::Flipped => "a face would flip against the CAD surface",
-                IssueKind::NonManifold => "the mesh would become non-manifold",
-                IssueKind::Degenerate => "a face would become degenerate",
-                IssueKind::ZeroLengthEdge => "an edge would get zero length",
-                _ => "the result would not validate",
-            };
-            let what = match issues[0].kind {
-                IssueKind::NotSimple | IssueKind::RepeatedVertex => "a polygon could not be made simple",
-                _ => what,
-            };
-            return Err(Refusal::new(format!("can't do that: {what}")));
-        }
+        self.stash_eval(doc, body, ev);
         Ok(())
     }
 

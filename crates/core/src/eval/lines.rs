@@ -447,7 +447,8 @@ pub fn rule_lines(
                 let polys = section(ctx, fg, pl.origin, pl.normal);
                 for (ci, (pts, closed)) in polys.into_iter().enumerate() {
                     out.push(GLine {
-                        who: Who::Line(LineKey { rule, index: k as u32, sub: ci as u32 }),
+                        // Unique per face so keys never collide across faces.
+                        who: Who::Line(LineKey { rule, index: k as u32, sub: fg.id.0 * 64 + ci.min(63) as u32 }),
                         face: fg.id,
                         pts,
                         closed,

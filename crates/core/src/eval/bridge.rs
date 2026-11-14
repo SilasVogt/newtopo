@@ -341,6 +341,15 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                 }
             }
             if cands.is_empty() {
+                if std::env::var("NT_DEBUG_BRIDGE").is_ok() {
+                    eprintln!("bridge: no candidates in region {r}: {} walks", walks.len());
+                    for (wi, g) in geoms.iter().enumerate() {
+                        eprintln!("  walk {wi} winding {:?}", g.winding);
+                        for o in &g.occ {
+                            eprintln!("    v{} fid{} d {:?} key {:?}", o.v, o.fid, o.d, mesh.verts[o.v].key);
+                        }
+                    }
+                }
                 failed.push(r);
                 break;
             }

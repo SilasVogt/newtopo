@@ -63,6 +63,8 @@ pub struct HMesh {
     pub he: Vec<HE>,
     pub regions: Vec<Region>,
     pub key_index: HashMap<VertexKey, usize>,
+    /// Periods per face (0 = not closed in that direction).
+    pub periods: Vec<DVec2>,
 }
 
 struct Uf(Vec<usize>);
@@ -624,12 +626,67 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             }
         }
     }
+    // 4c. Parallel edges: two different curves joining the same two
+    // vertices (e.g. a through-line closed over two faces with only two
+    // vertices) get a midpoint placeholder on each generated piece.
+    {
+        let mut pairs: BTreeMap<(usize, usize), Vec<(usize, usize)>> = BTreeMap::new();
+        for (fi, fr) in faces.iter().enumerate() {
+            let gl = &fr.glued;
+            for (e, ge) in gl.gedges.iter().enumerate() {
+                if gl.dissolved[e] {
+                    continue;
+                }
+                let (va, vb) = (item_v[offset[fi] + ge.a], item_v[offset[fi] + ge.b]);
+                let interior = match ge.owner {
+                    Owner::Line(_) | Owner::Split(_) => lreg
+                        .get(&(fi, ge.owner))
+                        .is_some_and(|l| l.iter().any(|&(t, v)| t > ge.pa + 1e-12 && t < ge.pb - 1e-12 && v != va && v != vb)),
+                    Owner::Cad(ce) => ereg
+                        .get(&ce)
+                        .is_some_and(|l| l.iter().any(|&(t, v)| t > ge.pa.min(ge.pb) + 1e-12 && t < ge.pa.max(ge.pb) - 1e-12 && v != va && v != vb && !dropped[v])),
+                    _ => true,
+                };
+                if va == vb || interior {
+                    continue;
+                }
+                let k = (va.min(vb), va.max(vb));
+                let list = pairs.entry(k).or_default();
+                // CAD edges shared by two faces count once.
+                if let Owner::Cad(ce) = ge.owner
+                    && list.iter().any(|&(f2, e2)| faces[f2].glued.gedges[e2].owner == Owner::Cad(ce))
+                {
+                    continue;
+                }
+                list.push((fi, e));
+            }
+        }
+        for list in pairs.values().filter(|l| l.len() >= 2) {
+            for &(fi, e) in list {
+                let fr = &faces[fi];
+                let ge = &fr.glued.gedges[e];
+                let lid = match ge.owner {
+                    Owner::Line(k) => LoopId::Line(k),
+                    Owner::Split(s) => LoopId::Split(s),
+                    _ => continue,
+                };
+                let mid = 0.5 * (ge.pa + ge.pb);
+                let uv = ctx.face(fr.face).wrap(interp_pars(&ge.pts, &ge.pars, mid));
+                let key = VertexKey::Placeholder { lp: lid, i: 0 };
+                let v = verts.len();
+                verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::Face { face: fr.face, uv }, pole: None, pos: DVec3::ZERO, alive: true });
+                dropped.push(false);
+                lreg.entry((fi, ge.owner)).or_default().push((mid, v));
+            }
+        }
+    }
     for l in lreg.values_mut() {
         l.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
     // 5. Walks → half-edges.
     compute_positions(ctx, &mut verts);
-    let mut mesh = HMesh { verts, he: vec![], regions: vec![], key_index: HashMap::new() };
+    let periods = ctx.faces.iter().map(|f| f.periods()).collect();
+    let mut mesh = HMesh { verts, he: vec![], regions: vec![], key_index: HashMap::new(), periods };
     for (fi, fr) in faces.iter().enumerate() {
         let gl = &fr.glued;
         let fg = ctx.face(fr.face);

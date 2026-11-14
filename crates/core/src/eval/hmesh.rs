@@ -9,6 +9,19 @@ use crate::mesh::Anchor;
 use glam::DVec2;
 use std::collections::{HashMap, HashSet};
 
+/// `uv` shifted by whole periods (`per`, 0 = not periodic) to be nearest
+/// to `near`.
+fn lift(uv: DVec2, near: DVec2, per: DVec2) -> DVec2 {
+    let mut out = uv;
+    if per.x > 0.0 {
+        out.x += ((near.x - out.x) / per.x).round() * per.x;
+    }
+    if per.y > 0.0 {
+        out.y += ((near.y - out.y) / per.y).round() * per.y;
+    }
+    out
+}
+
 impl HMesh {
     pub fn alive_he(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.he.len()).filter(|&h| self.he[h].alive)
@@ -204,12 +217,55 @@ impl HMesh {
             }
         }
         self.kill_pair(h);
+        // UV of the kept vertex per face, before re-pointing.
+        let mut keep_uv: Vec<(newtopo_kernel::FaceId, DVec2)> = Vec::new();
+        if let Some((Anchor::Face { face, uv }, _)) = &anchor {
+            keep_uv.push((*face, *uv));
+        }
+        for e in self.he.iter().filter(|e| e.alive && !e.uv.is_empty()) {
+            if keep_uv.iter().any(|(f, _)| *f == e.face) {
+                continue;
+            }
+            if e.from == keep {
+                keep_uv.push((e.face, e.uv[0]));
+            } else if e.to == keep {
+                keep_uv.push((e.face, *e.uv.last().unwrap()));
+            }
+        }
+        if keep_uv.is_empty() {
+            let e = &self.he[h];
+            if !e.uv.is_empty() {
+                keep_uv.push((e.face, if keep_to { *e.uv.last().unwrap() } else { e.uv[0] }));
+            }
+        }
+        let moved = anchor.is_some();
+        let periods = self.periods.clone();
         for e in &mut self.he {
+            let start = e.from == rem || (moved && e.from == keep);
+            let end = e.to == rem || (moved && e.to == keep);
             if e.from == rem {
                 e.from = keep;
             }
             if e.to == rem {
                 e.to = keep;
+            }
+            if !e.alive || e.uv.is_empty() {
+                continue;
+            }
+            if let Some(&(_, kuv)) = keep_uv.iter().find(|(f, _)| *f == e.face) {
+                let per = periods.get(e.face.idx()).copied().unwrap_or(DVec2::ZERO);
+                if start {
+                    let near = e.uv[0];
+                    e.uv[0] = lift(kuv, near, per);
+                }
+                if end {
+                    let n = e.uv.len() - 1;
+                    let near = e.uv[n];
+                    e.uv[n] = lift(kuv, near, per);
+                }
+                if start || end {
+                    e.p3 = None;
+                }
             }
         }
         let rem_keys = self.verts[rem].keys.clone();
