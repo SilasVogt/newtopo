@@ -46,7 +46,12 @@ pub struct ViewportResources {
 /// Create the viewport resources. Call once after eframe created its
 /// wgpu render state.
 pub fn install(rs: &egui_wgpu::RenderState) {
-    let device = &rs.device;
+    install_with(&rs.device, rs.target_format, &mut rs.renderer.write().callback_resources);
+}
+
+/// Like [`install`], for a caller-owned `egui_wgpu::Renderer` (headless UI
+/// screenshots).
+pub fn install_with(device: &wgpu::Device, target_format: wgpu::TextureFormat, resources: &mut CallbackResources) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("viewport blit"),
         source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
@@ -77,7 +82,7 @@ pub fn install(rs: &egui_wgpu::RenderState) {
         bind_group_layouts: &[Some(&blit_layout)],
         immediate_size: 0,
     });
-    let fs = if rs.target_format.is_srgb() {
+    let fs = if target_format.is_srgb() {
         "fs_linear"
     } else {
         "fs_gamma"
@@ -99,7 +104,7 @@ pub fn install(rs: &egui_wgpu::RenderState) {
             entry_point: Some(fs),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format: rs.target_format,
+                format: target_format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -121,11 +126,19 @@ pub fn install(rs: &egui_wgpu::RenderState) {
         sampler,
         blit_bg: None,
     };
-    rs.renderer.write().callback_resources.insert(res);
+    resources.insert(res);
+}
+
+/// A process-wide unique revision for [`ViewportCallback`] layers. Use a
+/// fresh one whenever a layer's content changes.
+pub fn next_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// One frame of the viewport. Layers are re-uploaded only when their
-/// revision changes, so pass a stable revision for unchanged content.
+/// revision changes, so pass a stable revision for unchanged content and a
+/// new [`next_revision`] when it changes.
 pub struct ViewportCallback {
     pub layers: Vec<(u64, Arc<RenderScene>)>,
     pub camera: CameraMatrices,
@@ -173,6 +186,9 @@ impl CallbackTrait for ViewportCallback {
             }
         }
         let refs: Vec<&GpuScene> = res.layers.iter().map(|(_, g)| g).collect();
+        if std::env::var("NEWTOPO_RENDER_DEBUG").is_ok() {
+            eprintln!("viewport prepare: size {:?} layers {:?} cam eye {:?} near {} far {}", self.size_px, self.layers.iter().map(|(r, s)| (*r, s.mesh.indices.len(), s.lines.len())).collect::<Vec<_>>(), self.camera.eye, self.camera.near, self.camera.far);
+        }
         res.renderer.render(
             queue,
             encoder,

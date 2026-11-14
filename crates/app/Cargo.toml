@@ -12,11 +12,11 @@ occt = ["newtopo-kernel/occt"]
 [dependencies]
 newtopo-kernel.workspace = true
 newtopo-core.workspace = true
-newtopo-render.workspace = true
+newtopo-render = { workspace = true, features = ["egui"] }
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
-egui_dock.workspace = true
+egui_dock = { workspace = true, features = ["serde"] }
 wgpu.workspace = true
 rfd.workspace = true
 directories.workspace = true
@@ -28,6 +28,10 @@ anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
 image.workspace = true
+pollster.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [[bin]]
 name = "newtopo"

@@ -112,7 +112,7 @@ impl NamedView {
 
 impl OrbitCamera {
     /// Basis (right, forward-in-plane, up) of the world for the chosen up axis.
-    fn world_basis(&self) -> (DVec3, DVec3, DVec3) {
+    pub fn world_basis(&self) -> (DVec3, DVec3, DVec3) {
         match self.up {
             UpAxis::Z => (DVec3::X, DVec3::Y, DVec3::Z),
             // Y-up: x right, -z "forward in plane", y up; keeps right-handedness.
