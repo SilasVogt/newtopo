@@ -1,0 +1,241 @@
+---
+source: crates/core/src/export/tests.rs
+expression: dump_fbx(&files.main)
+---
+FBXHeaderExtension:
+  FBXHeaderVersion: 1003
+  FBXVersion: 7400
+  EncryptionType: 0
+  CreationTimeStamp:
+    Version: 1000
+    Year: 2026
+    Month: 1
+    Day: 1
+    Hour: 0
+    Minute: 0
+    Second: 0
+    Millisecond: 0
+  Creator: "newtopo 0.1.0"
+FileId: "newtopo-fbx-7400"
+CreationTime: "2026-01-01 00:00:00:000"
+Creator: "newtopo 0.1.0"
+GlobalSettings:
+  Version: 1000
+  Properties70:
+    P: "UpAxis" "int" "Integer" "" 1
+    P: "UpAxisSign" "int" "Integer" "" 1
+    P: "FrontAxis" "int" "Integer" "" 2
+    P: "FrontAxisSign" "int" "Integer" "" 1
+    P: "CoordAxis" "int" "Integer" "" 0
+    P: "CoordAxisSign" "int" "Integer" "" 1
+    P: "OriginalUpAxis" "int" "Integer" "" 1
+    P: "OriginalUpAxisSign" "int" "Integer" "" 1
+    P: "UnitScaleFactor" "double" "Number" "" 100
+    P: "OriginalUnitScaleFactor" "double" "Number" "" 100
+    P: "AmbientColor" "ColorRGB" "Color" "" 0 0 0
+    P: "DefaultCamera" "KString" "" "" "Producer Perspective"
+    P: "TimeMode" "enum" "" "" 11
+    P: "TimeSpanStart" "KTime" "Time" "" 0
+    P: "TimeSpanStop" "KTime" "Time" "" 46186158000
+    P: "CustomFrameRate" "double" "Number" "" -1
+Documents:
+  Count: 1
+  Document: 999999 "Scene" "Scene"
+    Properties70:
+      P: "SourceObject" "object" "" ""
+      P: "ActiveAnimStackName" "KString" "" "" ""
+    RootNode: 0
+References:
+Definitions:
+  Version: 100
+  Count: 13
+  ObjectType: "GlobalSettings"
+    Count: 1
+  ObjectType: "Model"
+    Count: 5
+  ObjectType: "Geometry"
+    Count: 3
+  ObjectType: "NodeAttribute"
+    Count: 2
+  ObjectType: "Material"
+    Count: 2
+Objects:
+  Material: 1000001 "ntopo_cc3333\0\u{1}Material" ""
+    Version: 102
+    ShadingModel: "lambert"
+    MultiLayer: 0
+    Properties70:
+      P: "DiffuseColor" "Color" "" "A" 0.8 0.2 0.2
+      P: "DiffuseFactor" "Number" "" "A" 1
+      P: "AmbientColor" "Color" "" "A" 0 0 0
+  Material: 1000002 "ntopo_3366cc\0\u{1}Material" ""
+    Version: 102
+    ShadingModel: "lambert"
+    MultiLayer: 0
+    Properties70:
+      P: "DiffuseColor" "Color" "" "A" 0.2 0.4 0.8
+      P: "DiffuseFactor" "Number" "" "A" 1
+      P: "AmbientColor" "Color" "" "A" 0 0 0
+  NodeAttribute: 1000004 "\0\u{1}NodeAttribute" "Null"
+    TypeFlags: "Null"
+  Model: 1000003 "Parts\0\u{1}Model" "Null"
+    Version: 232
+    Properties70:
+      P: "Lcl Translation" "Lcl Translation" "" "A" 0 0 0
+      P: "Lcl Rotation" "Lcl Rotation" "" "A" 0 -0 0
+      P: "Lcl Scaling" "Lcl Scaling" "" "A" 1 1 1
+      P: "DefaultAttributeIndex" "int" "Integer" "" 0
+      P: "InheritType" "enum" "" "" 1
+    Shading: true
+    Culling: "CullingOff"
+  NodeAttribute: 1000006 "\0\u{1}NodeAttribute" "Null"
+    TypeFlags: "Null"
+  Model: 1000005 "Misc\0\u{1}Model" "Null"
+    Version: 232
+    Properties70:
+      P: "Lcl Translation" "Lcl Translation" "" "A" 0 0 0
+      P: "Lcl Rotation" "Lcl Rotation" "" "A" 0 -0 0
+      P: "Lcl Scaling" "Lcl Scaling" "" "A" 1 1 1
+      P: "DefaultAttributeIndex" "int" "Integer" "" 0
+      P: "InheritType" "enum" "" "" 1
+    Shading: true
+    Culling: "CullingOff"
+  Geometry: 1000008 "Cube\0\u{1}Geometry" "Mesh"
+    Properties70:
+    GeometryVersion: 124
+    Vertices: d[24][0.0000, 0.0000, 0.0000, 2.0000, 0.0000, 0.0000, 2.0000, 0.0000, -1.0000]
+    PolygonVertexIndex: i[24][0, 3, 2, -2, 4, 5, 6, -8, 0, 1, 5, -5]
+    Edges: i[12][0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 15]
+    LayerElementNormal: 0
+      Version: 101
+      Name: ""
+      MappingInformationType: "ByPolygonVertex"
+      ReferenceInformationType: "Direct"
+      Normals: d[72][0.0000, -1.0000, 0.0000, 0.0000, -1.0000, 0.0000, 0.0000, -1.0000, 0.0000]
+    LayerElementSmoothing: 0
+      Version: 102
+      Name: ""
+      MappingInformationType: "ByEdge"
+      ReferenceInformationType: "Direct"
+      Smoothing: i[12][0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    LayerElementMaterial: 0
+      Version: 101
+      Name: ""
+      MappingInformationType: "AllSame"
+      ReferenceInformationType: "IndexToDirect"
+      Materials: i[1][0]
+    Layer: 0
+      Version: 100
+      LayerElement:
+        Type: "LayerElementNormal"
+        TypedIndex: 0
+      LayerElement:
+        Type: "LayerElementSmoothing"
+        TypedIndex: 0
+      LayerElement:
+        Type: "LayerElementMaterial"
+        TypedIndex: 0
+  Model: 1000007 "Cube\0\u{1}Model" "Mesh"
+    Version: 232
+    Properties70:
+      P: "Lcl Translation" "Lcl Translation" "" "A" 5 0 0
+      P: "Lcl Rotation" "Lcl Rotation" "" "A" 0 89.99999999999999 -0
+      P: "Lcl Scaling" "Lcl Scaling" "" "A" 1 1 1
+      P: "DefaultAttributeIndex" "int" "Integer" "" 0
+      P: "InheritType" "enum" "" "" 1
+    Shading: true
+    Culling: "CullingOff"
+  Geometry: 1000010 "Tube\0\u{1}Geometry" "Mesh"
+    Properties70:
+    GeometryVersion: 124
+    Vertices: d[72][1.0000, 0.0000, 0.0000, 0.8660, 0.0000, -0.5000, 0.5000, 0.0000, -0.8660]
+    PolygonVertexIndex: i[48][0, 1, 13, -13, 1, 2, 14, -14, 2, 3, 15, -15]
+    Edges: i[36][0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 13]
+    LayerElementNormal: 0
+      Version: 101
+      Name: ""
+      MappingInformationType: "ByPolygonVertex"
+      ReferenceInformationType: "Direct"
+      Normals: d[144][1.0000, 0.0000, 0.0000, 0.8660, 0.0000, -0.5000, 0.8660, 0.0000, -0.5000]
+    LayerElementSmoothing: 0
+      Version: 102
+      Name: ""
+      MappingInformationType: "ByEdge"
+      ReferenceInformationType: "Direct"
+      Smoothing: i[36][0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1]
+    LayerElementMaterial: 0
+      Version: 101
+      Name: ""
+      MappingInformationType: "AllSame"
+      ReferenceInformationType: "IndexToDirect"
+      Materials: i[1][0]
+    Layer: 0
+      Version: 100
+      LayerElement:
+        Type: "LayerElementNormal"
+        TypedIndex: 0
+      LayerElement:
+        Type: "LayerElementSmoothing"
+        TypedIndex: 0
+      LayerElement:
+        Type: "LayerElementMaterial"
+        TypedIndex: 0
+  Model: 1000009 "Tube\0\u{1}Model" "Mesh"
+    Version: 232
+    Properties70:
+      P: "Lcl Translation" "Lcl Translation" "" "A" 0 0 0
+      P: "Lcl Rotation" "Lcl Rotation" "" "A" 0 -0 0
+      P: "Lcl Scaling" "Lcl Scaling" "" "A" 1 1 1
+      P: "DefaultAttributeIndex" "int" "Integer" "" 0
+      P: "InheritType" "enum" "" "" 1
+    Shading: true
+    Culling: "CullingOff"
+  Geometry: 1000012 "Hexagon\0\u{1}Geometry" "Mesh"
+    Properties70:
+    GeometryVersion: 124
+    Vertices: d[18][1.0000, 0.0000, 0.0000, 0.5000, 0.0000, -0.8660, -0.5000, 0.0000, -0.8660]
+    PolygonVertexIndex: i[6][0, 1, 2, 3, 4, -6]
+    Edges: i[6][0, 1, 2, 3, 4, 5]
+    LayerElementNormal: 0
+      Version: 101
+      Name: ""
+      MappingInformationType: "ByPolygonVertex"
+      ReferenceInformationType: "Direct"
+      Normals: d[18][0.0000, 1.0000, 0.0000, 0.0000, 1.0000, 0.0000, 0.0000, 1.0000, 0.0000]
+    LayerElementSmoothing: 0
+      Version: 102
+      Name: ""
+      MappingInformationType: "ByEdge"
+      ReferenceInformationType: "Direct"
+      Smoothing: i[6][0, 0, 0, 0, 0, 0]
+    Layer: 0
+      Version: 100
+      LayerElement:
+        Type: "LayerElementNormal"
+        TypedIndex: 0
+      LayerElement:
+        Type: "LayerElementSmoothing"
+        TypedIndex: 0
+  Model: 1000011 "Hexagon\0\u{1}Model" "Mesh"
+    Version: 232
+    Properties70:
+      P: "Lcl Translation" "Lcl Translation" "" "A" 0 3 0
+      P: "Lcl Rotation" "Lcl Rotation" "" "A" 0 -0 0
+      P: "Lcl Scaling" "Lcl Scaling" "" "A" 1 1 1
+      P: "DefaultAttributeIndex" "int" "Integer" "" 0
+      P: "InheritType" "enum" "" "" 1
+    Shading: true
+    Culling: "CullingOff"
+Connections:
+  C: "OO" 1000003 0
+  C: "OO" 1000004 1000003
+  C: "OO" 1000005 0
+  C: "OO" 1000006 1000005
+  C: "OO" 1000007 1000003
+  C: "OO" 1000008 1000007
+  C: "OO" 1000001 1000007
+  C: "OO" 1000009 1000003
+  C: "OO" 1000010 1000009
+  C: "OO" 1000002 1000009
+  C: "OO" 1000011 1000005
+  C: "OO" 1000012 1000011

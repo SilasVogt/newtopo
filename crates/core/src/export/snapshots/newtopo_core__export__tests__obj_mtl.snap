@@ -1,0 +1,19 @@
+---
+source: crates/core/src/export/tests.rs
+expression: "String::from_utf8(files.side[0].1.clone()).unwrap()"
+---
+# newtopo MTL export
+
+newmtl ntopo_cc3333
+Kd 0.8 0.2 0.2
+Ka 0 0 0
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl ntopo_3366cc
+Kd 0.2 0.4 0.8
+Ka 0 0 0
+Ks 0 0 0
+d 1
+illum 1
