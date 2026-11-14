@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-newtopo-scene">
+    <comment>newtopo scene</comment>
+    <sub-class-of type="application/zip"/>
+    <generic-icon name="application-x-newtopo-scene"/>
+    <icon name="application-x-newtopo-scene"/>
+    <glob pattern="*.ntopo" weight="60"/>
+  </mime-type>
+</mime-info>
