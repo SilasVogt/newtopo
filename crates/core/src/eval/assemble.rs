@@ -665,18 +665,45 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             for &(fi, e) in list {
                 let fr = &faces[fi];
                 let ge = &fr.glued.gedges[e];
-                let lid = match ge.owner {
-                    Owner::Line(k) => LoopId::Line(k),
-                    Owner::Split(s) => LoopId::Split(s),
-                    _ => continue,
-                };
                 let mid = 0.5 * (ge.pa + ge.pb);
-                let uv = ctx.face(fr.face).wrap(interp_pars(&ge.pts, &ge.pars, mid));
-                let key = VertexKey::Placeholder { lp: lid, i: 0 };
-                let v = verts.len();
-                verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::Face { face: fr.face, uv }, pole: None, pos: DVec3::ZERO, alive: true });
-                dropped.push(false);
-                lreg.entry((fi, ge.owner)).or_default().push((mid, v));
+                let uvm = interp_pars(&ge.pts, &ge.pars, mid);
+                // Only curved pieces get a vertex (a midpoint on a straight
+                // piece would be collinear).
+                let ev = ctx.face_eval(fr.face, &[ge.pts[0], uvm, *ge.pts.last().unwrap()]);
+                if ev.len() == 3 {
+                    let dev = (ev[1].p - (ev[0].p + ev[2].p) * 0.5).length();
+                    if dev <= 1e-6 * ctx.size + 1e-3 * (ev[2].p - ev[0].p).length() {
+                        continue;
+                    }
+                }
+                match ge.owner {
+                    Owner::Line(_) | Owner::Split(_) => {
+                        let lid = match ge.owner {
+                            Owner::Line(k) => LoopId::Line(k),
+                            Owner::Split(s) => LoopId::Split(s),
+                            _ => unreachable!(),
+                        };
+                        let uv = ctx.face(fr.face).wrap(uvm);
+                        let key = VertexKey::Placeholder { lp: lid, i: 0 };
+                        let v = verts.len();
+                        verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::Face { face: fr.face, uv }, pole: None, pos: DVec3::ZERO, alive: true });
+                        dropped.push(false);
+                        lreg.entry((fi, ge.owner)).or_default().push((mid, v));
+                    }
+                    Owner::Cad(ce) => {
+                        let et = ctx.topo.edge(ce);
+                        let span = (et.t_range.1 - et.t_range.0).abs().max(1e-300);
+                        let i = 10_000 + ((mid - et.t_range.0) / span * 1000.0).round() as u32;
+                        let key = VertexKey::Placeholder { lp: LoopId::Cad(vec![ce]), i };
+                        let v = verts.len();
+                        verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::CadEdge { edge: ce, t: mid }, pole: None, pos: DVec3::ZERO, alive: true });
+                        dropped.push(false);
+                        let l = ereg.entry(ce).or_default();
+                        l.push((mid, v));
+                        l.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    }
+                    _ => {}
+                }
             }
         }
     }

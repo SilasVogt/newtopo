@@ -52,3 +52,11 @@ fn d_case() {
         _ => {}
     }
 }
+
+#[test]
+fn d_ring() {
+    let Ok(_) = std::env::var("RING") else { return };
+    let (mut s, b) = scene_with(MockBody::ring(3.0, 1.0));
+    s.apply_unchecked(Op::Grid { patches: PatchSel { faces: vec![0], ..Default::default() }, u: 0, v: 3, start_on_seam: false, spacing: Spacing::ArcLength }).unwrap();
+    show(&mut s, b);
+}
