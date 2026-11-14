@@ -521,7 +521,8 @@ MeshFfi tessellate(Store &s, uint32_t body, uint32_t face, double tol) {
   TopLoc_Location loc;
   Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(Fo, loc);
   if (tri.IsNull()) {
-    return m;
+    b.mesh_tol = -1.0; // retry meshing on the next call
+    fail("meshing produced no triangulation for face " + std::to_string(face));
   }
   bool rev = Fo.Orientation() == TopAbs_REVERSED;
   gp_Trsf tr = loc.Transformation();

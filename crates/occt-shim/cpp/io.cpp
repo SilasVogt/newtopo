@@ -2,6 +2,7 @@
 #include "shim.h"
 #include "newtopo-occt-shim/src/lib.rs.h"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepTools.hxx>
@@ -34,8 +35,6 @@
 #include <XCAFDoc_LayerTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
-#include <fstream>
-#include <iterator>
 #include <sstream>
 
 namespace ntshim {
@@ -297,7 +296,11 @@ private:
 
   void emit_body(const TopoDS_Shape &shape, const Attrs &a, const TopLoc_Location &loc) {
     ImportedBodyFfi b;
-    b.body = s_.add(shape);
+    // Instances of one XCAF prototype share a TShape; give every body its own
+    // copy so meshing or healing one never touches another.
+    bool shared = emitted_.Contains(shape);
+    emitted_.Add(shape);
+    b.body = s_.add(shared ? BRepBuilderAPI_Copy(shape, true, false).Shape() : shape);
     b.name = rust::String(a.name.empty() ? "Body " + std::to_string(out_.bodies.size() + 1) : a.name);
     b.has_layer = a.has_layer;
     b.layer = rust::String(a.layer);
@@ -334,6 +337,7 @@ private:
   std::vector<std::string> path_;
   BRep_Builder bb_;
   TopoDS_Compound loose_;
+  ShapeMap emitted_;
   int loose_count_ = 0;
   std::string loose_layer_;
   bool loose_layer_ok_ = true;
@@ -348,14 +352,6 @@ struct DocGuard {
     }
   }
 };
-
-std::string read_file(const std::string &path) {
-  std::ifstream f(path, std::ios::binary);
-  if (!f) {
-    fail("cannot open " + path);
-  }
-  return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-}
 
 } // namespace
 
@@ -381,20 +377,6 @@ ImportResultFfi import_cad(Store &s, rust::Str path, uint8_t format, double unit
   OCC_CATCH_SIGNALS
   std::string p(path);
   ImportResultFfi out;
-  if (format == 2) {
-    ImportedBodyFfi b;
-    b.body = s.add(read_brep_stream(read_file(p)));
-    size_t slash = p.find_last_of("/\\");
-    std::string stem = p.substr(slash == std::string::npos ? 0 : slash + 1);
-    size_t dot = stem.find_last_of('.');
-    b.name = rust::String(dot == std::string::npos ? stem : stem.substr(0, dot));
-    b.has_layer = false;
-    b.has_color = false;
-    b.color = {0.8f, 0.8f, 0.8f};
-    b.transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-    out.bodies.push_back(std::move(b));
-    return out;
-  }
   DocGuard g;
   g.app = XCAFApp_Application::GetApplication();
   g.app->NewDocument("MDTV-XCAF", g.doc);

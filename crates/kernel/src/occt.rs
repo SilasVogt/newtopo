@@ -264,8 +264,28 @@ impl OcctKernel {
     /// Reads a STEP/IGES/BREP file through XCAF: one body per leaf shape
     /// (assemblies flattened, multi-solid shapes split), with names, layers,
     /// colours and assembly transforms. `unit_m` is the target length unit in
-    /// metres (0.001 = mm). Does not heal.
+    /// metres (0.001 = mm); STEP/IGES are scaled to it, B-rep (unitless) is
+    /// not. Does not heal.
     pub fn import_file(&self, path: &Path, format: CadFormat, unit_m: f64) -> KResult<LoadedFile> {
+        if format == CadFormat::Brep {
+            // Read in Rust: C++ narrow-string paths are not UTF-8 on MSVC.
+            // B-rep files carry no unit, so the geometry is never scaled.
+            let bytes = std::fs::read(path)?;
+            let body = self.load_brep(&bytes)?;
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let attrs = BodyAttributes {
+                name,
+                transform: DMat4::IDENTITY,
+                ..Default::default()
+            };
+            return Ok(LoadedFile {
+                bodies: vec![LoadedBody { body, attrs }],
+                warnings: vec!["B-rep files have no unit; geometry was not scaled".into()],
+            });
+        }
         let path = path
             .to_str()
             .ok_or_else(|| failure("path is not valid UTF-8"))?

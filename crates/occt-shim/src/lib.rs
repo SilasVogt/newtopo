@@ -136,7 +136,7 @@ pub mod ffi {
         fn unload(store: Pin<&mut Store>, body: u32);
         fn body_count(store: &Store) -> usize;
 
-        /// format: 0 STEP, 1 IGES, 2 BREP. `unit_m`: target length unit in
+        /// format: 0 STEP, 1 IGES (B-rep files go through `load_brep`). `unit_m`: target length unit in
         /// metres (0.001 = mm).
         fn import_cad(
             store: Pin<&mut Store>,

@@ -48,7 +48,12 @@ the Open CASCADE 8.0.1 reference documentation and headers, own design.
    the body's own name. A single-part STEP file whose part is wrapped in a
    one-component product (common in exports) yields `path = [part name]`.
 7. **Units.** `--units` sets the XCAF document length unit before transfer,
-   so OCCT scales STEP/IGES geometry. BREP has no unit and is never scaled.
+   so OCCT scales STEP/IGES geometry. BREP has no unit and is never scaled
+   (the import adds a warning saying so). B-rep files are read in Rust and
+   passed as bytes, so non-ASCII paths work on Windows too.
+15. **Instances get their own shapes.** XCAF instances of one prototype share
+   a `TShape`; every body after the first gets a `BRepBuilderAPI_Copy`, so
+   meshing or healing one body never changes another.
 8. **Healing report.** ShapeFix status flags are only reported when faces were
    actually rebuilt or ShapeFix logged messages (its "shells fixed" flag is set
    even for clean solids). Sewing runs only when free edges exist, so valid
@@ -97,10 +102,10 @@ They need trait methods first; the shim structure (flat functions over the
   to `PATH`. Shipping needs the DLLs next to the executables.
 * **Windows signals.** `OSD::SetSignal` installs an SEH translator for the
   calling thread (the OCCT thread, which is the right one). The shim is
-  compiled with `/EHsc`; translated SEH exceptions are thrown from OCCT code
-  (built with `/EHa`) and should be caught by `catch (...)`, but this is
-  untested. If it fails, compile the shim with `/EHa`.
-* **MSVC flags.** `build.rs` adds `/bigobj`, `/EHsc`, `_USE_MATH_DEFINES`.
+  compiled with `/EHa` so translated access violations are catchable; cc-rs
+  also passes `/EHsc`, so MSVC prints warning D9025 (the later `/EHa` wins).
+  Untested on Windows.
+* **MSVC flags.** `build.rs` adds `/bigobj`, `/EHa`, `_USE_MATH_DEFINES`.
   The C++ is plain C++17 (no VLAs, no GNU extensions, no `M_PI`).
 * **macOS.** OCCT dylibs from the CMake build use `@rpath` install names;
   the `-rpath` link arg covers them. Homebrew's `opencascade` (7.x/8.x) is

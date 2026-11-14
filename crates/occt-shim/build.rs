@@ -171,7 +171,9 @@ fn main() {
     if target_os == "windows" {
         build
             .flag_if_supported("/bigobj")
-            .flag_if_supported("/EHsc")
+            // /EHa: OCCT's SEH translator (OSD::SetSignal) needs it to turn
+            // access violations in the readers into catchable exceptions.
+            .flag_if_supported("/EHa")
             .define("_USE_MATH_DEFINES", None);
     } else {
         // Lets OCC_CATCH_SIGNALS turn signals into Standard_Failure in the

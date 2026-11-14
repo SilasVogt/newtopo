@@ -198,6 +198,20 @@ fn assembly_attributes() {
     assert_eq!(k.topology(l.body).unwrap(), k.topology(r.body).unwrap());
     assert!((l.attrs.transform.w_axis.x - 10.0).abs() < 1e-9);
     assert!((r.attrs.transform.w_axis.x - 70.0).abs() < 1e-9);
+    // Instances do not share mutable OCCT state: meshing one at another
+    // tolerance leaves the other's mesh alone.
+    let fine = k
+        .tessellate(l.body, newtopo_kernel::FaceId(0), 0.01)
+        .unwrap();
+    let coarse = k
+        .tessellate(r.body, newtopo_kernel::FaceId(0), 2.0)
+        .unwrap();
+    assert!(coarse.triangles.len() < fine.triangles.len());
+    assert_eq!(
+        k.tessellate(l.body, newtopo_kernel::FaceId(0), 0.01)
+            .unwrap(),
+        fine
+    );
     // Nested transform: Cap at (40,10,50) then Ring at z −6, rotated about X.
     let ring = by("Ring").attrs.transform;
     let o = ring.transform_point3(glam::DVec3::ZERO);

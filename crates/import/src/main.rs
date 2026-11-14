@@ -47,7 +47,7 @@ fn run(a: &Args) -> Result<()> {
     use anyhow::Context;
     use newtopo_kernel::helper::{SIDECAR_FILE, SIDECAR_VERSION, Sidecar, SidecarBody};
     use newtopo_kernel::occt::{CadFormat, HealSettings, OcctKernel, unit_in_metres};
-    use newtopo_kernel::{CadKernel, HealReport};
+    use newtopo_kernel::CadKernel;
     use sha2::{Digest, Sha256};
 
     let format = CadFormat::from_path(&a.input).with_context(|| {
@@ -97,10 +97,17 @@ fn run(a: &Args) -> Result<()> {
         );
         let heal = match k.heal(b.body, settings) {
             Ok(r) => r,
-            Err(e) => HealReport {
-                fixes: vec![format!("healing failed: {e}")],
-                ..Default::default()
-            },
+            Err(e) => {
+                // Keep the unhealed body; still report its real face count.
+                let no_op = HealSettings {
+                    fix: false,
+                    sew: false,
+                    ..settings
+                };
+                let mut r = k.heal(b.body, no_op).unwrap_or_default();
+                r.fixes.insert(0, format!("healing failed: {e}"));
+                r
+            }
         };
         let brep = k.save_brep(b.body)?;
         let name = format!("body-{i}.bbrep");
@@ -128,7 +135,10 @@ fn run(a: &Args) -> Result<()> {
     };
     let tmp = a.out_dir.join(format!("{SIDECAR_FILE}.tmp"));
     std::fs::write(&tmp, serde_json::to_vec_pretty(&side)?)?;
-    std::fs::rename(&tmp, a.out_dir.join(SIDECAR_FILE))?;
+    let dst = a.out_dir.join(SIDECAR_FILE);
+    // rename() does not replace an existing file on Windows.
+    let _ = std::fs::remove_file(&dst);
+    std::fs::rename(&tmp, dst)?;
     progress(1.0, "done");
     Ok(())
 }
