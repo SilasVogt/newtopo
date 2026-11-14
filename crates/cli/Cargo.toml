@@ -25,3 +25,7 @@ newtopo-occt-shim = { workspace = true, optional = true }
 [[bin]]
 name = "newtopo-cli"
 path = "src/main.rs"
+
+[dev-dependencies]
+newtopo-testmodels = { workspace = true, features = ["occt"] }
+tempfile.workspace = true

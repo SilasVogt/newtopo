@@ -247,6 +247,10 @@ private:
   }
 
   void split_and_emit(const TopoDS_Shape &shape, const Attrs &a, const TopLoc_Location &loc) {
+    if (!TopExp_Explorer(shape, TopAbs_FACE).More()) {
+      out_.warnings.push_back(rust::String("skipped \"" + a.name + "\": no faces"));
+      return;
+    }
     std::vector<TopoDS_Shape> parts;
     for (TopExp_Explorer ex(shape, TopAbs_SOLID); ex.More(); ex.Next()) {
       parts.push_back(ex.Current());

@@ -2485,8 +2485,10 @@ dependencies = [
  "newtopo-kernel",
  "newtopo-occt-shim",
  "newtopo-render",
+ "newtopo-testmodels",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2524,6 +2526,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

@@ -158,7 +158,7 @@ pub fn report(
             surface_types: hist,
             edges,
             vertices: topo.vertices.len(),
-            area: topo.faces.iter().map(|f| f.area).sum(),
+            area: topo.faces.iter().map(|f| f.area).sum::<f64>() + 0.0,
             heal: b.heal.clone(),
         });
     }
