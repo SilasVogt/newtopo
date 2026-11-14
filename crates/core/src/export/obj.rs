@@ -58,7 +58,11 @@ pub fn write_obj(
     }
     let mut v_base = 1usize;
     let mut n_base = 1usize;
-    for ob in objects {
+    // `usemtl` stays in effect across `o` statements and OBJ has no "no
+    // material" statement, so objects without a material go first.
+    let mut order: Vec<&Prepared> = objects.iter().collect();
+    order.sort_by_key(|o| o.material.is_some());
+    for ob in order {
         let _ = writeln!(o, "o {}", line_safe(&ob.name));
         let _ = writeln!(
             o,
