@@ -1,0 +1,141 @@
+name: Release
+
+# Tag push (v*): build every package and attach them to a *draft* GitHub
+# Release for review. Manual run (workflow_dispatch): build everything and
+# upload it as workflow artifacts only (dry run, no Release).
+on:
+  push:
+    tags: ["v*"]
+    branches: [wip/ship] # TEMP: exercise packaging before merge; remove at merge
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  linux:
+    name: Linux x86-64 (tar.gz, AppImage, deb)
+    # Oldest supported Ubuntu image: binaries need glibc >= 2.35.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-deps
+        with:
+          extra: patchelf dpkg-dev desktop-file-utils
+      - uses: ./.github/actions/occt
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --workspace --release --locked
+      - name: Package
+        run: |
+          desktop-file-validate packaging/linux/newtopo.desktop
+          packaging/linux/package.sh --skip-build --out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-linux
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (installer, zip)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/occt
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --workspace --release --locked
+      - name: Package
+        shell: pwsh
+        run: packaging/windows/package.ps1 -SkipBuild -Out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-windows
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64 (app, dmg)
+    runs-on: macos-15
+    env:
+      # Room for install_name_tool to rewrite load commands.
+      RUSTFLAGS: -C link-arg=-Wl,-headerpad_max_install_names
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/occt
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --workspace --release --locked
+      - name: Package
+        run: packaging/macos/package.sh --skip-build --out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-macos
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Checksums and draft release
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: packages-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * | tee SHA256SUMS.txt
+      - name: Check tag, version and licence
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(python3 -I packaging/common/meta.py version)"
+          [ "${GITHUB_REF_NAME}" = "v$version" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
+          [ -f LICENSE ] || { echo "LICENSE missing at the repo root"; exit 1; }
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          cat > notes.md <<EOF
+          newtopo ${GITHUB_REF_NAME#v}
+
+          | System | Download |
+          | --- | --- |
+          | Windows 10/11 x64 | \`*-windows-x64-setup.exe\` (installer) or \`*-windows-x64.zip\` (portable) |
+          | macOS 11+ (Apple silicon) | \`*-macos-arm64.dmg\` |
+          | Linux x86-64 (glibc 2.35+) | \`*.AppImage\`, \`*-linux-amd64.deb\` or \`*-linux-x86_64.tar.gz\` |
+
+          The builds are not code-signed yet. See [docs/INSTALL.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/INSTALL.md)
+          for the SmartScreen and Gatekeeper steps. Verify downloads against \`SHA256SUMS.txt\`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --draft $prerelease \
+            --title "newtopo ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+      - name: Upload combined artifact (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: newtopo-packages
+          path: dist/*

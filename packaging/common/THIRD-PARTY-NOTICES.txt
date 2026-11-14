@@ -1,8 +1,9 @@
 newtopo - third-party notices
 =============================
 
-newtopo is distributed together with third-party software. This file lists
-it and the licence each part is used under. The full licence texts of the
+newtopo itself is licensed under the MIT licence (see the LICENSE file
+next to this one). It is distributed together with the third-party software
+listed below, each part under its own licence. The full licence texts of the
 components that require them are in the "licenses" folder next to this file.
 
 

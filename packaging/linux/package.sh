@@ -144,6 +144,12 @@ done
 [ -n "$occt_lic" ] || die "OCCT licence texts not found (set OCCT_DIR to an OCCT install)"
 install -Dm0644 "$occt_lic/LICENSE_LGPL_21.txt" "$doc/licenses/LICENSE_LGPL_21.txt"
 install -Dm0644 "$occt_lic/OCCT_LGPL_EXCEPTION.txt" "$doc/licenses/OCCT_LGPL_EXCEPTION.txt"
+# newtopo's own licence (MIT), from the repo root.
+if [ -f "$root/LICENSE" ]; then
+  install -Dm0644 "$root/LICENSE" "$doc/LICENSE"
+else
+  echo "warning: $root/LICENSE missing; package has no newtopo licence file" >&2
+fi
 
 # ---------------------------------------------------------------- tar.gz
 if want tar; then
@@ -163,7 +169,8 @@ Optional desktop integration for the current user:
   cp share/mime/packages/newtopo.xml ~/.local/share/mime/packages/ && update-mime-database ~/.local/share/mime
   cp -r share/icons ~/.local/share/
 
-Licences: share/doc/newtopo/THIRD-PARTY-NOTICES.txt
+Licence: share/doc/newtopo/LICENSE (MIT)
+Third-party notices: share/doc/newtopo/THIRD-PARTY-NOTICES.txt
 EOF
   tar -C "$work/tar" --owner=0 --group=0 --numeric-owner -czf "$out/$name.tar.gz" "$name"
 fi
@@ -224,8 +231,8 @@ Source: https://github.com/SilasVogt/newtopo
 
 Files: *
 Copyright: Silas Vogt
-License: proprietary
- All rights reserved.
+License: MIT
+ See /usr/share/doc/newtopo/LICENSE.
 
 Files: opt/newtopo/lib/libTK*
 Copyright: Open CASCADE SAS
