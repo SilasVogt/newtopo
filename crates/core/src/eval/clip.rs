@@ -435,7 +435,8 @@ pub fn clip(
             let (la, _) = comps[comps.len() - 1];
             ranges.push((bnds[la], n));
         }
-        let is_closed_loop = closed && ((a == 0 && b == ni - 1 && !is_stop(0.0)) || wrap_merge);
+        let any_stop = evs.iter().any(|e| e.incs.iter().any(|i| i.stop.is_some()));
+        let is_closed_loop = closed && a == 0 && b == ni - 1 && !any_stop && !wrap_merge;
         // Curves.
         let curve_base = out.curves.len();
         for &(r0, r1) in &ranges {

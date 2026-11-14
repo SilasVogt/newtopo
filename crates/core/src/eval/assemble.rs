@@ -659,8 +659,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                             if let Some(l) = lreg.get(&(fi, o)) {
                                 let curve = &fr.arr.curves[ge.curve];
                                 let total = curve.par[curve.par.len() - 1] - curve.par[0];
+                                let shifts: &[f64] = if curve.closed { &[0.0, 1.0] } else { &[0.0] };
                                 for &(t, v) in l {
-                                    for tt in [t, t + total] {
+                                    for tt in shifts.iter().map(|k| t + k * total) {
                                         if tt > plo + margin && tt < phi - margin && v != va && v != vb && !inner.iter().any(|x| x.1 == v) {
                                             inner.push((tt, v));
                                         }
@@ -680,7 +681,7 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         }
                         _ => {
                             let curve = &fr.arr.curves[ge.curve];
-                            Some(curve.par[curve.par.len() - 1] - curve.par[0])
+                            curve.closed.then(|| curve.par[curve.par.len() - 1] - curve.par[0])
                         }
                     };
                     let reg_list: Option<&Vec<(f64, usize)>> = match ge.owner {

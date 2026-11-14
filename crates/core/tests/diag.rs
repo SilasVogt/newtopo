@@ -104,6 +104,7 @@ fn diag_grid() {
     let (body, face, cu, cv) = match which.as_str() {
         "cyl" => (MockBody::cylinder(2.0, 5.0), 0, 4, 0),
         "cylv" => (MockBody::cylinder(2.0, 5.0), 0, 4, 2),
+        "tt" => (MockBody::trimmed_torus(4.0, 1.0), 0, 8, 8),
         _ => (MockBody::sphere(3.0), 0, 4, 1),
     };
     let k = Arc::new(MockKernel::new());
@@ -128,6 +129,9 @@ fn diag_grid() {
     }
     for i in issues.iter().take(10) {
         println!("ISSUE {:?} {} {:?}", i.kind, i.message, i.vertices);
+    }
+    for e in &ev.mesh.edges {
+        println!("edge {} {} {:?}", e.a, e.b, e.kind);
     }
 }
 
@@ -165,4 +169,63 @@ fn diag_glue() {
     }
     println!("cells {:?}", arr.cells.iter().map(|c| (c.inside, c.holes.len())).collect::<Vec<_>>());
     println!("regions {:?}", gl.regions);
+}
+
+#[test]
+fn diag_clip_tt() {
+    let Ok(_) = std::env::var("CLIPTT") else { return };
+    use glam::DVec2;
+    let k = Arc::new(MockKernel::new());
+    let id = k.add_body(MockBody::trimmed_torus(4.0, 1.0));
+    let kd: Arc<dyn CadKernel> = k.clone();
+    let ctx = BodyCtx::build(kd, id).unwrap();
+    let fg = ctx.face(newtopo_kernel::FaceId(0));
+    let s1 = eval::face::stage1(&ctx, BodyId(0), fg, &[]);
+    let pts = vec![DVec2::new(0.0, std::f64::consts::FRAC_PI_2), DVec2::new(std::f64::consts::TAU, std::f64::consts::FRAC_PI_2)];
+    let input = eval::clip::ClipInput {
+        who: eval::clip::Who::Line(newtopo_core::keys::LineKey { rule: newtopo_core::keys::RuleId(1), index: 9, sub: 0 }),
+        pts: &pts,
+        closed: true,
+        allowed: Some(&[0]),
+        through: false,
+        seed: None,
+        end_keys: [None, None],
+    };
+    let mut loc = |uv: DVec2| s1.locate(fg, uv);
+    let out = eval::clip::clip(fg, &input, &s1.curves, &mut loc);
+    for c in &out.curves {
+        println!("curve {:?} pts {:?} par {:?}", c.owner, c.pts, c.par);
+    }
+    for e in &out.events {
+        println!("event {:?} uv {:?} inc {:?}", e.key, e.uv, e.inc);
+    }
+}
+
+#[test]
+fn diag_tt_keys() {
+    let Ok(_) = std::env::var("TTKEYS") else { return };
+    use newtopo_core::doc::{PatchId, Spacing};
+    let k = Arc::new(MockKernel::new());
+    let id = k.add_body(MockBody::trimmed_torus(4.0, 1.0));
+    let kd: Arc<dyn CadKernel> = k.clone();
+    let ctx = BodyCtx::build(kd, id).unwrap();
+    let doc = Document::default();
+    let fg = ctx.face(newtopo_kernel::FaceId(0));
+    let s1 = eval::face::stage1(&ctx, BodyId(0), fg, &[]);
+    let mut lines = Vec::new();
+    let r = newtopo_core::doc::Rule::Grid { patch: PatchId::whole(BodyId(0), fg.id), count_u: 8, count_v: 8, start_on_seam: false, spacing: Spacing::ArcLength };
+    eval::lines::rule_lines(&ctx, &doc, BodyId(0), fg, &s1.patches, newtopo_core::keys::RuleId(1), &r, &Default::default(), &mut lines);
+    let (arr, gl) = eval::face::stage3(&ctx, fg, &s1, &lines);
+    let mut seen: std::collections::HashMap<newtopo_core::keys::VertexKey, usize> = Default::default();
+    for (i, g) in gl.gnodes.iter().enumerate() {
+        for kk in &g.keys {
+            if let Some(o) = seen.insert(kk.clone(), i) {
+                println!("DUP key {:?} in gnodes {} and {}: {:?} / {:?}", kk, o, i, gl.gnodes[o].uv, g.uv);
+            }
+        }
+    }
+    for (i, g) in gl.gnodes.iter().enumerate() {
+        if g.keys.len() > 1 { println!("multi {i} {:?} {:?}", g.uv, g.keys); }
+    }
+    println!("nodes {} gnodes {}", arr.nodes.len(), gl.gnodes.len());
 }
