@@ -259,6 +259,18 @@ impl OrbitCamera {
 
     /// Ray through a pixel (`px` measured from the viewport's top-left).
     pub fn ray(&self, px: DVec2, size_px: [f32; 2]) -> Ray {
+        self.ray_in_scene(px, size_px, self.target, self.distance * 2.0)
+    }
+
+    /// Like [`OrbitCamera::ray`]; orthographic rays start behind the whole
+    /// scene sphere so geometry in front of the eye is still hit.
+    pub fn ray_in_scene(
+        &self,
+        px: DVec2,
+        size_px: [f32; 2],
+        scene_center: DVec3,
+        scene_radius: f64,
+    ) -> Ray {
         let w = size_px[0].max(1.0) as f64;
         let h = size_px[1].max(1.0) as f64;
         let ndc_x = px.x / w * 2.0 - 1.0;
@@ -269,8 +281,12 @@ impl OrbitCamera {
         let right = self.right();
         let up = self.cam_up();
         if self.ortho {
-            let origin = self.eye() + right * (ndc_x * half_h * aspect) + up * (ndc_y * half_h)
-                - fwd * self.distance * 4.0;
+            // Start behind everything the ortho frustum can show (see
+            // `clip_planes`), not just behind the eye.
+            let back =
+                (self.eye() - scene_center).length() + scene_radius.max(0.0) * 2.0 + self.distance;
+            let origin =
+                self.eye() + right * (ndc_x * half_h * aspect) + up * (ndc_y * half_h) - fwd * back;
             Ray { origin, dir: fwd }
         } else {
             let t = (self.fov_y * 0.5).tan();
@@ -467,6 +483,15 @@ mod tests {
                 "{d:?} -> {px:?}"
             );
         }
+    }
+
+    #[test]
+    fn ortho_ray_starts_behind_scene() {
+        // Zoomed far in: the eye sits inside the scene sphere.
+        let c = OrbitCamera { ortho: true, distance: 1.0, ..Default::default() };
+        let r = c.ray_in_scene(DVec2::new(10.0, 10.0), [20.0, 20.0], DVec3::ZERO, 100.0);
+        // The origin is farther back than any point of the sphere.
+        assert!((DVec3::ZERO - r.origin).dot(r.dir) > 100.0);
     }
 
     #[test]

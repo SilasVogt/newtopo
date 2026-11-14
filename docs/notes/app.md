@@ -63,6 +63,8 @@ command degrades gracefully with no scene.
 
 1. **Engine guard.** Every `Scene` call goes through `docstate::guard`
    (`catch_unwind`), so `todo!()` stubs show a toast instead of aborting.
+   A panic inside `apply` marks the document changed and blocks further
+   `apply` calls until a new scene is loaded (the scene may be half-modified).
    Remove once the facade is complete.
 2. **No kernel constructor yet.** `docstate::make_kernel()` returns `None`;
    import/open then report "no CAD kernel in this build". Wire it to the
@@ -105,7 +107,10 @@ command degrades gracefully with no scene.
     `Scene::save` to the autosave path. The app tracks "dirty" itself
     (revision counter) because `Scene::save` may reset `is_modified`. On start,
     autosaves newer than their scene (from the recent list) are offered for
-    recovery. Clean exit removes the current autosave.
+    recovery. Exit removes the current autosave only when nothing is unsaved;
+    closing the window with unsaved work asks Save / Discard / Cancel first.
+    Unreadable settings files are kept as `*.json.bak` instead of being
+    overwritten with defaults.
 16. **Import** runs `run_import` on a worker thread with a progress bar and
     cancel (cancel flag returned from the progress callback). Files with more
     than one body open the import list (Keep/Exclude/Replace, search,

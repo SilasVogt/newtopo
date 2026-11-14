@@ -68,6 +68,7 @@ pub struct DisplayParams {
     pub wireframe: bool,
     pub show_verts: bool,
     pub show_grid: bool,
+    pub up: newtopo_render::UpAxis,
     pub hidden: BTreeSet<BodyId>,
     pub colors: OverlayColors,
 }
@@ -145,10 +146,15 @@ impl ViewData {
             && let Some((min, max)) = self.bounds
         {
             let mut grid = RenderScene::default();
+            let h = match p.up {
+                newtopo_render::UpAxis::Z => min.z,
+                newtopo_render::UpAxis::Y => min.y,
+            };
             ground_grid(
                 min,
                 max,
-                min.z - (max - min).length() * 0.001,
+                h - (max - min).length() * 0.001,
+                p.up,
                 p.colors.grid,
                 &mut grid,
             );
@@ -350,6 +356,9 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                     if output.is_none() {
                         for (ei, pl) in cad_edges {
                             let path: Vec<Vec3> = pl.iter().map(|q| xf(&m, *q)).collect();
+                            if path.len() < 2 {
+                                continue;
+                            }
                             rs.add_polyline(&path, c.cad_edge, 1.8);
                             vd.edges.push(EdgeItem {
                                 body: entry.id,
@@ -599,6 +608,7 @@ mod tests {
             wireframe: false,
             show_verts: false,
             show_grid: true,
+            up: newtopo_render::UpAxis::Z,
             hidden: BTreeSet::new(),
             colors: OverlayColors::default(),
         }

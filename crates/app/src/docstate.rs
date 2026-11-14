@@ -136,7 +136,13 @@ impl DocState {
                 Ok(o)
             }
             Ok(Err(r)) => Err(ApplyError::Refused(r)),
-            Err(e) => Err(ApplyError::Engine(e)),
+            Err(e) => {
+                // The scene may be half-modified: mark it changed and stop
+                // calling into the engine until a new scene is loaded.
+                self.bump();
+                self.engine_broken = Some(e.clone());
+                Err(ApplyError::Engine(e))
+            }
         }
     }
 

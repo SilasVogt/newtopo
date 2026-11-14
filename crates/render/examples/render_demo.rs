@@ -34,7 +34,14 @@ fn main() -> anyhow::Result<()> {
     let mut scene = build_scene(&bodies, &colors, disp);
     let (min, max) = scene.bounds().unwrap();
     let mut grid = newtopo_render::RenderScene::default();
-    ground_grid(min, max, -0.01, colors.grid, &mut grid);
+    ground_grid(
+        min,
+        max,
+        -0.01,
+        newtopo_render::UpAxis::Z,
+        colors.grid,
+        &mut grid,
+    );
     if has("--sym") {
         scene.add_plane(
             Vec3::new(0.0, 0.0, 20.0),

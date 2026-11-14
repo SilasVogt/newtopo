@@ -122,7 +122,10 @@ pub struct ToolState {
     pub last_lines_added: Option<u32>,
     pub picking_guide: bool,
     wheel_last: Option<f64>,
-    wheel_applied: bool,
+    /// Undo steps the current wheel gesture added, and the document
+    /// revision right after them (merge only if nothing else happened).
+    wheel_steps: usize,
+    wheel_rev: u64,
     pub iso_dir: IsoDirSel,
     pub iso_split: bool,
     pub iso_through: bool,
@@ -371,30 +374,32 @@ impl AppState {
         // Coalescing workaround (facade has no begin/end gesture API):
         // undo the previous step of this gesture, then apply the new one.
         let merge = coalesce
-            && self.tool.wheel_applied
+            && self.tool.wheel_steps > 0
+            && self.tool.wheel_rev == self.doc.revision
             && self
                 .tool
                 .wheel_last
                 .is_some_and(|t| self.time - t <= COALESCE_SECS);
         if merge {
-            for _ in 0..ops.len() {
+            for _ in 0..self.tool.wheel_steps {
                 self.undo();
             }
         }
         let mut total = 0;
-        let mut ok = false;
+        let mut steps = 0;
         for op in ops {
             if let Some(o) = self.apply(op) {
                 total += o.lines_added;
-                ok = true;
+                steps += 1;
             }
         }
-        self.tool.last_lines_added = ok.then_some(total);
+        self.tool.last_lines_added = (steps > 0).then_some(total);
         if coalesce {
-            self.tool.wheel_applied = ok;
+            self.tool.wheel_steps = steps;
+            self.tool.wheel_rev = self.doc.revision;
             self.tool.wheel_last = Some(self.time);
         } else {
-            self.tool.wheel_applied = false;
+            self.tool.wheel_steps = 0;
             self.tool.wheel_last = None;
         }
     }

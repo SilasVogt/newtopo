@@ -179,6 +179,16 @@ impl AppState {
     }
 
     pub fn start_import(&mut self, path: PathBuf) {
+        if self.jobs.import.is_some() {
+            self.toast(
+                ToastKind::Info,
+                format!(
+                    "An import is already running; {} was not imported.",
+                    path.display()
+                ),
+            );
+            return;
+        }
         let progress = Arc::new(Mutex::new((0.0f32, String::from("Starting…"))));
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
@@ -353,7 +363,7 @@ impl AppState {
             if is_cad(&p) {
                 self.start_import(p);
             } else if is_scene(&p) {
-                self.open_scene(Some(p));
+                self.request(PendingAfterPrompt::Open(Some(p)));
             } else {
                 self.toast(
                     ToastKind::Warn,
@@ -449,7 +459,8 @@ impl AppState {
                     .set_file_name(name)
                     .save_file()
                 {
-                    Some(p) => p.with_extension("ntopo"),
+                    Some(p) if p.extension().is_none() => p.with_extension("ntopo"),
+                    Some(p) => p,
                     None => return,
                 }
             }
@@ -545,7 +556,11 @@ impl AppState {
         else {
             return;
         };
-        let path = path.with_extension(ext);
+        let path = if path.extension().is_none() {
+            path.with_extension(ext)
+        } else {
+            path
+        };
         let Some(scene) = self.doc.scene.as_ref() else {
             return;
         };

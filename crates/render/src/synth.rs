@@ -492,7 +492,31 @@ pub fn face_tint(b: &SynthBody, face: u32, color: [f32; 4], out: &mut RenderScen
 }
 
 /// Ground grid lines under a bounding box, in the z = `z` plane.
-pub fn ground_grid(min: Vec3, max: Vec3, z: f32, color: [f32; 4], out: &mut RenderScene) {
+/// Ground grid under the bounds, in the plane perpendicular to `up` at
+/// height `z` (along `up`).
+pub fn ground_grid(
+    min: Vec3,
+    max: Vec3,
+    z: f32,
+    up: crate::camera::UpAxis,
+    color: [f32; 4],
+    out: &mut RenderScene,
+) {
+    // Work in (a, b, height) coordinates; map back per axis convention.
+    let to_local = |v: Vec3| match up {
+        crate::camera::UpAxis::Z => v,
+        crate::camera::UpAxis::Y => Vec3::new(v.x, v.z, v.y),
+    };
+    let to_world = |v: Vec3| match up {
+        crate::camera::UpAxis::Z => v,
+        crate::camera::UpAxis::Y => Vec3::new(v.x, v.z, v.y),
+    };
+    let (min, max) = (
+        to_local(min).min(to_local(max)),
+        to_local(min).max(to_local(max)),
+    );
+    let mut local = RenderScene::default();
+    let out_local = &mut local;
     let size = (max - min).truncate().max_element().max(1.0);
     let step = 10f32.powf((size / 4.0).log10().floor()).max(1e-3);
     let c = ((min + max) * 0.5).truncate();
@@ -508,19 +532,24 @@ pub fn ground_grid(min: Vec3, max: Vec3, z: f32, color: [f32; 4], out: &mut Rend
         };
         let gx = (c.x / step).round() * step;
         let gy = (c.y / step).round() * step;
-        out.add_segment(
+        out_local.add_segment(
             Vec3::new(gx + k, gy - half, z),
             Vec3::new(gx + k, gy + half, z),
             col,
             1.0,
         );
-        out.add_segment(
+        out_local.add_segment(
             Vec3::new(gx - half, gy + k, z),
             Vec3::new(gx + half, gy + k, z),
             col,
             1.0,
         );
     }
+    for l in &mut local.lines {
+        l.a = to_world(Vec3::from_array(l.a)).to_array();
+        l.b = to_world(Vec3::from_array(l.b)).to_array();
+    }
+    out.lines.extend(local.lines);
 }
 
 #[cfg(test)]

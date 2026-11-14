@@ -300,6 +300,17 @@ impl App {
         let ctx = ui.ctx().clone();
         let st = &mut self.st;
         st.time = ctx.input(|i| i.time);
+        // Closing the window with unsaved work asks first.
+        if ctx.input(|i| i.viewport().close_requested())
+            && st.doc.is_dirty()
+            && !st.quit
+            && !st.screenshot_mode
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if st.ui.unsaved_prompt.is_none() {
+                st.request(PendingAfterPrompt::Quit);
+            }
+        }
         st.ensure_theme(&ctx);
         st.poll_jobs(&ctx);
         st.handle_dropped_files(&ctx);
@@ -412,7 +423,11 @@ impl App {
             st.paths.file("layout.json").as_deref(),
             &Some(layout.clone()),
         );
-        crate::jobs::remove_autosaves(st);
+        // Keep the autosave if work is unsaved (the window can close
+        // without the prompt when the OS kills it).
+        if !st.doc.is_dirty() {
+            crate::jobs::remove_autosaves(st);
+        }
     }
 }
 
@@ -574,6 +589,7 @@ impl AppState {
             wireframe: self.view.wireframe,
             show_verts: self.mode == Mode::Vertex && !self.view.preview,
             show_grid: self.prefs.show_grid,
+            up: self.prefs.up,
             hidden: self.effective_hidden(),
             colors: self.colors(),
         };
@@ -875,7 +891,7 @@ impl AppState {
         );
     }
 
-    fn request(&mut self, what: PendingAfterPrompt) {
+    pub fn request(&mut self, what: PendingAfterPrompt) {
         if self.doc.is_dirty() {
             self.ui.unsaved_prompt = Some(what);
         } else {

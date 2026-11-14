@@ -233,9 +233,12 @@ impl AppState {
                     continue;
                 }
                 let anchor = hover.map(|p| {
-                    let ray = self.view.camera.ray(
+                    let (sc, sr) = self.scene_sphere();
+                    let ray = self.view.camera.ray_in_scene(
                         self.local(p),
                         [self.view.rect.width(), self.view.rect.height()],
+                        sc,
+                        sr,
                     );
                     match self.vd.pick.raycast(&ray, |_| false) {
                         Some(h) => h.point,
@@ -343,7 +346,8 @@ impl AppState {
         let size = [self.view.rect.width(), self.view.rect.height()];
         match kind {
             Mode::Object | Mode::Face => {
-                let ray = self.view.camera.ray(local, size);
+                let (sc, sr) = self.scene_sphere();
+                let ray = self.view.camera.ray_in_scene(local, size, sc, sr);
                 let h = self
                     .vd
                     .pick
@@ -401,9 +405,9 @@ impl AppState {
         ) {
             return;
         }
-        let pos = ui
-            .input(|i| i.pointer.hover_pos())
-            .filter(|p| self.view.rect.contains(*p) && resp.hovered());
+        let pos = ui.input(|i| i.pointer.hover_pos()).filter(|p| {
+            self.view.rect.contains(*p) && !cube_area(self.view.rect).contains(*p) && resp.hovered()
+        });
         self.ui_pointer = pos;
         let new = pos.and_then(|p| match self.tool.active {
             Tool::Cut => {
@@ -424,8 +428,13 @@ impl AppState {
 
     fn handle_clicks(&mut self, ui: &mut Ui, resp: &egui::Response) {
         // The view cube and its buttons own their area.
-        let press = ui.input(|i| i.pointer.press_origin());
-        if press.is_some_and(|p| cube_area(self.view.rect).contains(p)) && self.has_content() {
+        let at = ui.input(|i| {
+            i.pointer
+                .press_origin()
+                .or(i.pointer.interact_pos())
+                .or(i.pointer.hover_pos())
+        });
+        if at.is_some_and(|p| cube_area(self.view.rect).contains(p)) && self.has_content() {
             return;
         }
         let mods = ui.input(|i| i.modifiers);

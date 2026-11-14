@@ -215,7 +215,11 @@ pub fn load_json<T: for<'de> Deserialize<'de> + Default>(path: Option<&Path>) ->
         .and_then(|s| match serde_json::from_str(&s) {
             Ok(v) => Some(v),
             Err(e) => {
+                // Keep the unreadable file instead of overwriting it with defaults.
                 log::warn!("ignoring unreadable settings file: {e}");
+                if let Some(p) = path {
+                    let _ = std::fs::rename(p, p.with_extension("json.bak"));
+                }
                 None
             }
         })
