@@ -12,6 +12,7 @@ use glam::{DMat4, DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod helper;
 pub mod mock;
 #[cfg(feature = "occt")]
 pub mod occt;
