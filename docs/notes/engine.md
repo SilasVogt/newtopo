@@ -49,6 +49,7 @@ For the lead to fold into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
 | 24 | Canonical vertex key among aliases. | Smallest key excluding transient seam-crossing keys. |
 | 25 | Mock `.bbrep` bytes. | `NTMOCKBREP1\n` + JSON of `MockBody` (`serde_json` with `float_roundtrip`). |
 | 26 | `cad/source.sha256` layout. | One line per body: `<body id> <sha256 hex>`. |
+| 27 | Edges that join the same two vertices after dropping seam vertices / collapsing poles (sphere lunes between bare meridians, a chord against an arc). | Curved ones are split at their midpoint (`HMesh::split_parallel_edges`, placeholder keys `i ≥ 20000`) before bridging. |
 
 ## Known gaps
 
@@ -57,7 +58,11 @@ For the lead to fold into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
   one-patch change re-evaluates the whole body. Budgets (16 ms / 300 ms for
   2,000 faces) need per-face caching of stages 1–3 and per-region caching
   of bridging/fill.
-- A slice with one plane through the middle of a planar ring is refused
-  (half-annulus polygons with only collinear vertices); placeholders only
-  cover loops with < 3 vertices.
+- The validation gate refuses some ops whose result the evaluator can't
+  make valid. Seeded property run, 200 cases (release): 469 accepted, 89
+  refused, 22 of them by the gate; the rest are tool rules (pole edits,
+  missing edges, confirmations). Remaining gate refusals: a slice with one
+  or two planes through a planar ring, plate or sphere (polygons whose
+  vertices end up collinear), split-through iso on a torus, removing a
+  meridian edge on a bare torus.
 - Link, symmetry and copy/paste rules (§6.11–§6.13) are not implemented.

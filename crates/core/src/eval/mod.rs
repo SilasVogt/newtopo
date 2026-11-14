@@ -339,7 +339,8 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         }
     }
     lap("edits");
-    // 6. Bridging.
+    // 6. Bridging (after splitting parallel curved edges).
+    mesh.split_parallel_edges(ctx, &pole_target);
     let failed = bridge::bridge_all(ctx, &mut mesh, &pole_target);
     lap("bridge");
     for r in failed {

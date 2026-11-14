@@ -590,12 +590,15 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             // where it started (possibly one period further).
             let mut poly: Vec<DVec2> = Vec::new();
             let mut seg_tag: Vec<usize> = Vec::new();
+            let mut seg_par: Vec<(f64, f64)> = Vec::new();
             let mut node_at: Vec<(usize, usize)> = Vec::new();
             for &(e, fwd) in &seq {
                 let ge = &gl.gedges[e];
                 let mut pts: Vec<DVec2> = ge.pts.clone();
+                let mut prs: Vec<f64> = ge.pars.clone();
                 if !fwd {
                     pts.reverse();
+                    prs.reverse();
                 }
                 let shift = match poly.last() {
                     Some(&last) => fg.lift_near(pts[0], last) - pts[0],
@@ -603,10 +606,11 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 };
                 node_at.push((poly.len().saturating_sub(1), if fwd { ge.a } else { ge.b }));
                 let skip = if poly.is_empty() { 0 } else { 1 };
-                for p in pts.iter().skip(skip) {
+                for (kk, p) in pts.iter().enumerate().skip(skip) {
                     poly.push(*p + shift);
                     if poly.len() > 1 {
                         seg_tag.push(e);
+                        seg_par.push((prs[kk.saturating_sub(1)], prs[kk]));
                     }
                 }
             }
@@ -617,15 +621,20 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             let k = 8;
             let mut d_uv: Vec<DVec2> = Vec::new();
             let mut d_tag: Vec<usize> = Vec::new();
+            let mut d_par: Vec<f64> = Vec::new();
             for i in 0..poly.len() - 1 {
                 let (a, b) = (poly[i], poly[i + 1]);
+                let (pa, pb) = seg_par[i];
                 for j in 0..k {
-                    d_uv.push(a + (b - a) * (j as f64 / k as f64));
+                    let f = j as f64 / k as f64;
+                    d_uv.push(a + (b - a) * f);
                     d_tag.push(seg_tag[i]);
+                    d_par.push(pa + (pb - pa) * f);
                 }
             }
             d_uv.push(*poly.last().unwrap());
             d_tag.push(*seg_tag.last().unwrap());
+            d_par.push(seg_par.last().unwrap().1);
             let d_src = |poly_idx: usize| poly_idx * k;
             let ev = ctx.face_eval(fr.face, &d_uv);
             if ev.len() != d_uv.len() {
@@ -684,18 +693,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 let next_c = cum[i + 1];
                 let f = ((s - cum[i]) / (next_c - cum[i]).max(1e-300)).clamp(0.0, 1.0);
                 let uv = fg.wrap(uv0 + (uv1 - uv0) * f);
-                // Parameter on the owner curve: project onto the gedge.
-                let ge_i = d_tag[i];
-                let ge = &gl.gedges[ge_i];
-                let mut best = (f64::INFINITY, ge.pa);
-                for j in 0..ge.pts.len().saturating_sub(1) {
-                    let (a, b) = (ge.pts[j], ge.pts[j + 1]);
-                    let q = fg.lift_near(uv, a);
-                    let (d, t) = super::geom2::dist_point_seg(q, a, b);
-                    if d < best.0 {
-                        best = (d, ge.pars[j] + (ge.pars[j + 1] - ge.pars[j]) * t);
-                    }
-                }
+                // Parameter on the owner curve, interpolated along the loop.
+                let _ = d_tag[i];
+                let best = (0.0, d_par[i] + (d_par[i + 1] - d_par[i]) * f);
                 let key = VertexKey::Placeholder {
                     lp: lid.clone(),
                     i: k,

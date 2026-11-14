@@ -295,19 +295,36 @@ fn save_load_and_newer_format() {
     let path = dir.path().join("a.ntopo");
     s.save(&path).unwrap();
     assert!(!s.is_modified());
-    let mut s2 = newtopo_core::Scene::load(std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new()), &path).unwrap();
+    let mut s2 = newtopo_core::Scene::load(
+        std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new()),
+        &path,
+    )
+    .unwrap();
     assert_eq!(s2.doc(), s.doc());
-    assert_eq!(s2.output_of(b).unwrap().polygons, s.output_of(b).unwrap().polygons);
-    assert!(s2.body_view(b).is_some_and(|v| v.face_meshes.len() == 3 && v.edge_polylines.len() == 3));
+    assert_eq!(
+        s2.output_of(b).unwrap().polygons,
+        s.output_of(b).unwrap().polygons
+    );
+    assert!(
+        s2.body_view(b)
+            .is_some_and(|v| v.face_meshes.len() == 3 && v.edge_polylines.len() == 3)
+    );
     // Bump the format version and expect a clear refusal.
     let mut doc = s.doc().clone();
     doc.format_version = 99;
     let newer = dir.path().join("b.ntopo");
     let f = std::fs::File::create(&newer).unwrap();
     let mut z = zip::ZipWriter::new(f);
-    z.start_file("scene.json", zip::write::SimpleFileOptions::default()).unwrap();
-    z.write_all(serde_json::to_string(&doc).unwrap().as_bytes()).unwrap();
+    z.start_file("scene.json", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    z.write_all(serde_json::to_string(&doc).unwrap().as_bytes())
+        .unwrap();
     z.finish().unwrap();
-    let err = newtopo_core::Scene::load(std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new()), &newer).err().unwrap();
+    let err = newtopo_core::Scene::load(
+        std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new()),
+        &newer,
+    )
+    .err()
+    .unwrap();
     assert!(err.to_string().contains("newer version"), "{err}");
 }

@@ -482,3 +482,184 @@ impl HMesh {
             .filter(|&v| self.verts[v].alive)
     }
 }
+
+impl HMesh {
+    /// Split curved edges that join the same two (final) vertices as another
+    /// edge, so no polygon degenerates to a 2-gon (e.g. sphere lunes between
+    /// two meridians, a chord against an arc whose vertex was dropped).
+    pub fn split_parallel_edges(
+        &mut self,
+        ctx: &super::ctx::BodyCtx,
+        pole_target: &HashMap<newtopo_kernel::EdgeId, usize>,
+    ) {
+        use super::Owner;
+        use crate::keys::LoopId;
+        let mut groups: std::collections::BTreeMap<(usize, usize), Vec<usize>> = Default::default();
+        for h in self.alive_he() {
+            let t = self.he[h].twin.unwrap_or(h);
+            if t < h && self.he[t].alive {
+                continue;
+            }
+            let (a, b) = (
+                self.final_v(self.he[h].from, pole_target),
+                self.final_v(self.he[h].to, pole_target),
+            );
+            if a == b {
+                continue;
+            }
+            groups.entry((a.min(b), a.max(b))).or_default().push(h);
+        }
+        let mut serial = 0u32;
+        for (_, hs) in groups.into_iter().filter(|(_, v)| v.len() >= 2) {
+            for h in hs {
+                let he = self.he[h].clone();
+                if matches!(he.owner, Owner::Pole(_)) || he.uv.len() < 2 {
+                    continue;
+                }
+                // Midpoint of the path (by parameter along the polyline).
+                let uv = if he.uv.len() == 2 {
+                    (he.uv[0] + he.uv[1]) * 0.5
+                } else {
+                    he.uv[he.uv.len() / 2]
+                };
+                let ev = ctx.face_eval(he.face, &[he.uv[0], uv, *he.uv.last().unwrap()]);
+                if ev.len() != 3 {
+                    continue;
+                }
+                let dev = (ev[1].p - (ev[0].p + ev[2].p) * 0.5).length();
+                if dev <= 1e-6 * ctx.size + 1e-3 * (ev[2].p - ev[0].p).length() {
+                    continue;
+                }
+                let fg = ctx.face(he.face);
+                let (anchor, lp) = match he.owner {
+                    Owner::Cad(e) => {
+                        let t = ctx
+                            .kernel
+                            .project_to_edge(ctx.kbody, e, &[ev[1].p])
+                            .ok()
+                            .and_then(|v| v[0]);
+                        let Some(t) = t else { continue };
+                        (Anchor::CadEdge { edge: e, t }, LoopId::Cad(vec![e]))
+                    }
+                    Owner::Line(k) => (
+                        Anchor::Face {
+                            face: he.face,
+                            uv: fg.wrap(uv),
+                        },
+                        LoopId::Line(k),
+                    ),
+                    Owner::Split(s) => (
+                        Anchor::Face {
+                            face: he.face,
+                            uv: fg.wrap(uv),
+                        },
+                        LoopId::Split(s),
+                    ),
+                    Owner::Seam(d) => (
+                        Anchor::Face {
+                            face: he.face,
+                            uv: fg.wrap(uv),
+                        },
+                        LoopId::Seam(he.face, d),
+                    ),
+                    _ => (
+                        Anchor::Face {
+                            face: he.face,
+                            uv: fg.wrap(uv),
+                        },
+                        LoopId::Seam(he.face, 9),
+                    ),
+                };
+                let pos = match anchor {
+                    Anchor::CadEdge { edge, t } => ctx.edge_point(edge, t),
+                    _ => ev[1].p,
+                };
+                serial += 1;
+                let key = VertexKey::Placeholder {
+                    lp,
+                    i: 20_000 + serial,
+                };
+                let m = self.verts.len();
+                self.verts.push(super::assemble::GVert {
+                    key: key.clone(),
+                    keys: vec![key],
+                    anchor,
+                    pole: None,
+                    pos,
+                    alive: true,
+                });
+                // Split h (a→b) into a→m, m→b and its twin likewise.
+                let cut = |path: &[DVec2]| -> (Vec<DVec2>, Vec<DVec2>) {
+                    if path.len() == 2 {
+                        (vec![path[0], uv], vec![uv, path[1]])
+                    } else {
+                        let k = path.len() / 2;
+                        (path[..=k].to_vec(), path[k..].to_vec())
+                    }
+                };
+                let (p1, p2) = cut(&he.uv);
+                let h2 = self.he.len();
+                self.he.push(HE {
+                    from: m,
+                    to: he.to,
+                    twin: None,
+                    next: he.next,
+                    region: he.region,
+                    owner: he.owner,
+                    face: he.face,
+                    uv: p2,
+                    p3: None,
+                    alive: true,
+                    src: he.src.clone(),
+                });
+                self.he[h].to = m;
+                self.he[h].uv = p1;
+                self.he[h].p3 = None;
+                self.he[h].next = h2;
+                if let Some(t) = he.twin {
+                    let te = self.he[t].clone();
+                    let (q1, q2) = if te.uv.len() >= 2 {
+                        // The twin may live in another face's chart.
+                        let mid_t = if te.face == he.face {
+                            uv
+                        } else if te.uv.len() == 2 {
+                            (te.uv[0] + te.uv[1]) * 0.5
+                        } else {
+                            te.uv[te.uv.len() / 2]
+                        };
+                        if te.uv.len() == 2 {
+                            (vec![te.uv[0], mid_t], vec![mid_t, te.uv[1]])
+                        } else {
+                            let k = te.uv.len() / 2;
+                            (te.uv[..=k].to_vec(), te.uv[k..].to_vec())
+                        }
+                    } else {
+                        (vec![], vec![])
+                    };
+                    let t2 = self.he.len();
+                    self.he.push(HE {
+                        from: m,
+                        to: te.to,
+                        twin: Some(h),
+                        next: te.next,
+                        region: te.region,
+                        owner: te.owner,
+                        face: te.face,
+                        uv: q2,
+                        p3: None,
+                        alive: true,
+                        src: te.src.clone(),
+                    });
+                    self.he[t].to = m;
+                    self.he[t].uv = q1;
+                    self.he[t].p3 = None;
+                    self.he[t].next = t2;
+                    self.he[h].twin = Some(t2);
+                    self.he[h2].twin = Some(t);
+                    self.he[t].twin = Some(h2);
+                }
+            }
+        }
+        self.rebuild_key_index();
+    }
+}
