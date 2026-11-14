@@ -121,7 +121,8 @@ Ubuntu:
 
 ```sh
 sudo apt install build-essential cmake ninja-build pkg-config \
-  libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+  libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+  libgl1-mesa-dev
 ```
 
 **1. Build Open CASCADE (OCCT) 8.0.1** once, into a prefix of your choice:
@@ -133,7 +134,8 @@ scripts/build-occt.sh "$HOME/.cache/newtopo-occt/install"         # Linux, macOS
 scripts\build-occt.ps1 -Prefix "$env:LOCALAPPDATA\newtopo-occt"    # Windows
 ```
 
-(CI uses the same recipe in `.github/scripts/`.) It takes 20 to 60 minutes.
+If `scripts/` doesn't have these yet, use the identical CI copies in
+`.github/scripts/`. The build takes 20 to 60 minutes.
 
 **2. Point the build at it and build:**
 
