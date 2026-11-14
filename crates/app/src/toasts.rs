@@ -32,12 +32,21 @@ impl Toasts {
         let text = text.into();
         // Repeating the same message refreshes it instead of stacking.
         self.items.retain(|t| t.text != text);
-        self.items.push(Toast { kind, text, born: now });
-        log::info!("toast: {}", self.items.last().map(|t| t.text.as_str()).unwrap_or(""));
+        self.items.push(Toast {
+            kind,
+            text,
+            born: now,
+        });
+        log::info!(
+            "toast: {}",
+            self.items.last().map(|t| t.text.as_str()).unwrap_or("")
+        );
     }
 
     pub fn show(&mut self, ctx: &egui::Context, pal: &Palette, now: f64) {
-        self.items.retain(|t| now - t.born < LIFETIME + if t.kind == ToastKind::Error { 3.0 } else { 0.0 });
+        self.items.retain(|t| {
+            now - t.born < LIFETIME + if t.kind == ToastKind::Error { 3.0 } else { 0.0 }
+        });
         if self.items.is_empty() {
             return;
         }
@@ -62,13 +71,30 @@ impl Toasts {
                         .fill(pal.panel_raised.gamma_multiply(fade.max(0.05)))
                         .stroke(Stroke::new(1.0, pal.border.gamma_multiply(fade)))
                         .corner_radius(10)
-                        .inner_margin(egui::Margin { left: 12, right: 14, top: 8, bottom: 8 })
-                        .shadow(egui::Shadow { offset: [0, 4], blur: 14, spread: 0, color: egui::Color32::from_black_alpha((70.0 * fade) as u8) })
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 14,
+                            top: 8,
+                            bottom: 8,
+                        })
+                        .shadow(egui::Shadow {
+                            offset: [0, 4],
+                            blur: 14,
+                            spread: 0,
+                            color: egui::Color32::from_black_alpha((70.0 * fade) as u8),
+                        })
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
+                                let (r, _) =
+                                    ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
                                 icons::paint(ui.painter(), r, icon, col.gamma_multiply(fade));
-                                ui.add(egui::Label::new(RichText::new(&t.text).color(pal.text_strong.gamma_multiply(fade))).wrap());
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&t.text)
+                                            .color(pal.text_strong.gamma_multiply(fade)),
+                                    )
+                                    .wrap(),
+                                );
                             });
                         });
                     ui.add_space(6.0);

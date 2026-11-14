@@ -44,7 +44,11 @@ pub enum DragState {
 }
 
 /// Which navigation a pointer button + modifiers means for a preset.
-pub fn nav_for(preset: NavPreset, button: egui::PointerButton, m: egui::Modifiers) -> Option<NavKind> {
+pub fn nav_for(
+    preset: NavPreset,
+    button: egui::PointerButton,
+    m: egui::Modifiers,
+) -> Option<NavKind> {
     use egui::PointerButton::*;
     let ctrl = m.ctrl || m.command;
     match preset {
@@ -83,18 +87,31 @@ fn combine_from(m: egui::Modifiers) -> Combine {
 impl AppState {
     pub fn camera_matrices(&self) -> CameraMatrices {
         let (c, r) = self.scene_sphere();
-        self.view.camera.matrices([self.view.rect.width().max(1.0), self.view.rect.height().max(1.0)], c, r)
+        self.view.camera.matrices(
+            [
+                self.view.rect.width().max(1.0),
+                self.view.rect.height().max(1.0),
+            ],
+            c,
+            r,
+        )
     }
 
     pub fn scene_sphere(&self) -> (DVec3, f64) {
         match self.vd.bounds {
-            Some((a, b)) => (((a + b) * 0.5).as_dvec3(), ((b - a).length() * 0.5).max(1e-3) as f64),
+            Some((a, b)) => (
+                ((a + b) * 0.5).as_dvec3(),
+                ((b - a).length() * 0.5).max(1e-3) as f64,
+            ),
             None => (DVec3::ZERO, 50.0),
         }
     }
 
     fn local(&self, p: Pos2) -> DVec2 {
-        DVec2::new((p.x - self.view.rect.left()) as f64, (p.y - self.view.rect.top()) as f64)
+        DVec2::new(
+            (p.x - self.view.rect.left()) as f64,
+            (p.y - self.view.rect.top()) as f64,
+        )
     }
 
     pub fn viewport_ui(&mut self, ui: &mut Ui) {
@@ -123,8 +140,19 @@ impl AppState {
         if ui.ctx().input(|i| !i.raw.hovered_files.is_empty()) {
             let p = ui.painter();
             p.rect_filled(rect.shrink(8.0), 12.0, self.pal.accent.gamma_multiply(0.08));
-            p.rect_stroke(rect.shrink(8.0), 12.0, Stroke::new(2.0, self.pal.accent), egui::StrokeKind::Inside);
-            p.text(rect.center(), egui::Align2::CENTER_CENTER, S::VP_DROP, crate::theme::medium(20.0), self.pal.accent);
+            p.rect_stroke(
+                rect.shrink(8.0),
+                12.0,
+                Stroke::new(2.0, self.pal.accent),
+                egui::StrokeKind::Inside,
+            );
+            p.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                S::VP_DROP,
+                crate::theme::medium(20.0),
+                self.pal.accent,
+            );
         }
     }
 
@@ -132,10 +160,20 @@ impl AppState {
 
     fn navigate(&mut self, ui: &mut Ui, resp: &egui::Response) {
         let (mods, delta, pressed_btn, any_down, hover) = ui.input(|i| {
-            let pressed = [egui::PointerButton::Primary, egui::PointerButton::Middle, egui::PointerButton::Secondary]
-                .into_iter()
-                .find(|b| i.pointer.button_pressed(*b));
-            (i.modifiers, i.pointer.delta(), pressed, i.pointer.any_down(), i.pointer.hover_pos())
+            let pressed = [
+                egui::PointerButton::Primary,
+                egui::PointerButton::Middle,
+                egui::PointerButton::Secondary,
+            ]
+            .into_iter()
+            .find(|b| i.pointer.button_pressed(*b));
+            (
+                i.modifiers,
+                i.pointer.delta(),
+                pressed,
+                i.pointer.any_down(),
+                i.pointer.hover_pos(),
+            )
         });
         let inside = hover.is_some_and(|p| self.view.rect.contains(p)) && resp.hovered();
         if let Some(b) = pressed_btn
@@ -150,9 +188,15 @@ impl AppState {
             } else {
                 let h = self.view.rect.height().max(1.0) as f64;
                 match kind {
-                    NavKind::Orbit => self.view.camera.orbit(-delta.x as f64 * 0.008, delta.y as f64 * 0.008),
+                    NavKind::Orbit => self
+                        .view
+                        .camera
+                        .orbit(-delta.x as f64 * 0.008, delta.y as f64 * 0.008),
                     NavKind::Pan => self.view.camera.pan_px(delta.x as f64, delta.y as f64, h),
-                    NavKind::Zoom => self.view.camera.zoom((1.0 + delta.y as f64 * 0.006).max(0.1), None),
+                    NavKind::Zoom => self
+                        .view
+                        .camera
+                        .zoom((1.0 + delta.y as f64 * 0.006).max(0.1), None),
                 }
                 ui.ctx().request_repaint();
             }
@@ -164,7 +208,12 @@ impl AppState {
                 i.events
                     .iter()
                     .filter_map(|e| match e {
-                        egui::Event::MouseWheel { unit, delta, modifiers, .. } => Some((*delta, *unit, *modifiers)),
+                        egui::Event::MouseWheel {
+                            unit,
+                            delta,
+                            modifiers,
+                            ..
+                        } => Some((*delta, *unit, *modifiers)),
                         _ => None,
                     })
                     .collect()
@@ -184,12 +233,16 @@ impl AppState {
                     continue;
                 }
                 let anchor = hover.map(|p| {
-                    let ray = self.view.camera.ray(self.local(p), [self.view.rect.width(), self.view.rect.height()]);
+                    let ray = self.view.camera.ray(
+                        self.local(p),
+                        [self.view.rect.width(), self.view.rect.height()],
+                    );
                     match self.vd.pick.raycast(&ray, |_| false) {
                         Some(h) => h.point,
                         None => {
                             let n = self.view.camera.forward();
-                            let t = (self.view.camera.target - ray.origin).dot(n) / ray.dir.dot(n).max(1e-9);
+                            let t = (self.view.camera.target - ray.origin).dot(n)
+                                / ray.dir.dot(n).max(1e-9);
                             ray.at(t)
                         }
                     }
@@ -200,9 +253,13 @@ impl AppState {
     }
 
     pub fn frame_bounds(&mut self, b: Option<(Vec3, Vec3)>) {
-        let Some((min, max)) = b.or(self.vd.bounds) else { return };
+        let Some((min, max)) = b.or(self.vd.bounds) else {
+            return;
+        };
         let aspect = (self.view.rect.width() / self.view.rect.height().max(1.0)).max(0.1) as f64;
-        self.view.camera.frame_aabb(min.as_dvec3(), max.as_dvec3(), aspect);
+        self.view
+            .camera
+            .frame_aabb(min.as_dvec3(), max.as_dvec3(), aspect);
     }
 
     /// Frame the selection in the current mode, or everything (SPEC §5.2).
@@ -215,14 +272,21 @@ impl AppState {
         };
         match self.mode {
             Mode::Object => {
-                if let Some((a, b)) = self.vd.bounds_of(&self.sel.objects).filter(|_| !self.sel.objects.is_empty()) {
+                if let Some((a, b)) = self
+                    .vd
+                    .bounds_of(&self.sel.objects)
+                    .filter(|_| !self.sel.objects.is_empty())
+                {
                     add(a);
                     add(b);
                 }
             }
             Mode::Face => {
                 for (b, f) in &self.sel.faces {
-                    if let Some(tris) = self.vd.face_tris.get(&FaceRef { body: b.0, face: f.0 }) {
+                    if let Some(tris) = self.vd.face_tris.get(&FaceRef {
+                        body: b.0,
+                        face: f.0,
+                    }) {
                         for &t in tris {
                             for i in self.vd.pick.tris[t as usize] {
                                 add(self.vd.pick.positions[i as usize]);
@@ -280,8 +344,15 @@ impl AppState {
         match kind {
             Mode::Object | Mode::Face => {
                 let ray = self.view.camera.ray(local, size);
-                let h = self.vd.pick.raycast(&ray, |f| self.is_locked(BodyId(f.body)))?;
-                Some(if kind == Mode::Object { Hover::Object(BodyId(h.face.body), h.point) } else { Hover::Face(h.face, h.point) })
+                let h = self
+                    .vd
+                    .pick
+                    .raycast(&ray, |f| self.is_locked(BodyId(f.body)))?;
+                Some(if kind == Mode::Object {
+                    Hover::Object(BodyId(h.face.body), h.point)
+                } else {
+                    Hover::Face(h.face, h.point)
+                })
             }
             Mode::Edge => {
                 let allow_fill = self.prefs.select_fill_edges;
@@ -294,7 +365,11 @@ impl AppState {
                         .edges
                         .iter()
                         .enumerate()
-                        .filter(|(_, e)| e.sel.is_some() && (allow_fill || e.kind != EdgeKind::Fill) && !self.is_locked(e.body))
+                        .filter(|(_, e)| {
+                            e.sel.is_some()
+                                && (allow_fill || e.kind != EdgeKind::Fill)
+                                && !self.is_locked(e.body)
+                        })
                         .map(|(i, e)| (i, e.path.as_slice())),
                     vis,
                 )?;
@@ -306,7 +381,12 @@ impl AppState {
                     &cam,
                     local,
                     10.0,
-                    self.vd.verts.iter().enumerate().filter(|(_, v)| !self.is_locked(v.body)).map(|(i, v)| (i, v.pos)),
+                    self.vd
+                        .verts
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, v)| !self.is_locked(v.body))
+                        .map(|(i, v)| (i, v.pos)),
                     vis,
                 )?;
                 Some(Hover::Vert(i))
@@ -315,10 +395,15 @@ impl AppState {
     }
 
     fn update_hover(&mut self, ui: &mut Ui, resp: &egui::Response) {
-        if matches!(self.drag, Some(DragState::Nav(_)) | Some(DragState::Box { .. }) | Some(DragState::Lasso { .. })) {
+        if matches!(
+            self.drag,
+            Some(DragState::Nav(_)) | Some(DragState::Box { .. }) | Some(DragState::Lasso { .. })
+        ) {
             return;
         }
-        let pos = ui.input(|i| i.pointer.hover_pos()).filter(|p| self.view.rect.contains(*p) && resp.hovered());
+        let pos = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| self.view.rect.contains(*p) && resp.hovered());
         self.ui_pointer = pos;
         let new = pos.and_then(|p| match self.tool.active {
             Tool::Cut => {
@@ -343,11 +428,13 @@ impl AppState {
         let nav_secondary = nav_for(self.prefs.nav, egui::PointerButton::Secondary, mods).is_some();
 
         // Target Weld drag from one vertex to another.
-        if self.tool.active == Tool::Weld && resp.drag_started_by(egui::PointerButton::Primary) && !nav_primary {
-            if let Some(Hover::Vert(i)) = self.hover {
-                self.drag = Some(DragState::Weld { from: i });
-                self.tool.weld_from = Some(self.vd.verts[i].sel.clone());
-            }
+        if self.tool.active == Tool::Weld
+            && resp.drag_started_by(egui::PointerButton::Primary)
+            && !nav_primary
+            && let Some(Hover::Vert(i)) = self.hover
+        {
+            self.drag = Some(DragState::Weld { from: i });
+            self.tool.weld_from = Some(self.vd.verts[i].sel.clone());
         }
         if let Some(DragState::Weld { from }) = self.drag.clone() {
             if resp.drag_stopped() {
@@ -362,14 +449,23 @@ impl AppState {
         }
 
         // Box (primary drag) and lasso (secondary drag) selection.
-        let selecting = matches!(self.tool.active, Tool::Select | Tool::Connect | Tool::Grid | Tool::Slice);
+        let selecting = matches!(
+            self.tool.active,
+            Tool::Select | Tool::Connect | Tool::Grid | Tool::Slice
+        );
         if selecting && resp.drag_started_by(egui::PointerButton::Primary) && !nav_primary {
             let start = ui.input(|i| i.pointer.press_origin()).unwrap_or_default();
-            self.drag = Some(DragState::Box { start, how: combine_from(mods) });
+            self.drag = Some(DragState::Box {
+                start,
+                how: combine_from(mods),
+            });
         }
         if selecting && resp.drag_started_by(egui::PointerButton::Secondary) && !nav_secondary {
             let start = ui.input(|i| i.pointer.press_origin()).unwrap_or_default();
-            self.drag = Some(DragState::Lasso { pts: vec![start], how: combine_from(mods) });
+            self.drag = Some(DragState::Lasso {
+                pts: vec![start],
+                how: combine_from(mods),
+            });
         }
         if let Some(DragState::Lasso { pts, .. }) = &mut self.drag
             && let Some(p) = ui.input(|i| i.pointer.hover_pos())
@@ -382,7 +478,10 @@ impl AppState {
                 Some(DragState::Box { start, how }) => {
                     let end = ui.input(|i| i.pointer.hover_pos()).unwrap_or(start);
                     let r = Rect::from_two_pos(start, end);
-                    let region = Region::Rect { min: self.local(r.min), max: self.local(r.max) };
+                    let region = Region::Rect {
+                        min: self.local(r.min),
+                        max: self.local(r.max),
+                    };
                     self.select_region(&region, how);
                 }
                 Some(DragState::Lasso { pts, how }) => {
@@ -416,7 +515,11 @@ impl AppState {
                 }
                 Tool::Weld => {
                     if let Some(Hover::Vert(i)) = self.hover {
-                        let from = self.tool.weld_from.as_ref().and_then(|s| self.vd.vert_index(s));
+                        let from = self
+                            .tool
+                            .weld_from
+                            .as_ref()
+                            .and_then(|s| self.vd.vert_index(s));
                         match from {
                             None => self.tool.weld_from = Some(self.vd.verts[i].sel.clone()),
                             Some(f) if f != i => self.weld(f, i),
@@ -433,13 +536,17 @@ impl AppState {
         let kind = self.pick_kind();
         match (kind, self.hover) {
             (Mode::Object, Some(Hover::Object(b, _))) => combine(&mut self.sel.objects, [b], how),
-            (Mode::Face, Some(Hover::Face(f, _))) => combine(&mut self.sel.faces, [(BodyId(f.body), FaceId(f.face))], how),
+            (Mode::Face, Some(Hover::Face(f, _))) => {
+                combine(&mut self.sel.faces, [(BodyId(f.body), FaceId(f.face))], how)
+            }
             (Mode::Edge, Some(Hover::Edge(i, _))) => {
                 if let Some(s) = self.vd.edges[i].sel.clone() {
                     combine(&mut self.sel.edges, [s], how)
                 }
             }
-            (Mode::Vertex, Some(Hover::Vert(i))) => combine(&mut self.sel.verts, [self.vd.verts[i].sel.clone()], how),
+            (Mode::Vertex, Some(Hover::Vert(i))) => {
+                combine(&mut self.sel.verts, [self.vd.verts[i].sel.clone()], how)
+            }
             (m, None) if how == Combine::Replace => self.sel.clear_mode(m),
             _ => {}
         }
@@ -484,7 +591,8 @@ impl AppState {
                     .iter()
                     .filter(|e| (allow_fill || e.kind != EdgeKind::Fill) && !self.is_locked(e.body))
                     .filter(|e| {
-                        let mid = e.path[e.path.len() / 2].lerp(e.path[(e.path.len() - 1) / 2], 0.5);
+                        let mid =
+                            e.path[e.path.len() / 2].lerp(e.path[(e.path.len() - 1) / 2], 0.5);
                         inside(mid)
                     })
                     .filter_map(|e| e.sel.clone())
@@ -492,8 +600,13 @@ impl AppState {
                 combine(&mut self.sel.edges, hits, how);
             }
             Mode::Vertex => {
-                let hits: Vec<VertSel> =
-                    self.vd.verts.iter().filter(|v| inside(v.pos) && !self.is_locked(v.body)).map(|v| v.sel.clone()).collect();
+                let hits: Vec<VertSel> = self
+                    .vd
+                    .verts
+                    .iter()
+                    .filter(|v| inside(v.pos) && !self.is_locked(v.body))
+                    .map(|v| v.sel.clone())
+                    .collect();
                 combine(&mut self.sel.verts, hits, how);
             }
         }
@@ -506,12 +619,22 @@ impl AppState {
         match (self.pick_kind(), self.hover) {
             (Mode::Edge, Some(Hover::Edge(i, _))) => {
                 let edges = self.loop_from(i, false, false);
-                combine(&mut self.sel.edges, edges, if how == Combine::Replace { Combine::Replace } else { how });
+                combine(
+                    &mut self.sel.edges,
+                    edges,
+                    if how == Combine::Replace {
+                        Combine::Replace
+                    } else {
+                        how
+                    },
+                );
                 self.on_selection_changed();
             }
             (Mode::Face, Some(Hover::Face(f, p))) => {
                 let body = BodyId(f.body);
-                let Some(bt) = self.vd.topo.get(&body) else { return };
+                let Some(bt) = self.vd.topo.get(&body) else {
+                    return;
+                };
                 // The output polygon nearest the click on that face.
                 let face = FaceId(f.face);
                 let pos_of = |v: u32| -> Option<Vec3> {
@@ -527,14 +650,19 @@ impl AppState {
                     .iter()
                     .enumerate()
                     .filter(|(pi, _)| bt.poly_face.get(*pi) == Some(&face))
-                    .filter_map(|(pi, poly)| {
-                        let c: Vec3 = poly.iter().filter_map(|&v| pos_of(v)).sum::<Vec3>() / poly.len().max(1) as f32;
-                        Some((pi, c.as_dvec3().distance(p)))
+                    .map(|(pi, poly)| {
+                        let c: Vec3 = poly.iter().filter_map(|&v| pos_of(v)).sum::<Vec3>()
+                            / poly.len().max(1) as f32;
+                        (pi, c.as_dvec3().distance(p))
                     })
                     .min_by(|a, b| a.1.total_cmp(&b.1));
                 if let Some((pi, _)) = best {
                     let strip = bt.mesh.face_strip(pi as u32);
-                    let faces: BTreeSet<(BodyId, FaceId)> = strip.iter().filter_map(|&q| bt.poly_face.get(q as usize)).map(|f| (body, *f)).collect();
+                    let faces: BTreeSet<(BodyId, FaceId)> = strip
+                        .iter()
+                        .filter_map(|&q| bt.poly_face.get(q as usize))
+                        .map(|f| (body, *f))
+                        .collect();
                     combine(&mut self.sel.faces, faces, how);
                     self.on_selection_changed();
                 }
@@ -549,7 +677,11 @@ impl AppState {
         let (Some(t), Some(bt)) = (e.topo, self.vd.topo.get(&e.body)) else {
             return e.sel.clone().into_iter().collect();
         };
-        let mut seq = if ring { bt.mesh.edge_ring(t) } else { bt.mesh.edge_loop(t) };
+        let mut seq = if ring {
+            bt.mesh.edge_ring(t)
+        } else {
+            bt.mesh.edge_loop(t)
+        };
         if alternate {
             seq = TopoMesh::every_other(&seq, t);
         }
@@ -568,7 +700,12 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_SELECT_EDGES);
             return;
         }
-        let starts: Vec<usize> = self.sel.edges.iter().filter_map(|s| self.vd.edge_index(s)).collect();
+        let starts: Vec<usize> = self
+            .sel
+            .edges
+            .iter()
+            .filter_map(|s| self.vd.edge_index(s))
+            .collect();
         if starts.is_empty() {
             self.toast(ToastKind::Info, S::TOAST_SELECT_EDGES);
             return;
@@ -583,13 +720,33 @@ impl AppState {
 
     pub fn select_all(&mut self) {
         match self.mode {
-            Mode::Object => self.sel.objects = self.vd.bodies.iter().map(|b| b.id).filter(|b| !self.is_locked(*b)).collect(),
+            Mode::Object => {
+                self.sel.objects = self
+                    .vd
+                    .bodies
+                    .iter()
+                    .map(|b| b.id)
+                    .filter(|b| !self.is_locked(*b))
+                    .collect()
+            }
             Mode::Face => {
-                self.sel.faces = self.vd.face_tris.keys().filter(|f| !self.is_locked(BodyId(f.body))).map(|f| (BodyId(f.body), FaceId(f.face))).collect()
+                self.sel.faces = self
+                    .vd
+                    .face_tris
+                    .keys()
+                    .filter(|f| !self.is_locked(BodyId(f.body)))
+                    .map(|f| (BodyId(f.body), FaceId(f.face)))
+                    .collect()
             }
             Mode::Edge => {
                 let fill = self.prefs.select_fill_edges;
-                self.sel.edges = self.vd.edges.iter().filter(|e| fill || e.kind != EdgeKind::Fill).filter_map(|e| e.sel.clone()).collect()
+                self.sel.edges = self
+                    .vd
+                    .edges
+                    .iter()
+                    .filter(|e| fill || e.kind != EdgeKind::Fill)
+                    .filter_map(|e| e.sel.clone())
+                    .collect()
             }
             Mode::Vertex => self.sel.verts = self.vd.verts.iter().map(|v| v.sel.clone()).collect(),
         }
@@ -602,7 +759,13 @@ impl AppState {
         let bodies = self.sel.bodies(self.mode);
         match self.mode {
             Mode::Object => {
-                let all: BTreeSet<BodyId> = self.vd.bodies.iter().map(|b| b.id).filter(|b| !self.is_locked(*b)).collect();
+                let all: BTreeSet<BodyId> = self
+                    .vd
+                    .bodies
+                    .iter()
+                    .map(|b| b.id)
+                    .filter(|b| !self.is_locked(*b))
+                    .collect();
                 self.sel.objects = all.difference(&self.sel.objects).copied().collect();
             }
             Mode::Face => {
@@ -627,7 +790,13 @@ impl AppState {
                 self.sel.edges = all.difference(&self.sel.edges).cloned().collect();
             }
             Mode::Vertex => {
-                let all: BTreeSet<VertSel> = self.vd.verts.iter().filter(|v| bodies.contains(&v.body)).map(|v| v.sel.clone()).collect();
+                let all: BTreeSet<VertSel> = self
+                    .vd
+                    .verts
+                    .iter()
+                    .filter(|v| bodies.contains(&v.body))
+                    .map(|v| v.sel.clone())
+                    .collect();
                 self.sel.verts = all.difference(&self.sel.verts).cloned().collect();
             }
         }
@@ -663,7 +832,10 @@ impl AppState {
                     self.toast(ToastKind::Info, S::TOAST_SELECT_OBJECTS);
                     return;
                 }
-                self.view.isolate = Some(crate::app::Isolate { original: bodies, step: None });
+                self.view.isolate = Some(crate::app::Isolate {
+                    original: bodies,
+                    step: None,
+                });
             }
         }
     }
@@ -680,7 +852,9 @@ impl AppState {
         self.mode.hash(&mut h);
         format!("{:?}", self.hover).hash(&mut h);
         self.tool.signature().hash(&mut h);
-        self.scene_toggles().map(|s| (s.symmetry, format!("{:?}", s.symmetry_axes))).hash(&mut h);
+        self.scene_toggles()
+            .map(|s| (s.symmetry, format!("{:?}", s.symmetry_axes)))
+            .hash(&mut h);
         self.prefs.show_symmetry_planes.hash(&mut h);
         h.finish()
     }
@@ -694,14 +868,15 @@ impl AppState {
         self.overlay_rev = newtopo_render::egui_viewport::next_revision();
         let c = self.colors();
         let mut o = RenderScene::default();
-        let tint = |o: &mut RenderScene, f: FaceRef, col: [f32; 4], vd: &crate::viewdata::ViewData| {
-            if let Some(tris) = vd.face_tris.get(&f) {
-                for &t in tris {
-                    let p = vd.pick.tris[t as usize].map(|i| vd.pick.positions[i as usize]);
-                    o.translucent.push_triangle(p, [Vec3::Z; 3], col);
+        let tint =
+            |o: &mut RenderScene, f: FaceRef, col: [f32; 4], vd: &crate::viewdata::ViewData| {
+                if let Some(tris) = vd.face_tris.get(&f) {
+                    for &t in tris {
+                        let p = vd.pick.tris[t as usize].map(|i| vd.pick.positions[i as usize]);
+                        o.translucent.push_triangle(p, [Vec3::Z; 3], col);
+                    }
                 }
-            }
-        };
+            };
         // Selection.
         match self.mode {
             Mode::Object => {
@@ -710,13 +885,26 @@ impl AppState {
                         tint(&mut o, *f, with_alpha(c.selection, 0.16), &self.vd);
                     }
                 }
-                for e in self.vd.edges.iter().filter(|e| self.sel.objects.contains(&e.body) && e.kind == EdgeKind::Cad) {
+                for e in self
+                    .vd
+                    .edges
+                    .iter()
+                    .filter(|e| self.sel.objects.contains(&e.body) && e.kind == EdgeKind::Cad)
+                {
                     o.add_polyline(&e.path, with_alpha(c.selection, 0.9), 2.0);
                 }
             }
             Mode::Face => {
                 for (b, f) in &self.sel.faces {
-                    tint(&mut o, FaceRef { body: b.0, face: f.0 }, with_alpha(c.selection, 0.32), &self.vd);
+                    tint(
+                        &mut o,
+                        FaceRef {
+                            body: b.0,
+                            face: f.0,
+                        },
+                        with_alpha(c.selection, 0.32),
+                        &self.vd,
+                    );
                 }
             }
             Mode::Edge => {
@@ -741,7 +929,9 @@ impl AppState {
                     tint(&mut o, *f, with_alpha(c.hover, 0.07), &self.vd);
                 }
             }
-            Some(Hover::Face(f, _)) if self.tool.active != Tool::Iso && self.tool.active != Tool::Cut => {
+            Some(Hover::Face(f, _))
+                if self.tool.active != Tool::Iso && self.tool.active != Tool::Cut =>
+            {
                 tint(&mut o, f, with_alpha(c.hover, 0.12), &self.vd);
             }
             Some(Hover::Edge(i, _)) => o.add_polyline(&self.vd.edges[i].path, c.hover, 3.2),
@@ -776,7 +966,14 @@ impl AppState {
         let r = self.scene_sphere().1 as f32;
         let eye = self.view.camera.eye().as_vec3();
         for (b, f) in &self.sel.faces {
-            let Some(face) = demo.bodies.iter().find(|x| x.id == b.0).and_then(|x| x.faces.iter().find(|y| y.id == f.0)) else { continue };
+            let Some(face) = demo
+                .bodies
+                .iter()
+                .find(|x| x.id == b.0)
+                .and_then(|x| x.faces.iter().find(|y| y.id == f.0))
+            else {
+                continue;
+            };
             if face.polys.is_empty() || face.surface == "plane" || face.surface == "extrusion" {
                 continue;
             }
@@ -797,10 +994,24 @@ impl AppState {
             let centre = poly.iter().copied().sum::<Vec3>() / poly.len() as f32 + *n * r * 0.004;
             let len = r * 0.16;
             let du = (poly[1] - poly[0]).normalize_or_zero();
-            o.add_arrow(centre - du * len * 0.5, du, n.cross(du), len, c.arrow_a, 3.0);
+            o.add_arrow(
+                centre - du * len * 0.5,
+                du,
+                n.cross(du),
+                len,
+                c.arrow_a,
+                3.0,
+            );
             if face.surface == "torus" {
                 let dv = (poly[3] - poly[0]).normalize_or_zero();
-                o.add_arrow(centre - dv * len * 0.5, dv, n.cross(dv), len, c.arrow_b, 3.0);
+                o.add_arrow(
+                    centre - dv * len * 0.5,
+                    dv,
+                    n.cross(dv),
+                    len,
+                    c.arrow_b,
+                    3.0,
+                );
             }
         }
     }
@@ -809,7 +1020,9 @@ impl AppState {
         if !self.prefs.show_symmetry_planes {
             return;
         }
-        let Some(s) = self.scene_toggles() else { return };
+        let Some(s) = self.scene_toggles() else {
+            return;
+        };
         if !s.symmetry {
             return;
         }
@@ -838,15 +1051,25 @@ impl AppState {
         let cam = self.camera_matrices();
         let (_, radius) = self.scene_sphere();
         let opts = RenderOptions {
-            shade: if self.view.preview && self.view.flat { ShadeMode::Flat } else { ShadeMode::Smooth },
+            shade: if self.view.preview && self.view.flat {
+                ShadeMode::Flat
+            } else {
+                ShadeMode::Smooth
+            },
             background_top: c.background_top,
             background_bottom: c.background_bottom,
             pixels_per_point: ppp,
             ..Default::default()
         };
-        let size_px = [(rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32];
+        let size_px = [
+            (rect.width() * ppp).round().max(1.0) as u32,
+            (rect.height() * ppp).round().max(1.0) as u32,
+        ];
         let cb = ViewportCallback {
-            layers: vec![(self.vd_rev, self.vd.base.clone()), (self.overlay_rev, self.overlay.clone())],
+            layers: vec![
+                (self.vd_rev, self.vd.base.clone()),
+                (self.overlay_rev, self.overlay.clone()),
+            ],
             camera: cam,
             scene_radius: radius as f32,
             options: opts,
@@ -865,10 +1088,11 @@ impl AppState {
                     p.rect_stroke(r, 2.0, Stroke::new(1.0, accent), egui::StrokeKind::Inside);
                 }
             }
-            Some(DragState::Lasso { pts, .. }) => {
-                if pts.len() > 1 {
-                    p.add(egui::Shape::closed_line(pts.clone(), Stroke::new(1.2, accent)));
-                }
+            Some(DragState::Lasso { pts, .. }) if pts.len() > 1 => {
+                p.add(egui::Shape::closed_line(
+                    pts.clone(),
+                    Stroke::new(1.2, accent),
+                ));
             }
             _ => {}
         }
@@ -880,7 +1104,11 @@ impl AppState {
         let mut y = rect.top() + 10.0;
         let x = rect.left() + 12.0;
         let font = egui::FontId::proportional(12.0);
-        let txt = if self.view.camera.ortho { S::VP_ORTHO } else { S::VP_PERSP };
+        let txt = if self.view.camera.ortho {
+            S::VP_ORTHO
+        } else {
+            S::VP_PERSP
+        };
         let label = |p: &egui::Painter, y: f32, s: &str, col: Color32| {
             p.text(pos2(x, y), egui::Align2::LEFT_TOP, s, font.clone(), col);
         };
@@ -888,7 +1116,16 @@ impl AppState {
             label(p, y, txt, pal.text_dim);
             y += 17.0;
             if self.view.preview {
-                label(p, y, if self.view.wireframe { "Preview · wireframe" } else { "Preview" }, pal.accent);
+                label(
+                    p,
+                    y,
+                    if self.view.wireframe {
+                        "Preview · wireframe"
+                    } else {
+                        "Preview"
+                    },
+                    pal.accent,
+                );
                 y += 17.0;
             }
             if let Some(iso) = &self.view.isolate {
@@ -910,7 +1147,12 @@ impl AppState {
             let size = galley.size() + vec2(28.0, 12.0);
             let r = Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 24.0), size);
             p.rect_filled(r, 14.0, pal.panel_raised.gamma_multiply(0.94));
-            p.rect_stroke(r, 14.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+            p.rect_stroke(
+                r,
+                14.0,
+                Stroke::new(1.0, pal.border),
+                egui::StrokeKind::Inside,
+            );
             p.galley(r.min + vec2(14.0, 6.0), galley, pal.text_strong);
         }
     }
@@ -921,7 +1163,10 @@ impl AppState {
         }
         let pal = self.pal;
         let size = 84.0;
-        let center = pos2(rect.right() - size * 0.5 - 16.0, rect.top() + size * 0.5 + 14.0);
+        let center = pos2(
+            rect.right() - size * 0.5 - 16.0,
+            rect.top() + size * 0.5 + 14.0,
+        );
         let cam = &self.view.camera;
         let (bx, by, bz) = cam.world_basis();
         let right = cam.right();
@@ -946,8 +1191,12 @@ impl AppState {
             if facing <= 0.02 {
                 continue;
             }
-            let (t1, t2) = if n.cross(bz).length() < 1e-6 { (bx, by) } else { (bz, n.cross(bz).normalize()) };
-            let corners = [n + t1 + t2, n + t1 - t2, n - t1 - t2, n - t1 + t2].map(|c| proj(c));
+            let (t1, t2) = if n.cross(bz).length() < 1e-6 {
+                (bx, by)
+            } else {
+                (bz, n.cross(bz).normalize())
+            };
+            let corners = [n + t1 + t2, n + t1 - t2, n - t1 - t2, n - t1 + t2].map(&proj);
             drawn.push((facing, corners.to_vec(), label, view, facing));
         }
         drawn.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -960,29 +1209,66 @@ impl AppState {
                 hovered_view = Some(*view);
             }
             let shade = 0.55 + 0.45 * *facing as f32;
-            let fill = if hovered { pal.accent.gamma_multiply(0.85) } else { lerp_color(pal.panel, pal.widget_active, shade) };
-            p.add(egui::Shape::convex_polygon(pts.clone(), fill, Stroke::new(1.0, pal.border)));
+            let fill = if hovered {
+                pal.accent.gamma_multiply(0.85)
+            } else {
+                lerp_color(pal.panel, pal.widget_active, shade)
+            };
+            p.add(egui::Shape::convex_polygon(
+                pts.clone(),
+                fill,
+                Stroke::new(1.0, pal.border),
+            ));
             if *facing > 0.35 {
                 let c = pts.iter().fold(egui::Vec2::ZERO, |a, q| a + q.to_vec2()) / 4.0;
                 let col = if hovered { pal.accent_text } else { pal.text };
-                p.text(c.to_pos2(), egui::Align2::CENTER_CENTER, *label, egui::FontId::proportional(10.5), col.gamma_multiply(0.4 + 0.6 * *facing as f32));
+                p.text(
+                    c.to_pos2(),
+                    egui::Align2::CENTER_CENTER,
+                    *label,
+                    egui::FontId::proportional(10.5),
+                    col.gamma_multiply(0.4 + 0.6 * *facing as f32),
+                );
             }
         }
         // Axis stubs from the back-bottom-left corner.
         let corner = -(DVec3::X + DVec3::Y + DVec3::Z);
-        for (axis, col) in [(DVec3::X, Color32::from_rgb(232, 92, 92)), (DVec3::Y, Color32::from_rgb(120, 200, 110)), (DVec3::Z, Color32::from_rgb(90, 150, 240))] {
-            p.line_segment([proj(corner), proj(corner + axis * 0.9)], Stroke::new(2.0, col));
+        for (axis, col) in [
+            (DVec3::X, Color32::from_rgb(232, 92, 92)),
+            (DVec3::Y, Color32::from_rgb(120, 200, 110)),
+            (DVec3::Z, Color32::from_rgb(90, 150, 240)),
+        ] {
+            p.line_segment(
+                [proj(corner), proj(corner + axis * 0.9)],
+                Stroke::new(2.0, col),
+            );
         }
         // Buttons under the cube: frame all, ortho/persp.
         let by0 = center.y + size * 0.62 + 6.0;
         let b1 = Rect::from_center_size(pos2(center.x - 14.0, by0 + 11.0), vec2(24.0, 22.0));
         let b2 = Rect::from_center_size(pos2(center.x + 14.0, by0 + 11.0), vec2(24.0, 22.0));
-        let r1 = ui.interact(b1, ui.id().with("vc_frame"), Sense::click()).on_hover_text("Frame all  (F with nothing selected)");
-        let r2 = ui.interact(b2, ui.id().with("vc_ortho"), Sense::click()).on_hover_text(format!("{} / {}  (O)", S::VP_PERSP, S::VP_ORTHO));
-        for (r, rr, icon, on) in [(b1, &r1, Icon::Frame, false), (b2, &r2, Icon::Cube, self.view.camera.ortho)] {
-            let bg = if rr.hovered() { pal.widget_hover } else { pal.panel.gamma_multiply(0.7) };
+        let r1 = ui
+            .interact(b1, ui.id().with("vc_frame"), Sense::click())
+            .on_hover_text("Frame all  (F with nothing selected)");
+        let r2 = ui
+            .interact(b2, ui.id().with("vc_ortho"), Sense::click())
+            .on_hover_text(format!("{} / {}  (O)", S::VP_PERSP, S::VP_ORTHO));
+        for (r, rr, icon, on) in [
+            (b1, &r1, Icon::Frame, false),
+            (b2, &r2, Icon::Cube, self.view.camera.ortho),
+        ] {
+            let bg = if rr.hovered() {
+                pal.widget_hover
+            } else {
+                pal.panel.gamma_multiply(0.7)
+            };
             ui.painter().rect_filled(r, 5.0, bg);
-            icons::paint(ui.painter(), r.shrink(5.0), icon, if on { pal.accent } else { pal.text });
+            icons::paint(
+                ui.painter(),
+                r.shrink(5.0),
+                icon,
+                if on { pal.accent } else { pal.text },
+            );
         }
         if r1.clicked() {
             self.frame_bounds(None);
@@ -997,35 +1283,72 @@ impl AppState {
 
     fn empty_state(&mut self, ui: &mut Ui, rect: Rect) {
         let pal = self.pal;
-        let card = Rect::from_center_size(rect.center(), vec2(380.0_f32.min(rect.width() - 32.0), 250.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(card).layout(egui::Layout::top_down(egui::Align::Center)));
+        let card = Rect::from_center_size(
+            rect.center(),
+            vec2(380.0_f32.min(rect.width() - 32.0), 250.0),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(card)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
         let p = child.painter().clone();
         // Illustration: a CAD face being split into quads.
-        let ill = Rect::from_center_size(pos2(card.center().x, card.top() + 40.0), vec2(96.0, 56.0));
-        let skew = |x: f32, y: f32| pos2(ill.left() + x * ill.width() + (1.0 - y) * 14.0, ill.top() + y * ill.height());
-        let outline = [skew(0.0, 0.0), skew(0.86, 0.0), skew(0.86, 1.0), skew(0.0, 1.0)];
-        p.add(egui::Shape::convex_polygon(outline.to_vec(), pal.widget, Stroke::new(1.5, pal.text_dim)));
+        let ill =
+            Rect::from_center_size(pos2(card.center().x, card.top() + 40.0), vec2(96.0, 56.0));
+        let skew = |x: f32, y: f32| {
+            pos2(
+                ill.left() + x * ill.width() + (1.0 - y) * 14.0,
+                ill.top() + y * ill.height(),
+            )
+        };
+        let outline = [
+            skew(0.0, 0.0),
+            skew(0.86, 0.0),
+            skew(0.86, 1.0),
+            skew(0.0, 1.0),
+        ];
+        p.add(egui::Shape::convex_polygon(
+            outline.to_vec(),
+            pal.widget,
+            Stroke::new(1.5, pal.text_dim),
+        ));
         for k in 1..4 {
             let t = k as f32 / 4.0 * 0.86;
             p.line_segment([skew(t, 0.0), skew(t, 1.0)], Stroke::new(1.3, pal.accent));
         }
-        p.line_segment([skew(0.0, 0.5), skew(0.86, 0.5)], Stroke::new(1.3, pal.accent.gamma_multiply(0.6)));
+        p.line_segment(
+            [skew(0.0, 0.5), skew(0.86, 0.5)],
+            Stroke::new(1.3, pal.accent.gamma_multiply(0.6)),
+        );
         child.add_space(84.0);
-        child.label(RichText::new(S::EMPTY_TITLE).font(crate::theme::medium(19.0)).color(pal.text_strong));
+        child.label(
+            RichText::new(S::EMPTY_TITLE)
+                .font(crate::theme::medium(19.0))
+                .color(pal.text_strong),
+        );
         child.add_space(2.0);
         child.label(RichText::new(S::EMPTY_BODY).color(pal.text_dim));
         child.add_space(14.0);
         child.horizontal(|ui| {
             let w = 3.0 * 116.0 + 16.0;
             ui.add_space(((card.width() - w) * 0.5).max(0.0));
-            let primary = egui::Button::new(RichText::new(S::EMPTY_IMPORT).color(pal.accent_text)).fill(pal.accent).min_size(vec2(116.0, 30.0));
+            let primary = egui::Button::new(RichText::new(S::EMPTY_IMPORT).color(pal.accent_text))
+                .fill(pal.accent)
+                .min_size(vec2(116.0, 30.0));
             if ui.add(primary).clicked() {
                 self.import_dialog();
             }
-            if ui.add(egui::Button::new(S::EMPTY_OPEN).min_size(vec2(116.0, 30.0))).clicked() {
+            if ui
+                .add(egui::Button::new(S::EMPTY_OPEN).min_size(vec2(116.0, 30.0)))
+                .clicked()
+            {
                 self.run(crate::commands::Cmd::Open);
             }
-            if ui.add(egui::Button::new(S::EMPTY_DEMO).min_size(vec2(116.0, 30.0))).clicked() {
+            if ui
+                .add(egui::Button::new(S::EMPTY_DEMO).min_size(vec2(116.0, 30.0)))
+                .clicked()
+            {
                 self.load_sample();
             }
         });
@@ -1035,7 +1358,10 @@ impl AppState {
 }
 
 fn point_in_quad(p: Pos2, q: &[Pos2]) -> bool {
-    let pts: Vec<DVec2> = q.iter().map(|x| DVec2::new(x.x as f64, x.y as f64)).collect();
+    let pts: Vec<DVec2> = q
+        .iter()
+        .map(|x| DVec2::new(x.x as f64, x.y as f64))
+        .collect();
     newtopo_render::pick::point_in_polygon(DVec2::new(p.x as f64, p.y as f64), &pts)
 }
 
@@ -1053,12 +1379,33 @@ mod tests {
     #[test]
     fn navigation_presets() {
         let none = Modifiers::NONE;
-        assert_eq!(nav_for(NavPreset::Blender, PointerButton::Middle, none), Some(NavKind::Orbit));
-        assert_eq!(nav_for(NavPreset::Blender, PointerButton::Middle, Modifiers::SHIFT), Some(NavKind::Pan));
-        assert_eq!(nav_for(NavPreset::Blender, PointerButton::Primary, none), None);
-        assert_eq!(nav_for(NavPreset::Maya, PointerButton::Primary, Modifiers::ALT), Some(NavKind::Orbit));
-        assert_eq!(nav_for(NavPreset::Maya, PointerButton::Secondary, Modifiers::ALT), Some(NavKind::Zoom));
-        assert_eq!(nav_for(NavPreset::Max, PointerButton::Middle, none), Some(NavKind::Pan));
-        assert_eq!(nav_for(NavPreset::Max, PointerButton::Middle, Modifiers::ALT), Some(NavKind::Orbit));
+        assert_eq!(
+            nav_for(NavPreset::Blender, PointerButton::Middle, none),
+            Some(NavKind::Orbit)
+        );
+        assert_eq!(
+            nav_for(NavPreset::Blender, PointerButton::Middle, Modifiers::SHIFT),
+            Some(NavKind::Pan)
+        );
+        assert_eq!(
+            nav_for(NavPreset::Blender, PointerButton::Primary, none),
+            None
+        );
+        assert_eq!(
+            nav_for(NavPreset::Maya, PointerButton::Primary, Modifiers::ALT),
+            Some(NavKind::Orbit)
+        );
+        assert_eq!(
+            nav_for(NavPreset::Maya, PointerButton::Secondary, Modifiers::ALT),
+            Some(NavKind::Zoom)
+        );
+        assert_eq!(
+            nav_for(NavPreset::Max, PointerButton::Middle, none),
+            Some(NavKind::Pan)
+        );
+        assert_eq!(
+            nav_for(NavPreset::Max, PointerButton::Middle, Modifiers::ALT),
+            Some(NavKind::Orbit)
+        );
     }
 }

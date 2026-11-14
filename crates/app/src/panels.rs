@@ -15,7 +15,7 @@ use newtopo_core::doc::{Edit, LayerId, Rule, SliceScope, Spacing};
 use newtopo_core::mesh::MeshStats;
 use newtopo_core::ops::Op;
 use newtopo_kernel::{BodyId, FaceId};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
 pub struct LayerRow {
@@ -60,7 +60,11 @@ pub enum RenameTarget {
 impl AppState {
     pub fn layer_rows(&self) -> Vec<LayerRow> {
         if let Some(scene) = &self.doc.scene {
-            let Ok((layers, active)) = guard(|| (scene.doc().layers.clone(), scene.doc().active_layer)) else { return vec![] };
+            let Ok((layers, active)) =
+                guard(|| (scene.doc().layers.clone(), scene.doc().active_layer))
+            else {
+                return vec![];
+            };
             return layers
                 .into_iter()
                 .map(|l| LayerRow {
@@ -90,7 +94,9 @@ impl AppState {
 
     pub fn body_rows(&self) -> Vec<BodyRow> {
         if let Some(scene) = &self.doc.scene {
-            let Ok(bodies) = guard(|| scene.doc().bodies.clone()) else { return vec![] };
+            let Ok(bodies) = guard(|| scene.doc().bodies.clone()) else {
+                return vec![];
+            };
             return bodies
                 .into_iter()
                 .map(|b| BodyRow {
@@ -111,8 +117,14 @@ impl AppState {
                     BodyRow {
                         id,
                         name: b.name.clone(),
-                        layer: demo.layers.iter().find(|(n, _)| *n == b.layer).map(|l| l.1).unwrap_or_default(),
-                        visible: !self.view.hidden.contains(&id) && !self.local.body_hidden_demo.contains(&id),
+                        layer: demo
+                            .layers
+                            .iter()
+                            .find(|(n, _)| *n == b.layer)
+                            .map(|l| l.1)
+                            .unwrap_or_default(),
+                        visible: !self.view.hidden.contains(&id)
+                            && !self.local.body_hidden_demo.contains(&id),
                         locked: self.local.body_locked.contains(&id),
                     }
                 })
@@ -158,7 +170,10 @@ impl AppState {
             }
             return;
         }
-        self.toast(ToastKind::Warn, format!("{}: rename layer", S::TOAST_NOT_YET));
+        self.toast(
+            ToastKind::Warn,
+            format!("{}: rename layer", S::TOAST_NOT_YET),
+        );
     }
 
     fn create_layer(&mut self) {
@@ -169,7 +184,10 @@ impl AppState {
             demo.layers.push((format!("Layer {}", id.0 + 1), id));
             return;
         }
-        self.toast(ToastKind::Warn, format!("{}: create layer", S::TOAST_NOT_YET));
+        self.toast(
+            ToastKind::Warn,
+            format!("{}: create layer", S::TOAST_NOT_YET),
+        );
     }
 
     fn delete_layer(&mut self, id: LayerId) {
@@ -179,7 +197,9 @@ impl AppState {
             if demo.layers.len() <= 1 {
                 return;
             }
-            let Some(pos) = demo.layers.iter().position(|l| l.1 == id) else { return };
+            let Some(pos) = demo.layers.iter().position(|l| l.1 == id) else {
+                return;
+            };
             let (old, _) = demo.layers.remove(pos);
             let target = demo.layers[0].0.clone();
             for b in demo.bodies.iter_mut().filter(|b| b.layer == old) {
@@ -188,21 +208,34 @@ impl AppState {
             self.invalidate_view();
             return;
         }
-        self.toast(ToastKind::Warn, format!("{}: delete layer", S::TOAST_NOT_YET));
+        self.toast(
+            ToastKind::Warn,
+            format!("{}: delete layer", S::TOAST_NOT_YET),
+        );
     }
 
     fn move_body_to_layer(&mut self, body: BodyId, layer: LayerId) {
         if let Some(demo) = &mut self.demo
             && !self.doc.has_scene()
         {
-            let Some(name) = demo.layers.iter().find(|l| l.1 == layer).map(|l| l.0.clone()) else { return };
+            let Some(name) = demo
+                .layers
+                .iter()
+                .find(|l| l.1 == layer)
+                .map(|l| l.0.clone())
+            else {
+                return;
+            };
             if let Some(b) = demo.bodies.iter_mut().find(|b| b.id == body.0) {
                 b.layer = name;
             }
             self.invalidate_view();
             return;
         }
-        self.toast(ToastKind::Warn, format!("{}: move to layer", S::TOAST_NOT_YET));
+        self.toast(
+            ToastKind::Warn,
+            format!("{}: move to layer", S::TOAST_NOT_YET),
+        );
     }
 
     // ------------------------------------------------------------ outliner
@@ -211,20 +244,36 @@ impl AppState {
         let pal = self.pal;
         // Header: search + buttons.
         ui.horizontal(|ui| {
-            let mut te = egui::TextEdit::singleline(&mut self.ui.outliner.filter).hint_text(S::OUTLINER_SEARCH).desired_width(ui.available_width() - 64.0);
+            let mut te = egui::TextEdit::singleline(&mut self.ui.outliner.filter)
+                .hint_text(S::OUTLINER_SEARCH)
+                .desired_width(ui.available_width() - 64.0);
             te = te.margin(egui::Margin::symmetric(6, 4));
             let r = ui.add(te);
             if self.ui.focus_outliner_search {
                 r.request_focus();
                 self.ui.focus_outliner_search = false;
             }
-            if icons::icon_button(ui, Icon::Plus, false, 22.0).on_hover_text(S::OUTLINER_NEW_LAYER).clicked() {
+            if icons::icon_button(ui, Icon::Plus, false, 22.0)
+                .on_hover_text(S::OUTLINER_NEW_LAYER)
+                .clicked()
+            {
                 self.create_layer();
             }
             let all_collapsed = !self.ui.outliner.collapsed.is_empty();
-            let icon = if all_collapsed { Icon::ChevronRight } else { Icon::ChevronDown };
-            let tip = if all_collapsed { S::OUTLINER_EXPAND_ALL } else { S::OUTLINER_COLLAPSE_ALL };
-            if icons::icon_button(ui, icon, false, 22.0).on_hover_text(tip).clicked() {
+            let icon = if all_collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            };
+            let tip = if all_collapsed {
+                S::OUTLINER_EXPAND_ALL
+            } else {
+                S::OUTLINER_COLLAPSE_ALL
+            };
+            if icons::icon_button(ui, icon, false, 22.0)
+                .on_hover_text(tip)
+                .clicked()
+            {
                 if all_collapsed {
                     self.ui.outliner.collapsed.clear();
                 } else {
@@ -248,23 +297,33 @@ impl AppState {
         }
         let filter = self.ui.outliner.filter.to_lowercase();
         let mut actions: Vec<OutlinerAction> = Vec::new();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for l in &layers {
-                let members: Vec<&BodyRow> =
-                    bodies.iter().filter(|b| b.layer == l.id && (filter.is_empty() || b.name.to_lowercase().contains(&filter))).collect();
-                if !filter.is_empty() && members.is_empty() && !l.name.to_lowercase().contains(&filter) {
-                    continue;
-                }
-                let collapsed = self.ui.outliner.collapsed.contains(&l.id) && filter.is_empty();
-                self.layer_row(ui, l, members.len(), collapsed, &mut actions);
-                if !collapsed {
-                    for b in members {
-                        self.body_row(ui, b, &mut actions);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for l in &layers {
+                    let members: Vec<&BodyRow> = bodies
+                        .iter()
+                        .filter(|b| {
+                            b.layer == l.id
+                                && (filter.is_empty() || b.name.to_lowercase().contains(&filter))
+                        })
+                        .collect();
+                    if !filter.is_empty()
+                        && members.is_empty()
+                        && !l.name.to_lowercase().contains(&filter)
+                    {
+                        continue;
                     }
+                    let collapsed = self.ui.outliner.collapsed.contains(&l.id) && filter.is_empty();
+                    self.layer_row(ui, l, members.len(), collapsed, &mut actions);
+                    if !collapsed {
+                        for b in members {
+                            self.body_row(ui, b, &mut actions);
+                        }
+                    }
+                    ui.add_space(2.0);
                 }
-                ui.add_space(2.0);
-            }
-        });
+            });
         for a in actions {
             match a {
                 OutlinerAction::ToggleCollapse(id) => {
@@ -315,7 +374,15 @@ impl AppState {
         }
     }
 
-    fn paint_toggle(&mut self, ui: &mut Ui, col: PaintColumn, on: bool, icon_on: Icon, icon_off: Icon, tip: &str) -> Option<bool> {
+    fn paint_toggle(
+        &mut self,
+        ui: &mut Ui,
+        col: PaintColumn,
+        on: bool,
+        icon_on: Icon,
+        icon_off: Icon,
+        tip: &str,
+    ) -> Option<bool> {
         let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click_and_drag());
         let pal = self.pal;
         let hovered = ui.rect_contains_pointer(rect);
@@ -333,30 +400,57 @@ impl AppState {
             // Click-drag down the column sets many rows at once.
             result = Some(v);
         }
-        let color = if on { pal.text } else { pal.text_dim.gamma_multiply(0.6) };
+        let color = if on {
+            pal.text
+        } else {
+            pal.text_dim.gamma_multiply(0.6)
+        };
         if hovered {
             ui.painter().rect_filled(rect, 4.0, pal.widget_hover);
         }
-        icons::paint(ui.painter(), rect.shrink(4.0), if on { icon_on } else { icon_off }, color);
+        icons::paint(
+            ui.painter(),
+            rect.shrink(4.0),
+            if on { icon_on } else { icon_off },
+            color,
+        );
         resp.on_hover_text(tip);
         result
     }
 
-    fn layer_row(&mut self, ui: &mut Ui, l: &LayerRow, count: usize, collapsed: bool, actions: &mut Vec<OutlinerAction>) {
+    fn layer_row(
+        &mut self,
+        ui: &mut Ui,
+        l: &LayerRow,
+        count: usize,
+        collapsed: bool,
+        actions: &mut Vec<OutlinerAction>,
+    ) {
         let pal = self.pal;
         let row = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let chev = if collapsed { Icon::ChevronRight } else { Icon::ChevronDown };
+            let chev = if collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            };
             if icons::icon_button(ui, chev, false, 18.0).clicked() {
                 actions.push(OutlinerAction::ToggleCollapse(l.id));
             }
             let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-            icons::paint(ui.painter(), r.shrink(2.0), Icon::Layer, if l.active { pal.accent } else { pal.text_dim });
+            icons::paint(
+                ui.painter(),
+                r.shrink(2.0),
+                Icon::Layer,
+                if l.active { pal.accent } else { pal.text_dim },
+            );
             ui.add_space(4.0);
             if let Some((RenameTarget::Layer(id), buf)) = &mut self.ui.outliner.renaming
                 && *id == l.id
             {
-                let r = ui.add(egui::TextEdit::singleline(buf).desired_width(ui.available_width() - 56.0));
+                let r = ui.add(
+                    egui::TextEdit::singleline(buf).desired_width(ui.available_width() - 56.0),
+                );
                 r.request_focus();
                 if r.lost_focus() {
                     if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !buf.trim().is_empty() {
@@ -365,22 +459,42 @@ impl AppState {
                     self.ui.outliner.renaming = None;
                 }
             } else {
-                let name = RichText::new(&l.name).font(crate::theme::medium(13.0)).color(pal.text_strong);
+                let name = RichText::new(&l.name)
+                    .font(crate::theme::medium(13.0))
+                    .color(pal.text_strong);
                 let r = ui.add(egui::Label::new(name).sense(Sense::click()).truncate());
                 if r.double_clicked() {
                     self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
                 }
-                ui.label(RichText::new(format!("{count}")).small().color(pal.text_dim));
+                ui.label(
+                    RichText::new(format!("{count}"))
+                        .small()
+                        .color(pal.text_dim),
+                );
                 if l.active {
                     ui.label(RichText::new(S::OUTLINER_ACTIVE).small().color(pal.accent));
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                if let Some(v) = self.paint_toggle(ui, PaintColumn::LayerLock, l.locked, Icon::Lock, Icon::Unlock, S::OUTLINER_LOCK) {
+                if let Some(v) = self.paint_toggle(
+                    ui,
+                    PaintColumn::LayerLock,
+                    l.locked,
+                    Icon::Lock,
+                    Icon::Unlock,
+                    S::OUTLINER_LOCK,
+                ) {
                     actions.push(OutlinerAction::LayerLocked(l.id, v));
                 }
-                if let Some(v) = self.paint_toggle(ui, PaintColumn::LayerEye, l.visible, Icon::Eye, Icon::EyeOff, S::OUTLINER_VISIBLE) {
+                if let Some(v) = self.paint_toggle(
+                    ui,
+                    PaintColumn::LayerEye,
+                    l.visible,
+                    Icon::Eye,
+                    Icon::EyeOff,
+                    S::OUTLINER_VISIBLE,
+                ) {
                     actions.push(OutlinerAction::LayerVisible(l.id, v));
                 }
             });
@@ -391,14 +505,23 @@ impl AppState {
             actions.push(OutlinerAction::Move(*payload, l.id));
         }
         if resp.dnd_hover_payload::<BodyId>().is_some() {
-            ui.painter().rect_stroke(row.response.rect, 4.0, egui::Stroke::new(1.5, pal.accent), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(
+                row.response.rect,
+                4.0,
+                egui::Stroke::new(1.5, pal.accent),
+                egui::StrokeKind::Inside,
+            );
         }
         resp.context_menu(|ui| {
             if ui.button(S::OUTLINER_RENAME).clicked() {
                 self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
                 ui.close();
             }
-            if ui.button(S::OUTLINER_DELETE_LAYER).on_hover_text(S::OUTLINER_LAYER_NOT_EMPTY).clicked() {
+            if ui
+                .button(S::OUTLINER_DELETE_LAYER)
+                .on_hover_text(S::OUTLINER_LAYER_NOT_EMPTY)
+                .clicked()
+            {
                 actions.push(OutlinerAction::DeleteLayer(l.id));
                 ui.close();
             }
@@ -415,12 +538,22 @@ impl AppState {
         if selected {
             ui.painter().rect_filled(rect, 4.0, pal.selection_bg);
         } else if resp.hovered() {
-            ui.painter().rect_filled(rect, 4.0, pal.widget.gamma_multiply(0.6));
+            ui.painter()
+                .rect_filled(rect, 4.0, pal.widget.gamma_multiply(0.6));
         }
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(2.0, 1.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(2.0, 1.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
         child.add_space(26.0);
         let (ir, _) = child.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-        icons::paint(child.painter(), ir, Icon::Body, if selected { pal.accent } else { pal.text_dim });
+        icons::paint(
+            child.painter(),
+            ir,
+            Icon::Body,
+            if selected { pal.accent } else { pal.text_dim },
+        );
         child.add_space(4.0);
         if let Some((RenameTarget::Body(rid), buf)) = &mut self.ui.outliner.renaming
             && *rid == b.id
@@ -434,15 +567,39 @@ impl AppState {
                 self.ui.outliner.renaming = None;
             }
         } else {
-            let col = if !b.visible { pal.text_dim.gamma_multiply(0.7) } else if selected { pal.text_strong } else { pal.text };
-            child.add(egui::Label::new(RichText::new(&b.name).color(col)).truncate().selectable(false));
+            let col = if !b.visible {
+                pal.text_dim.gamma_multiply(0.7)
+            } else if selected {
+                pal.text_strong
+            } else {
+                pal.text
+            };
+            child.add(
+                egui::Label::new(RichText::new(&b.name).color(col))
+                    .truncate()
+                    .selectable(false),
+            );
         }
         child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            if let Some(v) = self.paint_toggle(ui, PaintColumn::BodyLock, b.locked, Icon::Lock, Icon::Unlock, S::OUTLINER_LOCK) {
+            if let Some(v) = self.paint_toggle(
+                ui,
+                PaintColumn::BodyLock,
+                b.locked,
+                Icon::Lock,
+                Icon::Unlock,
+                S::OUTLINER_LOCK,
+            ) {
                 actions.push(OutlinerAction::BodyLocked(b.id, v));
             }
-            if let Some(v) = self.paint_toggle(ui, PaintColumn::BodyEye, b.visible, Icon::Eye, Icon::EyeOff, S::OUTLINER_VISIBLE) {
+            if let Some(v) = self.paint_toggle(
+                ui,
+                PaintColumn::BodyEye,
+                b.visible,
+                Icon::Eye,
+                Icon::EyeOff,
+                S::OUTLINER_VISIBLE,
+            ) {
                 actions.push(OutlinerAction::BodyVisible(b.id, v));
             }
         });
@@ -514,9 +671,17 @@ impl AppState {
     fn selection_stats(&self) -> MeshStats {
         match self.mode {
             Mode::Object => self.topo_stats(|b, _| self.sel.objects.contains(&b)),
-            Mode::Face => self.topo_stats(|b, f| f.is_some_and(|f| self.sel.faces.contains(&(b, f)))),
-            Mode::Edge => MeshStats { edges: self.sel.edges.len(), ..Default::default() },
-            Mode::Vertex => MeshStats { verts: self.sel.verts.len(), ..Default::default() },
+            Mode::Face => {
+                self.topo_stats(|b, f| f.is_some_and(|f| self.sel.faces.contains(&(b, f))))
+            }
+            Mode::Edge => MeshStats {
+                edges: self.sel.edges.len(),
+                ..Default::default()
+            },
+            Mode::Vertex => MeshStats {
+                verts: self.sel.verts.len(),
+                ..Default::default()
+            },
         }
     }
 
@@ -528,7 +693,12 @@ impl AppState {
         }
         let total = self.total_stats();
         let sel = self.selection_stats();
-        let dormant = self.doc.scene.as_mut().and_then(|s| guard(|| s.dormant_edits().len()).ok()).unwrap_or(0);
+        let dormant = self
+            .doc
+            .scene
+            .as_mut()
+            .and_then(|s| guard(|| s.dormant_edits().len()).ok())
+            .unwrap_or(0);
         let show = self.prefs.stats.show;
         let p = self.prefs.stats.clone();
         let rows: Vec<(&str, usize, usize, bool)> = vec![
@@ -539,56 +709,88 @@ impl AppState {
             (S::STAT_QUADS, total.quads, sel.quads, p.quads),
             (S::STAT_NGONS, total.ngons, sel.ngons, p.ngons),
         ];
-        ui.label(RichText::new(S::STAT_SOURCE_PREVIEW).small().color(pal.text_dim));
+        ui.label(
+            RichText::new(S::STAT_SOURCE_PREVIEW)
+                .small()
+                .color(pal.text_dim),
+        );
         ui.add_space(4.0);
-        egui::Grid::new("stats").num_columns(3).spacing(vec2(16.0, 5.0)).show(ui, |ui| {
-            ui.label("");
-            if show != StatsShow::Selection {
-                ui.label(RichText::new(S::STAT_TOTAL).small().color(pal.text_dim));
-            }
-            if show != StatsShow::Totals {
-                ui.label(RichText::new(S::STAT_SELECTED).small().color(pal.text_dim));
-            }
-            ui.end_row();
-            for (label, t, s, on) in rows {
-                if !on {
-                    continue;
-                }
-                ui.label(RichText::new(label).color(pal.text));
+        egui::Grid::new("stats")
+            .num_columns(3)
+            .spacing(vec2(16.0, 5.0))
+            .show(ui, |ui| {
+                ui.label("");
                 if show != StatsShow::Selection {
-                    ui.label(RichText::new(fmt_count(t)).color(pal.text_strong).monospace());
+                    ui.label(RichText::new(S::STAT_TOTAL).small().color(pal.text_dim));
                 }
                 if show != StatsShow::Totals {
-                    ui.label(RichText::new(fmt_count(s)).color(if s > 0 { pal.accent } else { pal.text_dim }).monospace());
+                    ui.label(RichText::new(S::STAT_SELECTED).small().color(pal.text_dim));
                 }
                 ui.end_row();
-            }
-            if p.dormant {
-                ui.label(RichText::new(S::STAT_DORMANT).color(pal.text));
-                ui.label(RichText::new(fmt_count(dormant)).color(if dormant > 0 { pal.warn } else { pal.text_dim }).monospace());
-                ui.end_row();
-            }
-        });
+                for (label, t, s, on) in rows {
+                    if !on {
+                        continue;
+                    }
+                    ui.label(RichText::new(label).color(pal.text));
+                    if show != StatsShow::Selection {
+                        ui.label(
+                            RichText::new(fmt_count(t))
+                                .color(pal.text_strong)
+                                .monospace(),
+                        );
+                    }
+                    if show != StatsShow::Totals {
+                        ui.label(
+                            RichText::new(fmt_count(s))
+                                .color(if s > 0 { pal.accent } else { pal.text_dim })
+                                .monospace(),
+                        );
+                    }
+                    ui.end_row();
+                }
+                if p.dormant {
+                    ui.label(RichText::new(S::STAT_DORMANT).color(pal.text));
+                    ui.label(
+                        RichText::new(fmt_count(dormant))
+                            .color(if dormant > 0 { pal.warn } else { pal.text_dim })
+                            .monospace(),
+                    );
+                    ui.end_row();
+                }
+            });
         // Quad ratio bar: a quick read of how game-ready the mesh is.
         if total.faces > 0 {
             ui.add_space(10.0);
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
             let f = total.faces as f32;
-            let segs = [(total.quads as f32 / f, pal.accent), (total.tris as f32 / f, pal.warn), (total.ngons as f32 / f, pal.error)];
+            let segs = [
+                (total.quads as f32 / f, pal.accent),
+                (total.tris as f32 / f, pal.warn),
+                (total.ngons as f32 / f, pal.error),
+            ];
             ui.painter().rect_filled(r, 3.0, pal.inset);
             let mut x = r.left();
             for (frac, col) in segs {
                 let w = r.width() * frac;
                 if w > 0.5 {
-                    ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(x, r.top()), vec2(w, r.height())), 3.0, col);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(x, r.top()), vec2(w, r.height())),
+                        3.0,
+                        col,
+                    );
                 }
                 x += w;
             }
             ui.add_space(3.0);
             ui.label(
-                RichText::new(format!("{:.0}% quads · {:.0}% tris · {:.0}% n-gons", segs[0].0 * 100.0, segs[1].0 * 100.0, segs[2].0 * 100.0))
-                    .small()
-                    .color(pal.text_dim),
+                RichText::new(format!(
+                    "{:.0}% quads · {:.0}% tris · {:.0}% n-gons",
+                    segs[0].0 * 100.0,
+                    segs[1].0 * 100.0,
+                    segs[2].0 * 100.0
+                ))
+                .small()
+                .color(pal.text_dim),
             );
         }
     }
@@ -602,8 +804,16 @@ impl AppState {
             ui.label(RichText::new(S::EMPTY_HISTORY).color(pal.text_dim));
             return;
         };
-        let data = guard(|| (scene.doc().rules.clone(), scene.doc().edits.clone(), scene.doc().phase_overrides.clone()));
-        let dormant: BTreeSet<u32> = guard(|| scene.dormant_edits()).map(|v| v.into_iter().collect()).unwrap_or_default();
+        let data = guard(|| {
+            (
+                scene.doc().rules.clone(),
+                scene.doc().edits.clone(),
+                scene.doc().phase_overrides.clone(),
+            )
+        });
+        let dormant: BTreeSet<u32> = guard(|| scene.dormant_edits())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
         let (rules, edits, phase) = match data {
             Ok(d) => d,
             Err(e) => {
@@ -636,21 +846,33 @@ impl AppState {
                 Edit::RemoveCadEdge { .. } => (Icon::Remove, "Remove CAD edge"),
                 Edit::Collapse { .. } => (Icon::Collapse, "Collapse"),
                 Edit::Weld { .. } => (Icon::Weld, "Weld"),
-                Edit::SetHard { hard, .. } => (Icon::Edge, if *hard { "Mark hard" } else { "Mark smooth" }),
+                Edit::SetHard { hard, .. } => {
+                    (Icon::Edge, if *hard { "Mark hard" } else { "Mark smooth" })
+                }
             };
             let d = dormant.contains(&e.id);
-            history_row(ui, &pal, icon, name, if d { S::HIST_DORMANT } else { "" }, d);
+            history_row(
+                ui,
+                &pal,
+                icon,
+                name,
+                if d { S::HIST_DORMANT } else { "" },
+                d,
+            );
         }
         if !dormant.is_empty() {
             ui.add_space(4.0);
-            if ui.button(format!("{}  ({})", S::HIST_PURGE, dormant.len())).clicked() {
+            if ui
+                .button(format!("{}  ({})", S::HIST_PURGE, dormant.len()))
+                .clicked()
+            {
                 self.apply(Op::PurgeDormant);
             }
         }
         if !phase.is_empty() {
             ui.add_space(6.0);
             section(ui, &pal, S::HIST_PHASE, phase.len());
-            for (t, _) in &phase {
+            for t in phase.keys() {
                 let label = match t {
                     newtopo_core::doc::PhaseTarget::Face(b, f) => format!("Body {b} · face {f}"),
                     newtopo_core::doc::PhaseTarget::Edge(b, e) => format!("Body {b} · edge {e}"),
@@ -690,7 +912,10 @@ impl AppState {
             }
             ui.add_space(6.0);
             for (icon, cmd) in [(Icon::Collapse, Cmd::Collapse), (Icon::Remove, Cmd::Remove)] {
-                if icons::icon_button(ui, icon, false, 30.0).on_hover_text(format!("{}  ({})", cmd.label(), self.keymap.label(cmd))).clicked() {
+                if icons::icon_button(ui, icon, false, 30.0)
+                    .on_hover_text(format!("{}  ({})", cmd.label(), self.keymap.label(cmd)))
+                    .clicked()
+                {
                     self.run(cmd);
                 }
             }
@@ -719,16 +944,31 @@ impl AppState {
                 ui.checkbox(&mut self.tool.iso_through, S::SEG_THROUGH);
                 ui.checkbox(&mut self.tool.snap, S::ISO_SNAP);
                 if self.tool.iso_split {
-                    ui.label(RichText::new("Split lines divide the face into patches with their own counts.").small().color(pal.text_dim));
+                    ui.label(
+                        RichText::new(
+                            "Split lines divide the face into patches with their own counts.",
+                        )
+                        .small()
+                        .color(pal.text_dim),
+                    );
                 }
             }
             Tool::Cut => {
                 ui.label(format!("{}: {}", S::CUT_POINTS, self.tool.cut.len()));
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(self.tool.cut.len() >= 2, egui::Button::new(S::CUT_FINISH)).clicked() {
+                    if ui
+                        .add_enabled(self.tool.cut.len() >= 2, egui::Button::new(S::CUT_FINISH))
+                        .clicked()
+                    {
                         self.cut_finish(false);
                     }
-                    if ui.add_enabled(!self.tool.cut.is_empty(), egui::Button::new(S::CUT_UNDO_POINT)).clicked() {
+                    if ui
+                        .add_enabled(
+                            !self.tool.cut.is_empty(),
+                            egui::Button::new(S::CUT_UNDO_POINT),
+                        )
+                        .clicked()
+                    {
                         self.tool.cut.pop();
                     }
                 });
@@ -736,8 +976,19 @@ impl AppState {
             }
             Tool::Weld => {
                 let from = self.tool.weld_from.is_some();
-                ui.label(RichText::new(if from { "Source picked. Click the target vertex." } else { "Click the source vertex." }).color(pal.text));
-                ui.label(RichText::new("The source moves to the target and keeps the target's anchor.").small().color(pal.text_dim));
+                ui.label(
+                    RichText::new(if from {
+                        "Source picked. Click the target vertex."
+                    } else {
+                        "Click the source vertex."
+                    })
+                    .color(pal.text),
+                );
+                ui.label(
+                    RichText::new("The source moves to the target and keeps the target's anchor.")
+                        .small()
+                        .color(pal.text_dim),
+                );
             }
         }
     }
@@ -753,15 +1004,31 @@ impl AppState {
                 ui.painter().rect_filled(r, 2.0, color);
                 ui.label(RichText::new(label).font(crate::theme::medium(13.0)));
                 ui.add_space(4.0);
-                let s = ui.add(egui::Slider::new(v, 0..=64).clamping(egui::SliderClamping::Never).show_value(false));
+                let s = ui.add(
+                    egui::Slider::new(v, 0..=64)
+                        .clamping(egui::SliderClamping::Never)
+                        .show_value(false),
+                );
                 let d = ui.add(egui::DragValue::new(v).range(0..=999).speed(0.1));
                 dragging |= s.dragged() || d.dragged();
             });
         };
         let c = self.colors();
-        let ca = Color32::from_rgb((c.arrow_a[0] * 255.0) as u8, (c.arrow_a[1] * 255.0) as u8, (c.arrow_a[2] * 255.0) as u8);
-        let cb = Color32::from_rgb((c.arrow_b[0] * 255.0) as u8, (c.arrow_b[1] * 255.0) as u8, (c.arrow_b[2] * 255.0) as u8);
-        ui.label(RichText::new(S::SEG_TITLE).font(crate::theme::medium(14.0)).color(pal.text_strong));
+        let ca = Color32::from_rgb(
+            (c.arrow_a[0] * 255.0) as u8,
+            (c.arrow_a[1] * 255.0) as u8,
+            (c.arrow_a[2] * 255.0) as u8,
+        );
+        let cb = Color32::from_rgb(
+            (c.arrow_b[0] * 255.0) as u8,
+            (c.arrow_b[1] * 255.0) as u8,
+            (c.arrow_b[2] * 255.0) as u8,
+        );
+        ui.label(
+            RichText::new(S::SEG_TITLE)
+                .font(crate::theme::medium(14.0))
+                .color(pal.text_strong),
+        );
         ui.add_space(2.0);
         match tool {
             Tool::Connect => {
@@ -775,7 +1042,11 @@ impl AppState {
                 ui.horizontal(|ui| {
                     ui.label(S::SEG_SPACING);
                     ui.selectable_value(&mut self.tool.seg.spacing, Spacing::ArcLength, S::SEG_ARC);
-                    ui.selectable_value(&mut self.tool.seg.spacing, Spacing::Parametric, S::SEG_PARAM);
+                    ui.selectable_value(
+                        &mut self.tool.seg.spacing,
+                        Spacing::Parametric,
+                        S::SEG_PARAM,
+                    );
                 });
                 ui.checkbox(&mut self.tool.seg.start_on_seam, S::SEG_START_ON_SEAM);
             }
@@ -791,7 +1062,10 @@ impl AppState {
                     ui.label(RichText::new(label).color(pal.text_dim));
                 });
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(self.tool.picking_guide, S::SEG_GUIDE_PICK).clicked() {
+                    if ui
+                        .selectable_label(self.tool.picking_guide, S::SEG_GUIDE_PICK)
+                        .clicked()
+                    {
                         self.tool.picking_guide = !self.tool.picking_guide;
                         self.set_mode(Mode::Edge);
                     }
@@ -799,7 +1073,11 @@ impl AppState {
                         self.tool.seg.guide = None;
                     }
                 });
-                let scope = if self.mode == Mode::Object { "Scope: whole objects" } else { "Scope: selected patches" };
+                let scope = if self.mode == Mode::Object {
+                    "Scope: whole objects"
+                } else {
+                    "Scope: selected patches"
+                };
                 ui.label(RichText::new(scope).small().color(pal.text_dim));
             }
             _ => {}
@@ -807,11 +1085,23 @@ impl AppState {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new(S::SEG_TOTAL).color(pal.text_dim));
-            let t = self.tool.last_lines_added.map(|n| n.to_string()).unwrap_or_else(|| "—".into());
+            let t = self
+                .tool
+                .last_lines_added
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "—".into());
             ui.label(RichText::new(t).monospace().color(pal.text_strong));
         });
-        let n = if tool == Tool::Slice && self.mode == Mode::Object { self.sel.objects.len() } else { self.sel.faces.len() };
-        ui.label(RichText::new(format!("{n} selected")).small().color(pal.text_dim));
+        let n = if tool == Tool::Slice && self.mode == Mode::Object {
+            self.sel.objects.len()
+        } else {
+            self.sel.faces.len()
+        };
+        ui.label(
+            RichText::new(format!("{n} selected"))
+                .small()
+                .color(pal.text_dim),
+        );
         ui.add_space(4.0);
         if ui.button(S::SEG_CLEAR).clicked() {
             match tool {
@@ -854,7 +1144,7 @@ pub fn fmt_count(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push('\u{202f}');
         }
         out.push(ch);
@@ -864,48 +1154,107 @@ pub fn fmt_count(n: usize) -> String {
 
 fn section(ui: &mut Ui, pal: &crate::theme::Palette, title: &str, n: usize) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(title.to_uppercase()).small().color(pal.text_dim));
-        ui.label(RichText::new(n.to_string()).small().color(pal.text_dim.gamma_multiply(0.7)));
+        ui.label(
+            RichText::new(title.to_uppercase())
+                .small()
+                .color(pal.text_dim),
+        );
+        ui.label(
+            RichText::new(n.to_string())
+                .small()
+                .color(pal.text_dim.gamma_multiply(0.7)),
+        );
     });
 }
 
-fn history_row(ui: &mut Ui, pal: &crate::theme::Palette, icon: Icon, name: &str, detail: &str, dim: bool) -> egui::Response {
+fn history_row(
+    ui: &mut Ui,
+    pal: &crate::theme::Palette,
+    icon: Icon,
+    name: &str,
+    detail: &str,
+    dim: bool,
+) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 4.0, pal.widget.gamma_multiply(0.6));
+        ui.painter()
+            .rect_filled(rect, 4.0, pal.widget.gamma_multiply(0.6));
     }
-    let col = if dim { pal.text_dim.gamma_multiply(0.6) } else { pal.text };
+    let col = if dim {
+        pal.text_dim.gamma_multiply(0.6)
+    } else {
+        pal.text
+    };
     let ir = egui::Rect::from_min_size(rect.min + vec2(4.0, 4.0), vec2(16.0, 16.0));
     icons::paint(ui.painter(), ir, icon, if dim { col } else { pal.accent });
-    ui.painter().text(rect.min + vec2(26.0, 12.0), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), col);
-    ui.painter().text(rect.right_center() - vec2(4.0, 0.0), egui::Align2::RIGHT_CENTER, detail, egui::FontId::proportional(11.5), pal.text_dim);
+    ui.painter().text(
+        rect.min + vec2(26.0, 12.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(13.0),
+        col,
+    );
+    ui.painter().text(
+        rect.right_center() - vec2(4.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        detail,
+        egui::FontId::proportional(11.5),
+        pal.text_dim,
+    );
     resp
 }
 
 fn rule_summary(r: &Rule) -> (Icon, String) {
     match r {
-        Rule::Connect { patches, count_a, count_b, .. } => (Icon::Connect, format!("A {count_a} · B {count_b} · {} patches", patches.len())),
-        Rule::Grid { count_u, count_v, .. } => (Icon::Grid, format!("{count_u} × {count_v}")),
-        Rule::Slice { scope, count, through, .. } => {
+        Rule::Connect {
+            patches,
+            count_a,
+            count_b,
+            ..
+        } => (
+            Icon::Connect,
+            format!("A {count_a} · B {count_b} · {} patches", patches.len()),
+        ),
+        Rule::Grid {
+            count_u, count_v, ..
+        } => (Icon::Grid, format!("{count_u} × {count_v}")),
+        Rule::Slice {
+            scope,
+            count,
+            through,
+            ..
+        } => {
             let s = match scope {
                 SliceScope::Body(b) => format!("body {b}"),
                 SliceScope::Patches(p) => format!("{} patches", p.len()),
             };
-            (Icon::Slice, format!("{count} planes · {s}{}", if *through { " · through" } else { "" }))
+            (
+                Icon::Slice,
+                format!(
+                    "{count} planes · {s}{}",
+                    if *through { " · through" } else { "" }
+                ),
+            )
         }
-        Rule::Iso { pieces, through } => (Icon::Iso, format!("{} piece{}{}", pieces.len(), if pieces.len() == 1 { "" } else { "s" }, if *through { " · through" } else { "" })),
-        Rule::Cut { points, closed } => (Icon::Cut, format!("{} points{}", points.len(), if *closed { " · closed" } else { "" })),
+        Rule::Iso { pieces, through } => (
+            Icon::Iso,
+            format!(
+                "{} piece{}{}",
+                pieces.len(),
+                if pieces.len() == 1 { "" } else { "s" },
+                if *through { " · through" } else { "" }
+            ),
+        ),
+        Rule::Cut { points, closed } => (
+            Icon::Cut,
+            format!(
+                "{} points{}",
+                points.len(),
+                if *closed { " · closed" } else { "" }
+            ),
+        ),
         Rule::Join { .. } => (Icon::Weld, "2 vertices".into()),
     }
-}
-
-/// Group rows by layer for tests and other panels.
-pub fn group_by_layer(bodies: &[BodyRow]) -> BTreeMap<LayerId, Vec<BodyId>> {
-    let mut m: BTreeMap<LayerId, Vec<BodyId>> = BTreeMap::new();
-    for b in bodies {
-        m.entry(b.layer).or_default().push(b.id);
-    }
-    m
 }
 
 #[cfg(test)]
@@ -916,16 +1265,5 @@ mod tests {
     fn counts_are_grouped() {
         assert_eq!(fmt_count(0), "0");
         assert_eq!(fmt_count(1234567), "1\u{202f}234\u{202f}567");
-    }
-
-    #[test]
-    fn grouping() {
-        let rows = vec![
-            BodyRow { id: BodyId(1), name: "a".into(), layer: LayerId(0), visible: true, locked: false },
-            BodyRow { id: BodyId(2), name: "b".into(), layer: LayerId(1), visible: true, locked: false },
-            BodyRow { id: BodyId(3), name: "c".into(), layer: LayerId(0), visible: true, locked: false },
-        ];
-        let g = group_by_layer(&rows);
-        assert_eq!(g[&LayerId(0)], vec![BodyId(1), BodyId(3)]);
     }
 }

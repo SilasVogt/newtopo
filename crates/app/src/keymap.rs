@@ -20,7 +20,13 @@ pub struct Binding {
 
 impl Binding {
     pub fn new(key: Key, m: Modifiers) -> Self {
-        Binding { key, ctrl: m.command || m.ctrl, shift: m.shift, alt: m.alt, double: false }
+        Binding {
+            key,
+            ctrl: m.command || m.ctrl,
+            shift: m.shift,
+            alt: m.alt,
+            double: false,
+        }
     }
 
     /// Parse `"Ctrl+Shift+Z"`, `"Q"`, `"L x2"` (double press), `"Ctrl+Comma"`.
@@ -30,7 +36,13 @@ impl Binding {
             Some(rest) => (rest.trim(), true),
             None => (s, false),
         };
-        let mut b = Binding { key: Key::A, ctrl: false, shift: false, alt: false, double };
+        let mut b = Binding {
+            key: Key::A,
+            ctrl: false,
+            shift: false,
+            alt: false,
+            double,
+        };
         let parts: Vec<&str> = s.split('+').map(str::trim).collect();
         let (key, mods) = parts.split_last()?;
         for m in mods {
@@ -68,7 +80,11 @@ impl Binding {
     pub fn display(self) -> String {
         let mut s = String::new();
         if self.ctrl {
-            s.push_str(if cfg!(target_os = "macos") { "Cmd+" } else { "Ctrl+" });
+            s.push_str(if cfg!(target_os = "macos") {
+                "Cmd+"
+            } else {
+                "Ctrl+"
+            });
         }
         if self.shift {
             s.push_str("Shift+");
@@ -104,14 +120,22 @@ impl Keymap {
     pub fn bindings(&self, cmd: Cmd) -> Vec<Binding> {
         match self.overrides.get(cmd.id()) {
             Some(v) => v.iter().filter_map(|s| Binding::parse(s)).collect(),
-            None => cmd.default_bindings().iter().filter_map(|s| Binding::parse(s)).collect(),
+            None => cmd
+                .default_bindings()
+                .iter()
+                .filter_map(|s| Binding::parse(s))
+                .collect(),
         }
     }
 
     pub fn set(&mut self, cmd: Cmd, bindings: &[Binding]) {
         let v: Vec<String> = bindings.iter().map(|b| b.to_storage()).collect();
-        let default: Vec<String> =
-            cmd.default_bindings().iter().filter_map(|s| Binding::parse(s)).map(|b| b.to_storage()).collect();
+        let default: Vec<String> = cmd
+            .default_bindings()
+            .iter()
+            .filter_map(|s| Binding::parse(s))
+            .map(|b| b.to_storage())
+            .collect();
         if v == default {
             self.overrides.remove(cmd.id());
         } else {
@@ -134,19 +158,39 @@ impl Keymap {
     /// First shortcut for display ("—" when none).
     pub fn label(&self, cmd: Cmd) -> String {
         let b = self.bindings(cmd);
-        if b.is_empty() { String::new() } else { b.iter().map(|b| b.display()).collect::<Vec<_>>().join(" / ") }
+        if b.is_empty() {
+            String::new()
+        } else {
+            b.iter()
+                .map(|b| b.display())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        }
     }
 
     /// Commands bound to exactly this binding (combo + double flag).
     pub fn lookup(&self, b: &Binding) -> Vec<Cmd> {
-        ALL.iter().copied().filter(|c| self.bindings(*c).iter().any(|x| x.same_combo(b) && x.double == b.double)).collect()
+        ALL.iter()
+            .copied()
+            .filter(|c| {
+                self.bindings(*c)
+                    .iter()
+                    .any(|x| x.same_combo(b) && x.double == b.double)
+            })
+            .collect()
     }
 
     /// Commands using this combo in any form (for conflict warnings).
     pub fn conflicts(&self, b: &Binding, except: Cmd) -> Vec<Cmd> {
         ALL.iter()
             .copied()
-            .filter(|c| *c != except && self.bindings(*c).iter().any(|x| x.same_combo(b) && x.double == b.double))
+            .filter(|c| {
+                *c != except
+                    && self
+                        .bindings(*c)
+                        .iter()
+                        .any(|x| x.same_combo(b) && x.double == b.double)
+            })
             .collect()
     }
 }
@@ -162,7 +206,9 @@ impl Dispatcher {
     /// On a double press the double binding wins if one exists; otherwise
     /// the single binding runs again.
     pub fn press(&mut self, keymap: &Keymap, b: Binding, t: f64) -> Option<Cmd> {
-        let is_double = self.last.is_some_and(|(l, lt)| l.same_combo(&b) && t - lt <= DOUBLE_PRESS_SECS);
+        let is_double = self
+            .last
+            .is_some_and(|(l, lt)| l.same_combo(&b) && t - lt <= DOUBLE_PRESS_SECS);
         if is_double {
             let dbl = Binding { double: true, ..b };
             if let Some(c) = keymap.lookup(&dbl).first() {
@@ -171,7 +217,10 @@ impl Dispatcher {
             }
         }
         self.last = Some((b, t));
-        keymap.lookup(&Binding { double: false, ..b }).first().copied()
+        keymap
+            .lookup(&Binding { double: false, ..b })
+            .first()
+            .copied()
     }
 }
 
@@ -201,7 +250,12 @@ mod tests {
         assert_eq!(k.lookup(&b("Slash")), vec![Cmd::Isolate]);
         assert_eq!(k.lookup(&b("Ctrl+Y")), vec![Cmd::Redo]);
         assert_eq!(k.lookup(&b("L x2")), vec![Cmd::LoopAlternate]);
-        for (s, c) in [("1", Cmd::ModeVertex), ("2", Cmd::ModeEdge), ("3", Cmd::ModeFace), ("4", Cmd::ModeObject)] {
+        for (s, c) in [
+            ("1", Cmd::ModeVertex),
+            ("2", Cmd::ModeEdge),
+            ("3", Cmd::ModeFace),
+            ("4", Cmd::ModeObject),
+        ] {
             assert_eq!(k.lookup(&b(s)), vec![c]);
         }
     }
@@ -211,7 +265,12 @@ mod tests {
         let k = Keymap::default();
         for c in ALL {
             for b in k.bindings(*c) {
-                assert!(k.conflicts(&b, *c).is_empty(), "{} conflicts on {}", c.id(), b.display());
+                assert!(
+                    k.conflicts(&b, *c).is_empty(),
+                    "{} conflicts on {}",
+                    c.id(),
+                    b.display()
+                );
             }
         }
     }
@@ -235,7 +294,10 @@ mod tests {
     fn overrides_and_reset() {
         let mut k = Keymap::default();
         k.set(Cmd::Frame, &[Binding::parse("Shift+F").unwrap()]);
-        assert_eq!(k.lookup(&Binding::parse("Shift+F").unwrap()), vec![Cmd::Frame]);
+        assert_eq!(
+            k.lookup(&Binding::parse("Shift+F").unwrap()),
+            vec![Cmd::Frame]
+        );
         assert!(k.lookup(&Binding::parse("F").unwrap()).is_empty());
         let json = serde_json::to_string(&k).unwrap();
         let back: Keymap = serde_json::from_str(&json).unwrap();

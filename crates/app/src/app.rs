@@ -218,10 +218,22 @@ pub struct App {
 impl App {
     pub fn new(ctx: &egui::Context, paths: Paths, gpu_ok: bool, screenshot_mode: bool) -> Self {
         theme::install_fonts(ctx);
-        let prefs = if screenshot_mode { Prefs::default() } else { Prefs::load(&paths) };
-        let keymap = if screenshot_mode { Keymap::default() } else { crate::prefs::load_keymap(&paths) };
+        let prefs = if screenshot_mode {
+            Prefs::default()
+        } else {
+            Prefs::load(&paths)
+        };
+        let keymap = if screenshot_mode {
+            Keymap::default()
+        } else {
+            crate::prefs::load_keymap(&paths)
+        };
         let themes = Theme::available(paths.themes_dir().as_deref());
-        let theme = themes.iter().find(|t| t.name == prefs.theme).cloned().unwrap_or_else(Theme::builtin_dark);
+        let theme = themes
+            .iter()
+            .find(|t| t.name == prefs.theme)
+            .cloned()
+            .unwrap_or_else(Theme::builtin_dark);
         let pal = theme.palette();
         let dock = if screenshot_mode {
             default_layout()
@@ -230,7 +242,11 @@ impl App {
                 .filter(|d| d.find_tab(&Tab::Viewport).is_some())
                 .unwrap_or_else(default_layout)
         };
-        let recovery = if screenshot_mode { vec![] } else { crate::jobs::find_recoverable(&paths, &prefs) };
+        let recovery = if screenshot_mode {
+            vec![]
+        } else {
+            crate::jobs::find_recoverable(&paths, &prefs)
+        };
         let mut st = AppState {
             paths,
             prefs,
@@ -269,7 +285,11 @@ impl App {
         };
         st.ui.recovery = recovery;
         st.view.camera.up = st.prefs.up;
-        App { st, dock, dock_saved: None }
+        App {
+            st,
+            dock,
+            dock_saved: None,
+        }
     }
 
     /// One frame. `ui` is the root ui of the window.
@@ -287,7 +307,16 @@ impl App {
 
         let dstyle = theme::dock_style(ui.style(), &st.pal);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(st.pal.bg).inner_margin(egui::Margin { left: 4, right: 4, top: 2, bottom: 0 }))
+            .frame(
+                egui::Frame::new()
+                    .fill(st.pal.bg)
+                    .inner_margin(egui::Margin {
+                        left: 4,
+                        right: 4,
+                        top: 2,
+                        bottom: 0,
+                    }),
+            )
             .show(ui, |ui| {
                 DockArea::new(&mut self.dock)
                     .style(dstyle)
@@ -325,7 +354,9 @@ impl App {
                 DockAction::HidePanels(hide) => {
                     if hide && self.dock_saved.is_none() {
                         self.dock_saved = Some(self.dock.clone());
-                        self.dock.main_surface_mut().retain_tabs(|t| *t == Tab::Viewport);
+                        self.dock
+                            .main_surface_mut()
+                            .retain_tabs(|t| *t == Tab::Viewport);
                     } else if !hide && let Some(saved) = self.dock_saved.take() {
                         self.dock = saved;
                     }
@@ -340,18 +371,25 @@ impl App {
         let title = format!(
             "{}{} — {}",
             st.doc.title(),
-            if st.doc.is_dirty() || (st.doc.has_scene() && st.doc.path.is_none()) { " •" } else { "" },
+            if st.doc.is_dirty() || (st.doc.has_scene() && st.doc.path.is_none()) {
+                " •"
+            } else {
+                ""
+            },
             S::APP_NAME
         );
         if title != st.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             st.last_title = title;
         }
-        if st.dirty_settings && !st.screenshot_mode && ctx.input(|i| i.pointer.any_down()) == false {
+        if st.dirty_settings && !st.screenshot_mode && !ctx.input(|i| i.pointer.any_down()) {
             st.prefs.save(&st.paths);
             crate::prefs::save_keymap(&st.paths, &st.keymap);
             let layout = self.dock_saved.as_ref().unwrap_or(&self.dock);
-            crate::prefs::save_json(st.paths.file("layout.json").as_deref(), &Some(layout.clone()));
+            crate::prefs::save_json(
+                st.paths.file("layout.json").as_deref(),
+                &Some(layout.clone()),
+            );
             st.dirty_settings = false;
         }
         if st.quit {
@@ -367,20 +405,25 @@ impl App {
         st.prefs.save(&st.paths);
         crate::prefs::save_keymap(&st.paths, &st.keymap);
         let layout = self.dock_saved.as_ref().unwrap_or(&self.dock);
-        crate::prefs::save_json(st.paths.file("layout.json").as_deref(), &Some(layout.clone()));
+        crate::prefs::save_json(
+            st.paths.file("layout.json").as_deref(),
+            &Some(layout.clone()),
+        );
         crate::jobs::remove_autosaves(st);
     }
 }
 
 fn open_tab(dock: &mut DockState<Tab>, tab: Tab) {
     // Open studio panels next to the tool panel when it exists.
-    if let Some((surface, node, _)) = dock.find_tab(&Tab::Tool).map(|p| (p.surface, p.node, p.tab)) {
-        if let Ok(leaf) = dock.leaf_mut(egui_dock::NodePath { surface, node }) {
-            leaf.append_tab(tab);
-            let n = leaf.tabs.len();
-            leaf.set_active_tab(egui_dock::TabIndex(n - 1));
-            return;
-        }
+    if let Some((surface, node, _)) = dock
+        .find_tab(&Tab::Tool)
+        .map(|p| (p.surface, p.node, p.tab))
+        && let Ok(leaf) = dock.leaf_mut(egui_dock::NodePath { surface, node })
+    {
+        leaf.append_tab(tab);
+        let n = leaf.tabs.len();
+        let _ = leaf.set_active_tab(egui_dock::TabIndex(n - 1));
+        return;
     }
     dock.push_to_focused_leaf(tab);
 }
@@ -417,7 +460,11 @@ impl TabViewer for Viewer<'_> {
         }
     }
 
-    fn tab_style_override(&self, tab: &Tab, global: &egui_dock::TabStyle) -> Option<egui_dock::TabStyle> {
+    fn tab_style_override(
+        &self,
+        tab: &Tab,
+        global: &egui_dock::TabStyle,
+    ) -> Option<egui_dock::TabStyle> {
         (*tab == Tab::Viewport).then(|| {
             let mut s = global.clone();
             s.tab_body.inner_margin = egui::Margin::ZERO;
@@ -443,11 +490,17 @@ impl TabViewer for Viewer<'_> {
 
 impl AppState {
     pub fn colors(&self) -> OverlayColors {
-        self.prefs.overlay.clone().unwrap_or_else(|| self.theme.overlay.clone())
+        self.prefs
+            .overlay
+            .clone()
+            .unwrap_or_else(|| self.theme.overlay.clone())
     }
 
     fn ensure_theme(&mut self, ctx: &egui::Context) {
-        let key = (self.theme.name.clone(), (self.prefs.ui_scale * 100.0) as u32);
+        let key = (
+            self.theme.name.clone(),
+            (self.prefs.ui_scale * 100.0) as u32,
+        );
         if self.theme_applied.as_ref() != Some(&key) {
             theme::apply(ctx, &self.theme, self.prefs.ui_scale);
             self.pal = self.theme.palette();
@@ -505,7 +558,10 @@ impl AppState {
 
     pub fn is_locked(&self, body: BodyId) -> bool {
         self.local.body_locked.contains(&body)
-            || self.body_rows().iter().any(|b| b.id == body && self.local.layer_locked.contains(&b.layer))
+            || self
+                .body_rows()
+                .iter()
+                .any(|b| b.id == body && self.local.layer_locked.contains(&b.layer))
     }
 
     /// Rebuild view data if the document or display settings changed.
@@ -525,7 +581,7 @@ impl AppState {
         self.vd = if let Some(scene) = self.doc.scene.as_mut() {
             crate::viewdata::from_scene(scene, &params)
         } else if let Some(demo) = &self.demo {
-            crate::viewdata::from_demo(&demo.bodies, &demo.layers, &params)
+            crate::viewdata::from_demo(&demo.bodies, &params)
         } else {
             ViewData::default()
         };
@@ -556,11 +612,19 @@ impl AppState {
                 Some(o)
             }
             Err(ApplyError::Refused(r)) if r.needs_confirmation => {
-                self.ui.confirm = Some(Confirm { title: S::DLG_CONFIRM.into(), body: r.reason.clone(), op });
+                self.ui.confirm = Some(Confirm {
+                    title: S::DLG_CONFIRM.into(),
+                    body: r.reason.clone(),
+                    op,
+                });
                 None
             }
             Err(e) => {
-                let kind = if matches!(e, ApplyError::Engine(_)) { ToastKind::Error } else { ToastKind::Warn };
+                let kind = if matches!(e, ApplyError::Engine(_)) {
+                    ToastKind::Error
+                } else {
+                    ToastKind::Warn
+                };
                 self.toast(kind, e.message());
                 None
             }
@@ -616,6 +680,7 @@ impl AppState {
                     self.view.wireframe = !self.view.wireframe;
                 }
             }
+            FlatShading => self.view.flat = !self.view.flat,
             AutoFill => self.toggle_setting(SettingToggle::AutoFill),
             Link => self.toggle_setting(SettingToggle::Link),
             Symmetry => self.toggle_setting(SettingToggle::Symmetry),
@@ -636,7 +701,11 @@ impl AppState {
             Remove => self.remove_selected(),
             Snap => {
                 self.tool.snap = !self.tool.snap;
-                let msg = if self.tool.snap { "Snap on" } else { "Snap off" };
+                let msg = if self.tool.snap {
+                    "Snap on"
+                } else {
+                    "Snap off"
+                };
                 self.toast(ToastKind::Info, msg);
             }
             Loop => self.select_loop(false, false),
@@ -648,7 +717,11 @@ impl AppState {
             Invert => self.invert_selection(),
             VisibleOnly => {
                 self.view.visible_only = !self.view.visible_only;
-                let msg = if self.view.visible_only { "Visible-only selection on" } else { "Visible-only selection off" };
+                let msg = if self.view.visible_only {
+                    "Visible-only selection on"
+                } else {
+                    "Visible-only selection off"
+                };
                 self.toast(ToastKind::Info, msg);
             }
             Frame => self.frame_selection(),
@@ -668,7 +741,10 @@ impl AppState {
             ViewTop => self.view.camera.set_view(newtopo_render::NamedView::Top),
             ViewBottom => self.view.camera.set_view(newtopo_render::NamedView::Bottom),
             ViewIso => self.view.camera.set_view(newtopo_render::NamedView::Iso),
-            HidePanels => self.ui.dock_actions.push(DockAction::HidePanels(!self.ui.panels_hidden)),
+            HidePanels => self
+                .ui
+                .dock_actions
+                .push(DockAction::HidePanels(!self.ui.panels_hidden)),
             ResetLayout => self.ui.dock_actions.push(DockAction::ResetLayout),
             OutlinerSearch => {
                 self.ui.focus_outliner_search = true;
@@ -698,7 +774,10 @@ impl AppState {
 
     pub fn load_sample(&mut self) {
         if self.doc.has_scene() {
-            self.toast(ToastKind::Info, "Close the current scene to view the sample.");
+            self.toast(
+                ToastKind::Info,
+                "Close the current scene to view the sample.",
+            );
             return;
         }
         self.demo = Some(Demo::new());
@@ -708,7 +787,12 @@ impl AppState {
     }
 
     fn toggle_setting(&mut self, which: SettingToggle) {
-        let Some(settings) = self.doc.scene.as_ref().and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok()) else {
+        let Some(settings) = self
+            .doc
+            .scene
+            .as_ref()
+            .and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
+        else {
             if self.is_demo() {
                 self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             } else {
@@ -717,18 +801,29 @@ impl AppState {
             return;
         };
         let op = match which {
-            SettingToggle::AutoFill => Op::SetAutofill { on: !settings.autofill },
+            SettingToggle::AutoFill => Op::SetAutofill {
+                on: !settings.autofill,
+            },
             SettingToggle::Link => Op::SetLink { on: !settings.link },
             SettingToggle::Symmetry => Op::SetSymmetry {
                 on: !settings.symmetry,
-                axes: if settings.symmetry_axes.is_empty() { vec![newtopo_core::doc::Axis::X] } else { settings.symmetry_axes.clone() },
+                axes: if settings.symmetry_axes.is_empty() {
+                    vec![newtopo_core::doc::Axis::X]
+                } else {
+                    settings.symmetry_axes.clone()
+                },
             },
         };
         self.apply(op);
     }
 
     fn toggle_mirror(&mut self, axis: newtopo_core::doc::Axis) {
-        let Some(settings) = self.doc.scene.as_ref().and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok()) else {
+        let Some(settings) = self
+            .doc
+            .scene
+            .as_ref()
+            .and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
+        else {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
             return;
         };
@@ -738,26 +833,38 @@ impl AppState {
         } else {
             axes.push(axis);
         }
-        self.apply(Op::SetSymmetry { on: settings.symmetry || !axes.is_empty(), axes });
+        self.apply(Op::SetSymmetry {
+            on: settings.symmetry || !axes.is_empty(),
+            axes,
+        });
     }
 
     /// Current scene toggles (auto-fill, link, symmetry, axes) for the top bar.
     pub fn scene_toggles(&self) -> Option<newtopo_core::doc::SceneSettings> {
-        self.doc.scene.as_ref().and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
+        self.doc
+            .scene
+            .as_ref()
+            .and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
     }
 
     fn copy_rules(&mut self) {
         // SPEC §6.13: copy split lines, rules and edits of the selected object.
         // The facade has no copy/paste op yet (see docs/notes/app.md).
         if self.sel.objects.len() != 1 {
-            self.toast(ToastKind::Info, "Select exactly one object to copy its rules.");
+            self.toast(
+                ToastKind::Info,
+                "Select exactly one object to copy its rules.",
+            );
             return;
         }
         self.toast(ToastKind::Warn, format!("{}: copy rules", S::TOAST_NOT_YET));
     }
 
     fn paste_rules(&mut self) {
-        self.toast(ToastKind::Warn, format!("{}: paste rules", S::TOAST_NOT_YET));
+        self.toast(
+            ToastKind::Warn,
+            format!("{}: paste rules", S::TOAST_NOT_YET),
+        );
     }
 
     fn request(&mut self, what: PendingAfterPrompt) {
@@ -792,22 +899,40 @@ impl AppState {
         for ev in events {
             // Key capture for the keymap editor swallows everything.
             if self.ui.key_capture.is_some() {
-                if let egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } = ev {
+                if let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } = ev
+                {
                     self.capture_key(key, modifiers);
                 }
                 continue;
             }
             let (key, pressed, repeat, mods) = match ev {
-                egui::Event::Key { key, pressed, repeat, modifiers, .. } => (key, pressed, repeat, modifiers),
+                egui::Event::Key {
+                    key,
+                    pressed,
+                    repeat,
+                    modifiers,
+                    ..
+                } => (key, pressed, repeat, modifiers),
                 egui::Event::Copy if !typing => (Key::C, true, false, Modifiers::COMMAND),
                 egui::Event::Paste(_) if !typing => (Key::V, true, false, Modifiers::COMMAND),
                 _ => continue,
             };
             // Radial menu: hold to show, release over a slot to run.
             let radial_binds = self.keymap.bindings(Cmd::Radial);
-            let is_radial_key = radial_binds.iter().any(|b| !b.double && b.same_combo(&Binding::new(key, mods)));
+            let is_radial_key = radial_binds
+                .iter()
+                .any(|b| !b.double && b.same_combo(&Binding::new(key, mods)));
             if !pressed {
-                if self.ui.radial.open && self.ui.radial.held && radial_binds.iter().any(|b| b.key == key) {
+                if self.ui.radial.open
+                    && self.ui.radial.held
+                    && radial_binds.iter().any(|b| b.key == key)
+                {
                     self.radial_release();
                 }
                 continue;
@@ -823,7 +948,9 @@ impl AppState {
                 continue;
             }
             if is_radial_key && !self.ui.radial.open {
-                let at = pointer.filter(|p| self.view.rect.contains(*p)).unwrap_or(self.view.rect.center());
+                let at = pointer
+                    .filter(|p| self.view.rect.contains(*p))
+                    .unwrap_or(self.view.rect.center());
                 self.ui.radial.open_at(at, self.time, false);
                 continue;
             }
@@ -863,12 +990,18 @@ impl AppState {
     fn top_bar(&mut self, ui: &mut Ui) {
         let pal = self.pal;
         egui::Panel::top("topbar")
-            .frame(egui::Frame::new().fill(pal.bg).inner_margin(egui::Margin { left: 8, right: 8, top: 5, bottom: 5 }))
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(egui::Margin {
+                left: 8,
+                right: 8,
+                top: 5,
+                bottom: 5,
+            }))
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Wordmark.
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                    let (r, _) =
+                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
                     paint_logo(ui.painter(), r, pal.accent);
                     ui.add_space(2.0);
                     ui.scope(|ui| {
@@ -887,23 +1020,57 @@ impl AppState {
                         (Mode::Object, Icon::Object, S::MODE_OBJECT, Cmd::ModeObject),
                     ] {
                         let r = icons::icon_button(ui, icon, self.mode == m, 26.0);
-                        if r.on_hover_text(format!("{label} mode  ({})", self.keymap.label(cmd))).clicked() {
+                        if r.on_hover_text(format!("{label} mode  ({})", self.keymap.label(cmd)))
+                            .clicked()
+                        {
                             self.set_mode(m);
                         }
                     }
                     sep(ui, &pal);
                     let s = self.scene_toggles();
-                    let r = icons::icon_text_button(ui, Icon::Preview, S::TOGGLE_PREVIEW, self.view.preview);
-                    if r.on_hover_text(format!("{}  ({})", S::TOGGLE_PREVIEW, self.keymap.label(Cmd::Preview))).clicked() {
+                    let r = icons::icon_text_button(
+                        ui,
+                        Icon::Preview,
+                        S::TOGGLE_PREVIEW,
+                        self.view.preview,
+                    );
+                    if r.on_hover_text(format!(
+                        "{}  ({})",
+                        S::TOGGLE_PREVIEW,
+                        self.keymap.label(Cmd::Preview)
+                    ))
+                    .clicked()
+                    {
                         self.run(Cmd::Preview);
                     }
                     for (icon, label, on, cmd) in [
-                        (Icon::AutoFill, S::TOGGLE_AUTOFILL, s.as_ref().is_some_and(|s| s.autofill), Cmd::AutoFill),
-                        (Icon::Link, S::TOGGLE_LINK, s.as_ref().is_some_and(|s| s.link), Cmd::Link),
-                        (Icon::Symmetry, S::TOGGLE_SYMMETRY, s.as_ref().is_some_and(|s| s.symmetry), Cmd::Symmetry),
+                        (
+                            Icon::AutoFill,
+                            S::TOGGLE_AUTOFILL,
+                            s.as_ref().is_some_and(|s| s.autofill),
+                            Cmd::AutoFill,
+                        ),
+                        (
+                            Icon::Link,
+                            S::TOGGLE_LINK,
+                            s.as_ref().is_some_and(|s| s.link),
+                            Cmd::Link,
+                        ),
+                        (
+                            Icon::Symmetry,
+                            S::TOGGLE_SYMMETRY,
+                            s.as_ref().is_some_and(|s| s.symmetry),
+                            Cmd::Symmetry,
+                        ),
                     ] {
-                        let r = ui.add_enabled_ui(s.is_some(), |ui| icons::icon_text_button(ui, icon, label, on)).inner;
-                        if r.on_hover_text(format!("{label}  ({})", self.keymap.label(cmd))).clicked() {
+                        let r = ui
+                            .add_enabled_ui(s.is_some(), |ui| {
+                                icons::icon_text_button(ui, icon, label, on)
+                            })
+                            .inner;
+                        if r.on_hover_text(format!("{label}  ({})", self.keymap.label(cmd)))
+                            .clicked()
+                        {
                             self.run(cmd);
                         }
                     }
@@ -915,7 +1082,10 @@ impl AppState {
                             (newtopo_core::doc::Axis::Y, Cmd::MirrorY, "Y"),
                             (newtopo_core::doc::Axis::Z, Cmd::MirrorZ, "Z"),
                         ] {
-                            if ui.selectable_label(s.symmetry_axes.contains(&axis), l).clicked() {
+                            if ui
+                                .selectable_label(s.symmetry_axes.contains(&axis), l)
+                                .clicked()
+                            {
                                 self.run(cmd);
                             }
                         }
@@ -924,12 +1094,21 @@ impl AppState {
                     // Right side: title, palette button.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if icons::icon_button(ui, Icon::Gear, self.ui.prefs_open, 26.0)
-                            .on_hover_text(format!("{}  ({})", S::PREFS_TITLE, self.keymap.label(Cmd::Preferences)))
+                            .on_hover_text(format!(
+                                "{}  ({})",
+                                S::PREFS_TITLE,
+                                self.keymap.label(Cmd::Preferences)
+                            ))
                             .clicked()
                         {
                             self.ui.prefs_open = !self.ui.prefs_open;
                         }
-                        let pr = icons::icon_text_button(ui, Icon::Search, &format!("Commands  {}", self.keymap.label(Cmd::Palette)), self.ui.palette.open);
+                        let pr = icons::icon_text_button(
+                            ui,
+                            Icon::Search,
+                            &format!("Commands  {}", self.keymap.label(Cmd::Palette)),
+                            self.ui.palette.open,
+                        );
                         if pr.clicked() {
                             self.ui.palette.open_fresh();
                         }
@@ -951,9 +1130,15 @@ impl AppState {
                     .fill(pal.warn.gamma_multiply(0.16))
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(7, 1))
-                    .show(ui, |ui| ui.label(RichText::new(tag).small().color(pal.warn)));
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(tag).small().color(pal.warn))
+                    });
             }
-            ui.label(RichText::new(self.doc.title()).font(theme::medium(14.0)).color(pal.text_strong));
+            ui.label(
+                RichText::new(self.doc.title())
+                    .font(theme::medium(14.0))
+                    .color(pal.text_strong),
+            );
         } else if self.demo.is_some() {
             ui.label(RichText::new(S::DEMO_BADGE).color(pal.text_dim));
         } else {
@@ -984,8 +1169,15 @@ impl AppState {
                         ui.label(RichText::new(S::MENU_NO_RECENT).weak());
                     }
                     for p in &self.prefs.recent {
-                        let name = p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                        if ui.button(name).on_hover_text(p.display().to_string()).clicked() {
+                        let name = p
+                            .file_name()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        if ui
+                            .button(name)
+                            .on_hover_text(p.display().to_string())
+                            .clicked()
+                        {
                             open_recent = Some(p.clone());
                             ui.close();
                         }
@@ -1018,22 +1210,51 @@ impl AppState {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
-                for c in [Cmd::SelectAll, Cmd::SelectNone, Cmd::Invert, Cmd::Loop, Cmd::LoopAlternate, Cmd::Ring, Cmd::RingAlternate, Cmd::VisibleOnly] {
+                for c in [
+                    Cmd::SelectAll,
+                    Cmd::SelectNone,
+                    Cmd::Invert,
+                    Cmd::Loop,
+                    Cmd::LoopAlternate,
+                    Cmd::Ring,
+                    Cmd::RingAlternate,
+                    Cmd::VisibleOnly,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
                 item(ui, &km, Cmd::Preferences, &mut run);
             });
             ui.menu_button(S::MENU_VIEW, |ui| {
-                for c in [Cmd::Preview, Cmd::Wireframe, Cmd::SymmetryPlanes] {
+                for c in [
+                    Cmd::Preview,
+                    Cmd::Wireframe,
+                    Cmd::FlatShading,
+                    Cmd::SymmetryPlanes,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
-                for c in [Cmd::Frame, Cmd::Ortho, Cmd::Hide, Cmd::UnhideAll, Cmd::Isolate, Cmd::ExitIsolate] {
+                for c in [
+                    Cmd::Frame,
+                    Cmd::Ortho,
+                    Cmd::Hide,
+                    Cmd::UnhideAll,
+                    Cmd::Isolate,
+                    Cmd::ExitIsolate,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.menu_button(S::MENU_CAMERA, |ui| {
-                    for c in [Cmd::ViewFront, Cmd::ViewBack, Cmd::ViewLeft, Cmd::ViewRight, Cmd::ViewTop, Cmd::ViewBottom, Cmd::ViewIso] {
+                    for c in [
+                        Cmd::ViewFront,
+                        Cmd::ViewBack,
+                        Cmd::ViewLeft,
+                        Cmd::ViewRight,
+                        Cmd::ViewTop,
+                        Cmd::ViewBottom,
+                        Cmd::ViewIso,
+                    ] {
                         item(ui, &km, c, &mut run);
                     }
                 });
@@ -1043,7 +1264,12 @@ impl AppState {
                         item(ui, &km, c, &mut run);
                     }
                     ui.separator();
-                    for (tab, label) in [(Tab::Outliner, S::TAB_OUTLINER), (Tab::Tool, S::TAB_TOOL), (Tab::Stats, S::TAB_STATS), (Tab::History, S::TAB_HISTORY)] {
+                    for (tab, label) in [
+                        (Tab::Outliner, S::TAB_OUTLINER),
+                        (Tab::Tool, S::TAB_TOOL),
+                        (Tab::Stats, S::TAB_STATS),
+                        (Tab::History, S::TAB_HISTORY),
+                    ] {
                         if ui.button(label).clicked() {
                             self.ui.dock_actions.push(DockAction::Focus(tab));
                             ui.close();
@@ -1055,7 +1281,14 @@ impl AppState {
                 }
             });
             ui.menu_button(S::MENU_TOOLS, |ui| {
-                for c in [Cmd::Connect, Cmd::Grid, Cmd::Slice, Cmd::Iso, Cmd::Cut, Cmd::Weld] {
+                for c in [
+                    Cmd::Connect,
+                    Cmd::Grid,
+                    Cmd::Slice,
+                    Cmd::Iso,
+                    Cmd::Cut,
+                    Cmd::Weld,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
@@ -1063,7 +1296,14 @@ impl AppState {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
-                for c in [Cmd::AutoFill, Cmd::Link, Cmd::Symmetry, Cmd::MirrorX, Cmd::MirrorY, Cmd::MirrorZ] {
+                for c in [
+                    Cmd::AutoFill,
+                    Cmd::Link,
+                    Cmd::Symmetry,
+                    Cmd::MirrorX,
+                    Cmd::MirrorY,
+                    Cmd::MirrorZ,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
             });
@@ -1088,11 +1328,20 @@ impl AppState {
     fn status_bar(&mut self, ui: &mut Ui) {
         let pal = self.pal;
         egui::Panel::bottom("statusbar")
-            .frame(egui::Frame::new().fill(pal.bg).inner_margin(egui::Margin { left: 10, right: 10, top: 3, bottom: 4 }))
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(egui::Margin {
+                left: 10,
+                right: 10,
+                top: 3,
+                bottom: 4,
+            }))
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let hint = if self.is_demo() && self.tool.active == Tool::Select { S::HINT_DEMO } else { self.tool.active.hint() };
+                    let hint = if self.is_demo() && self.tool.active == Tool::Select {
+                        S::HINT_DEMO
+                    } else {
+                        self.tool.active.hint()
+                    };
                     ui.label(RichText::new(hint).small().color(pal.text_dim));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let mode = match self.mode {
@@ -1102,7 +1351,11 @@ impl AppState {
                             Mode::Object => S::MODE_OBJECT,
                         };
                         let n = self.sel.count(self.mode);
-                        ui.label(RichText::new(format!("{mode} · {n} selected")).small().color(pal.text_dim));
+                        ui.label(
+                            RichText::new(format!("{mode} · {n} selected"))
+                                .small()
+                                .color(pal.text_dim),
+                        );
                         if self.view.visible_only {
                             ui.label(RichText::new(S::VP_VISIBLE_ONLY).small().color(pal.accent));
                         }
@@ -1149,11 +1402,19 @@ pub fn paint_logo(p: &egui::Painter, r: egui::Rect, accent: Color32) {
     let c = r.right_top() + egui::vec2(-r.width() * 0.3, 3.0);
     let d = r.right_bottom() + egui::vec2(-r.width() * 0.3, -3.0);
     p.line_segment([a, b], s);
-    p.add(egui::Shape::QuadraticBezier(egui::epaint::QuadraticBezierShape::from_points_stroke(
-        [c, egui::pos2(r.center().x + 1.0, r.center().y), d],
-        false,
-        Color32::TRANSPARENT,
+    p.add(egui::Shape::QuadraticBezier(
+        egui::epaint::QuadraticBezierShape::from_points_stroke(
+            [c, egui::pos2(r.center().x + 1.0, r.center().y), d],
+            false,
+            Color32::TRANSPARENT,
+            s,
+        ),
+    ));
+    p.line_segment(
+        [
+            egui::pos2(r.left() + 3.0, r.center().y),
+            egui::pos2(r.right() - 3.0, r.center().y),
+        ],
         s,
-    )));
-    p.line_segment([egui::pos2(r.left() + 3.0, r.center().y), egui::pos2(r.right() - 3.0, r.center().y)], s);
+    );
 }

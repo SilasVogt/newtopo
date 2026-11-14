@@ -83,7 +83,10 @@ impl DocState {
 
     pub fn title(&self) -> String {
         match &self.path {
-            Some(p) => p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string()),
+            Some(p) => p
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.display().to_string()),
             None => crate::strings::UNTITLED.to_string(),
         }
     }
@@ -107,7 +110,8 @@ impl DocState {
     /// Create an empty scene if none exists (first import).
     pub fn ensure_scene(&mut self) -> Result<&mut Scene, String> {
         if self.scene.is_none() {
-            let kernel = make_kernel().ok_or_else(|| crate::strings::TOAST_KERNEL_MISSING.to_string())?;
+            let kernel =
+                make_kernel().ok_or_else(|| crate::strings::TOAST_KERNEL_MISSING.to_string())?;
             let scene = guard(|| Scene::new(kernel))?;
             self.scene = Some(scene);
             self.path = None;
@@ -120,7 +124,9 @@ impl DocState {
 
     /// Apply one op as one undo step.
     pub fn apply(&mut self, op: Op) -> Result<OpOutcome, ApplyError> {
-        let Some(scene) = self.scene.as_mut() else { return Err(ApplyError::NoScene) };
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(ApplyError::NoScene);
+        };
         if let Some(e) = &self.engine_broken {
             return Err(ApplyError::Engine(e.clone()));
         }
@@ -135,7 +141,9 @@ impl DocState {
     }
 
     pub fn undo(&mut self) -> Result<bool, String> {
-        let Some(scene) = self.scene.as_mut() else { return Ok(false) };
+        let Some(scene) = self.scene.as_mut() else {
+            return Ok(false);
+        };
         let r = guard(|| scene.undo())?;
         if r {
             self.bump();
@@ -144,7 +152,9 @@ impl DocState {
     }
 
     pub fn redo(&mut self) -> Result<bool, String> {
-        let Some(scene) = self.scene.as_mut() else { return Ok(false) };
+        let Some(scene) = self.scene.as_mut() else {
+            return Ok(false);
+        };
         let r = guard(|| scene.redo())?;
         if r {
             self.bump();
@@ -153,7 +163,9 @@ impl DocState {
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), String> {
-        let Some(scene) = self.scene.as_mut() else { return Err(crate::strings::TOAST_NO_SCENE.into()) };
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(crate::strings::TOAST_NO_SCENE.into());
+        };
         guard(|| scene.save(path))?.map_err(|e| format!("{e:#}"))?;
         self.path = Some(path.to_path_buf());
         self.mark_saved();
@@ -162,12 +174,15 @@ impl DocState {
 
     /// Save a copy without changing the document's path or saved marker.
     pub fn save_copy(&mut self, path: &Path) -> Result<(), String> {
-        let Some(scene) = self.scene.as_mut() else { return Err(crate::strings::TOAST_NO_SCENE.into()) };
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(crate::strings::TOAST_NO_SCENE.into());
+        };
         guard(|| scene.save(path))?.map_err(|e| format!("{e:#}"))
     }
 
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
-        let kernel = make_kernel().ok_or_else(|| crate::strings::TOAST_KERNEL_MISSING.to_string())?;
+        let kernel =
+            make_kernel().ok_or_else(|| crate::strings::TOAST_KERNEL_MISSING.to_string())?;
         let scene = guard(|| Scene::load(kernel, path))?.map_err(|e| format!("{e:#}"))?;
         self.set_scene(scene, Some(path.to_path_buf()));
         Ok(())
@@ -181,7 +196,10 @@ mod tests {
     #[test]
     fn guard_catches_todo() {
         let r: Result<(), String> = guard(|| todo!("engine"));
-        assert!(r.unwrap_err().contains(crate::strings::TOAST_ENGINE_MISSING));
+        assert!(
+            r.unwrap_err()
+                .contains(crate::strings::TOAST_ENGINE_MISSING)
+        );
         assert_eq!(guard(|| 3), Ok(3));
     }
 

@@ -29,11 +29,40 @@ use std::path::PathBuf;
 
 struct EframeApp {
     app: app::App,
+    /// `--window-shot <png>`: capture the real window after a few frames and quit.
+    window_shot: Option<PathBuf>,
+    frames: u32,
 }
 
 impl eframe::App for EframeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.frame(ui);
+        if let Some(path) = self.window_shot.clone() {
+            self.frames += 1;
+            let ctx = ui.ctx().clone();
+            ctx.request_repaint();
+            if self.frames == 40 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            }
+            let shot = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(img) = shot {
+                let [w, h] = img.size;
+                let px: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
+                if let Some(buf) = image::RgbaImage::from_raw(w as u32, h as u32, px) {
+                    let _ = buf.save(&path);
+                    eprintln!("wrote {}", path.display());
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            if self.frames > 400 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
     }
 
     fn on_exit(&mut self) {
@@ -46,16 +75,28 @@ impl eframe::App for EframeApp {
 }
 
 fn icon() -> Option<egui::IconData> {
-    let img = image::load_from_memory_with_format(include_bytes!("../../../assets/icon.png"), image::ImageFormat::Png).ok()?.to_rgba8();
+    let img = image::load_from_memory_with_format(
+        include_bytes!("../../../assets/icon.png"),
+        image::ImageFormat::Png,
+    )
+    .ok()?
+    .to_rgba8();
     let (width, height) = img.dimensions();
-    Some(egui::IconData { rgba: img.into_raw(), width, height })
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
 }
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(i) = args.iter().position(|a| a == "--shot") {
-        let dir = args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("screenshots"));
+        let dir = args
+            .get(i + 1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("screenshots"));
         if let Err(e) = shot::run(&dir) {
             eprintln!("screenshots failed: {e:#}");
             std::process::exit(1);
@@ -63,7 +104,16 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     let sample = args.iter().any(|a| a == "--sample");
-    let open: Option<PathBuf> = args.iter().find(|a| !a.starts_with("--")).map(PathBuf::from);
+    let window_shot = args
+        .iter()
+        .position(|a| a == "--window-shot")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+    let open: Option<PathBuf> = args
+        .iter()
+        .enumerate()
+        .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--window-shot"))
+        .map(|(_, a)| PathBuf::from(a));
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(strings::APP_NAME)
@@ -103,7 +153,11 @@ fn main() -> eframe::Result {
                     app.st.start_import(p);
                 }
             }
-            Ok(Box::new(EframeApp { app }))
+            Ok(Box::new(EframeApp {
+                app,
+                window_shot,
+                frames: 0,
+            }))
         }),
     )
 }

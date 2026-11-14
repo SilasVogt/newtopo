@@ -8,8 +8,11 @@
 //! * [`pick`]: CPU picking (BVH ray cast, screen-space edge/vertex search).
 //! * [`headless`]: headless rendering, `render_scene_to_png`.
 //! * [`synth`]: a synthetic CAD-like model for tests and screenshots.
+//! * [`core_scene`]: core `Scene` → render scene, and a one-call PNG helper
+//!   for `newtopo-cli render`.
 
 pub mod camera;
+pub mod core_scene;
 #[cfg(feature = "egui")]
 pub mod egui_viewport;
 pub mod gpu;

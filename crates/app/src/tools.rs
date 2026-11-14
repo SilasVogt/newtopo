@@ -78,7 +78,17 @@ pub struct SegParams {
 
 impl Default for SegParams {
     fn default() -> Self {
-        SegParams { a: 8, b: 0, u: 4, v: 4, slice: 8, start_on_seam: false, spacing: Spacing::ArcLength, through: false, guide: None }
+        SegParams {
+            a: 8,
+            b: 0,
+            u: 4,
+            v: 4,
+            slice: 8,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+            through: false,
+            guide: None,
+        }
     }
 }
 
@@ -163,7 +173,16 @@ impl ToolState {
     pub fn signature(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.active.hash(&mut h);
-        format!("{:?}{:?}{:?}{:?}", self.iso_preview.as_ref().map(|p| (p.face, p.value.to_bits())), self.cut, self.cut_hover, self.weld_from).hash(&mut h);
+        format!(
+            "{:?}{:?}{:?}{:?}",
+            self.iso_preview
+                .as_ref()
+                .map(|p| (p.face, p.value.to_bits())),
+            self.cut,
+            self.cut_hover,
+            self.weld_from
+        )
+        .hash(&mut h);
         self.iso_split.hash(&mut h);
         h.finish()
     }
@@ -174,15 +193,33 @@ impl ToolState {
             Tool::Select => String::new(),
             Tool::Connect => format!("Connect   A {}   B {}", s.a, s.b),
             Tool::Grid => format!("Surface Grid   U {}   V {}", s.u, s.v),
-            Tool::Slice => format!("Slice   {} planes{}", s.slice, if s.through { "   through" } else { "" }),
+            Tool::Slice => format!(
+                "Slice   {} planes{}",
+                s.slice,
+                if s.through { "   through" } else { "" }
+            ),
             Tool::Iso => format!(
                 "Iso   {}{}{}",
-                if self.iso_dir == IsoDirSel::U { "U" } else { "V" },
+                if self.iso_dir == IsoDirSel::U {
+                    "U"
+                } else {
+                    "V"
+                },
                 if self.iso_split { "   split" } else { "" },
                 if self.iso_through { "   through" } else { "" }
             ),
-            Tool::Cut => format!("Cut   {} point{}", self.cut.len(), if self.cut.len() == 1 { "" } else { "s" }),
-            Tool::Weld => if self.weld_from.is_some() { "Target Weld   pick the target".into() } else { "Target Weld   pick the source".into() },
+            Tool::Cut => format!(
+                "Cut   {} point{}",
+                self.cut.len(),
+                if self.cut.len() == 1 { "" } else { "s" }
+            ),
+            Tool::Weld => {
+                if self.weld_from.is_some() {
+                    "Target Weld   pick the target".into()
+                } else {
+                    "Target Weld   pick the source".into()
+                }
+            }
         }
     }
 }
@@ -192,7 +229,8 @@ impl AppState {
         if t == Tool::Connect && !self.has_content() {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
         }
-        let switching_segment = self.tool.active.is_segment() && t.is_segment() && self.tool.active != t;
+        let switching_segment =
+            self.tool.active.is_segment() && t.is_segment() && self.tool.active != t;
         self.tool.active = t;
         self.tool.cancel_pending();
         self.tool.iso_preview = None;
@@ -203,7 +241,10 @@ impl AppState {
             _ => {}
         }
         // SPEC §6.1: switching between spread tools re-applies the selection.
-        if t.is_segment() && (switching_segment || self.has_segment_selection()) && self.doc.has_scene() {
+        if t.is_segment()
+            && (switching_segment || self.has_segment_selection())
+            && self.doc.has_scene()
+        {
             self.apply_segment(false);
         }
     }
@@ -216,26 +257,45 @@ impl AppState {
     }
 
     fn selected_patches(&self) -> Vec<PatchId> {
-        self.sel.faces.iter().map(|(b, f)| PatchId::whole(*b, *f)).collect()
+        self.sel
+            .faces
+            .iter()
+            .map(|(b, f)| PatchId::whole(*b, *f))
+            .collect()
     }
 
     /// The ops the active spread tool would apply to the selection.
     pub fn segment_ops(&self) -> Vec<Op> {
         let s = &self.tool.seg;
-        let patches = PatchSel { body: None, faces: vec![], patches: self.selected_patches() };
+        let patches = PatchSel {
+            body: None,
+            faces: vec![],
+            patches: self.selected_patches(),
+        };
         match self.tool.active {
             Tool::Connect => {
                 if s.a == 0 && s.b == 0 {
                     vec![Op::ClearPatches { patches }]
                 } else {
-                    vec![Op::Connect { patches, a: s.a, b: s.b, start_on_seam: s.start_on_seam }]
+                    vec![Op::Connect {
+                        patches,
+                        a: s.a,
+                        b: s.b,
+                        start_on_seam: s.start_on_seam,
+                    }]
                 }
             }
             Tool::Grid => {
                 if s.u == 0 && s.v == 0 {
                     vec![Op::ClearPatches { patches }]
                 } else {
-                    vec![Op::Grid { patches, u: s.u, v: s.v, start_on_seam: s.start_on_seam, spacing: s.spacing }]
+                    vec![Op::Grid {
+                        patches,
+                        u: s.u,
+                        v: s.v,
+                        start_on_seam: s.start_on_seam,
+                        spacing: s.spacing,
+                    }]
                 }
             }
             Tool::Slice => {
@@ -246,16 +306,34 @@ impl AppState {
                         .iter()
                         .map(|b| {
                             if s.slice == 0 {
-                                Op::ClearPatches { patches: PatchSel { body: Some(*b), faces: self.body_face_ids(*b), patches: vec![] } }
+                                Op::ClearPatches {
+                                    patches: PatchSel {
+                                        body: Some(*b),
+                                        faces: self.body_face_ids(*b),
+                                        patches: vec![],
+                                    },
+                                }
                             } else {
-                                Op::Slice { body: Some(*b), patches: None, count: s.slice, through: s.through, guide_edge: guide }
+                                Op::Slice {
+                                    body: Some(*b),
+                                    patches: None,
+                                    count: s.slice,
+                                    through: s.through,
+                                    guide_edge: guide,
+                                }
                             }
                         })
                         .collect()
                 } else if s.slice == 0 {
                     vec![Op::ClearPatches { patches }]
                 } else {
-                    vec![Op::Slice { body: None, patches: Some(patches), count: s.slice, through: s.through, guide_edge: guide }]
+                    vec![Op::Slice {
+                        body: None,
+                        patches: Some(patches),
+                        count: s.slice,
+                        through: s.through,
+                        guide_edge: guide,
+                    }]
                 }
             }
             _ => vec![],
@@ -263,14 +341,26 @@ impl AppState {
     }
 
     fn body_face_ids(&self, b: BodyId) -> Vec<u32> {
-        self.vd.face_tris.keys().filter(|f| f.body == b.0).map(|f| f.face).collect()
+        self.vd
+            .face_tris
+            .keys()
+            .filter(|f| f.body == b.0)
+            .map(|f| f.face)
+            .collect()
     }
 
     /// Apply the spread tool to the selection. `coalesce` merges this
     /// apply with the previous one if it came within [`COALESCE_SECS`].
     pub fn apply_segment(&mut self, coalesce: bool) {
         if !self.has_segment_selection() {
-            self.toast(ToastKind::Info, if self.tool.active == Tool::Slice { S::TOAST_SELECT_OBJECTS } else { S::TOAST_SELECT_PATCHES });
+            self.toast(
+                ToastKind::Info,
+                if self.tool.active == Tool::Slice {
+                    S::TOAST_SELECT_OBJECTS
+                } else {
+                    S::TOAST_SELECT_PATCHES
+                },
+            );
             return;
         }
         if self.is_demo() {
@@ -280,7 +370,12 @@ impl AppState {
         let ops = self.segment_ops();
         // Coalescing workaround (facade has no begin/end gesture API):
         // undo the previous step of this gesture, then apply the new one.
-        let merge = coalesce && self.tool.wheel_applied && self.tool.wheel_last.is_some_and(|t| self.time - t <= COALESCE_SECS);
+        let merge = coalesce
+            && self.tool.wheel_applied
+            && self
+                .tool
+                .wheel_last
+                .is_some_and(|t| self.time - t <= COALESCE_SECS);
         if merge {
             for _ in 0..ops.len() {
                 self.undo();
@@ -325,8 +420,12 @@ impl AppState {
         if !self.tool.active.is_segment() {
             return;
         }
-        let Some(scene) = self.doc.scene.as_ref() else { return };
-        let Ok(rules) = guard(|| scene.doc().rules.clone()) else { return };
+        let Some(scene) = self.doc.scene.as_ref() else {
+            return;
+        };
+        let Ok(rules) = guard(|| scene.doc().rules.clone()) else {
+            return;
+        };
         let sel: BTreeSet<(BodyId, FaceId)> = self.sel.faces.clone();
         if sel.is_empty() && self.sel.objects.is_empty() {
             return;
@@ -334,7 +433,13 @@ impl AppState {
         let hits = |p: &PatchId| sel.contains(&(p.body, p.face));
         for r in rules.iter().rev() {
             match &r.rule {
-                Rule::Connect { patches, count_a, count_b, start_on_seam, .. } if patches.iter().any(hits) => {
+                Rule::Connect {
+                    patches,
+                    count_a,
+                    count_b,
+                    start_on_seam,
+                    ..
+                } if patches.iter().any(hits) => {
                     self.tool.seg.a = *count_a;
                     self.tool.seg.b = *count_b;
                     self.tool.seg.start_on_seam = *start_on_seam;
@@ -342,7 +447,13 @@ impl AppState {
                         return;
                     }
                 }
-                Rule::Grid { patch, count_u, count_v, spacing, start_on_seam } if hits(patch) => {
+                Rule::Grid {
+                    patch,
+                    count_u,
+                    count_v,
+                    spacing,
+                    start_on_seam,
+                } if hits(patch) => {
                     self.tool.seg.u = *count_u;
                     self.tool.seg.v = *count_v;
                     self.tool.seg.spacing = *spacing;
@@ -351,9 +462,16 @@ impl AppState {
                         return;
                     }
                 }
-                Rule::Slice { scope, count, through, .. } => {
+                Rule::Slice {
+                    scope,
+                    count,
+                    through,
+                    ..
+                } => {
                     let applies = match scope {
-                        SliceScope::Body(b) => self.sel.objects.contains(b) || sel.iter().any(|(x, _)| x == b),
+                        SliceScope::Body(b) => {
+                            self.sel.objects.contains(b) || sel.iter().any(|(x, _)| x == b)
+                        }
                         SliceScope::Patches(ps) => ps.iter().any(hits),
                     };
                     if applies {
@@ -404,7 +522,11 @@ impl AppState {
         }
         match (self.tool.active, key) {
             (Tool::Iso, Key::Tab) => {
-                self.tool.iso_dir = if self.tool.iso_dir == IsoDirSel::U { IsoDirSel::V } else { IsoDirSel::U };
+                self.tool.iso_dir = if self.tool.iso_dir == IsoDirSel::U {
+                    IsoDirSel::V
+                } else {
+                    IsoDirSel::U
+                };
                 self.on_hover_changed();
                 true
             }
@@ -485,7 +607,12 @@ impl AppState {
         let (body, face) = (BodyId(f.body), FaceId(f.face));
         let uv = self.face_uv(body, face, p)?;
         let scene = self.doc.scene.as_ref()?;
-        let surface = guard(|| scene.body_view(body).map(|bv| bv.topology.face(face).surface.clone())).ok()??;
+        let surface = guard(|| {
+            scene
+                .body_view(body)
+                .map(|bv| bv.topology.face(face).surface.clone())
+        })
+        .ok()??;
         let m = self.body_transform(body)?;
         let (value, seed, range) = match self.tool.iso_dir {
             IsoDirSel::U => (uv.x, uv.y, surface.v_range),
@@ -520,7 +647,13 @@ impl AppState {
         if cur.len() > 1 {
             pieces.push(cur);
         }
-        Some(IsoPreview { body, face, value, seed, pts: pieces })
+        Some(IsoPreview {
+            body,
+            face,
+            value,
+            seed,
+            pts: pieces,
+        })
     }
 
     pub fn iso_click(&mut self) {
@@ -539,7 +672,11 @@ impl AppState {
             face: prev.face.0,
             dir: self.tool.iso_dir.core(),
             value: prev.value,
-            seed: if self.tool.iso_through { None } else { Some(prev.seed) },
+            seed: if self.tool.iso_through {
+                None
+            } else {
+                Some(prev.seed)
+            },
             split: self.tool.iso_split,
             through: self.tool.iso_through,
         };
@@ -555,10 +692,17 @@ impl AppState {
             if let Some(Hover::Vert(i)) = self.pick_at(p, Mode::Vertex) {
                 let v = &self.vd.verts[i];
                 let point = match &v.sel {
-                    VertSel::Key(b, k) => Some(CutPoint::Vertex { body: *b, key: k.clone() }),
+                    VertSel::Key(b, k) => Some(CutPoint::Vertex {
+                        body: *b,
+                        key: k.clone(),
+                    }),
                     VertSel::Index(..) => None,
                 };
-                return Some(CutCandidate { hover: Hover::Vert(i), point, pos: v.pos });
+                return Some(CutCandidate {
+                    hover: Hover::Vert(i),
+                    point,
+                    pos: v.pos,
+                });
             }
             if let Some(Hover::Edge(i, hit)) = self.pick_at(p, Mode::Edge) {
                 let e = &self.vd.edges[i];
@@ -566,22 +710,45 @@ impl AppState {
                     // Midpoint snap if close to the middle, else nearest point.
                     let mid = e.path[e.path.len() / 2];
                     let cam = self.camera_matrices();
-                    let near_mid = cam.project(mid.as_dvec3()).zip(cam.project(hit)).is_some_and(|(a, b)| (a.0 - b.0).length() < 8.0);
+                    let near_mid = cam
+                        .project(mid.as_dvec3())
+                        .zip(cam.project(hit))
+                        .is_some_and(|(a, b)| (a.0 - b.0).length() < 8.0);
                     let world = if near_mid { mid.as_dvec3() } else { hit };
                     let t = self
                         .to_body(e.body, world)
                         .and_then(|bp| self.doc.scene.as_ref().map(|s| (s.kernel.clone(), bp)))
-                        .and_then(|(k, bp)| guard(|| k.project_to_edge(e.body, edge, &[bp])).ok()?.ok())
+                        .and_then(|(k, bp)| {
+                            guard(|| k.project_to_edge(e.body, edge, &[bp])).ok()?.ok()
+                        })
                         .and_then(|v| v.first().copied().flatten());
-                    let point = t.map(|t| CutPoint::CadEdge { body: e.body, edge, t });
-                    return Some(CutCandidate { hover: Hover::Edge(i, world), point, pos: world.as_vec3() });
+                    let point = t.map(|t| CutPoint::CadEdge {
+                        body: e.body,
+                        edge,
+                        t,
+                    });
+                    return Some(CutCandidate {
+                        hover: Hover::Edge(i, world),
+                        point,
+                        pos: world.as_vec3(),
+                    });
                 }
             }
         }
         match self.pick_at(p, Mode::Face)? {
             Hover::Face(f, hit) => {
-                let point = self.face_uv(BodyId(f.body), FaceId(f.face), hit).map(|uv| CutPoint::Face { body: BodyId(f.body), face: FaceId(f.face), uv });
-                Some(CutCandidate { hover: Hover::Face(f, hit), point, pos: hit.as_vec3() })
+                let point =
+                    self.face_uv(BodyId(f.body), FaceId(f.face), hit)
+                        .map(|uv| CutPoint::Face {
+                            body: BodyId(f.body),
+                            face: FaceId(f.face),
+                            uv,
+                        });
+                Some(CutCandidate {
+                    hover: Hover::Face(f, hit),
+                    point,
+                    pos: hit.as_vec3(),
+                })
             }
             _ => None,
         }
@@ -597,7 +764,10 @@ impl AppState {
             let cam = self.camera_matrices();
             let first = self.tool.cut[0].pos.as_dvec3();
             if let Some((s, _)) = cam.project(first) {
-                let local = DVec2::new((p.x - self.view.rect.left()) as f64, (p.y - self.view.rect.top()) as f64);
+                let local = DVec2::new(
+                    (p.x - self.view.rect.left()) as f64,
+                    (p.y - self.view.rect.top()) as f64,
+                );
                 if (s - local).length() < 10.0 {
                     self.cut_finish(true);
                     return;
@@ -605,7 +775,11 @@ impl AppState {
             }
         }
         match self.cut_pick(p) {
-            Some(CutCandidate { point: Some(point), pos, .. }) => self.tool.cut.push(CutPick { point, pos }),
+            Some(CutCandidate {
+                point: Some(point),
+                pos,
+                ..
+            }) => self.tool.cut.push(CutPick { point, pos }),
             Some(_) => self.toast(ToastKind::Warn, "Couldn't place a point there."),
             None => {}
         }
@@ -629,10 +803,17 @@ impl AppState {
         let (a, b) = (&self.vd.verts[from], &self.vd.verts[to]);
         match (&a.sel, &b.sel) {
             (VertSel::Key(ba, ka), VertSel::Key(bb, kb)) if ba == bb => {
-                let op = Op::Weld { body: Some(*ba), from: ka.clone(), to: kb.clone(), confirmed: false };
+                let op = Op::Weld {
+                    body: Some(*ba),
+                    from: ka.clone(),
+                    to: kb.clone(),
+                    confirmed: false,
+                };
                 self.apply(op);
             }
-            (VertSel::Key(..), VertSel::Key(..)) => self.toast(ToastKind::Warn, "Both vertices must be on the same object."),
+            (VertSel::Key(..), VertSel::Key(..)) => {
+                self.toast(ToastKind::Warn, "Both vertices must be on the same object.")
+            }
             _ => self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY),
         }
     }
@@ -646,7 +827,11 @@ impl AppState {
         for e in edges {
             match e {
                 EdgeSel::Key(b, k) => {
-                    self.apply(Op::Collapse { body: Some(b), edge: k, confirmed: false });
+                    self.apply(Op::Collapse {
+                        body: Some(b),
+                        edge: k,
+                        confirmed: false,
+                    });
                 }
                 _ => self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY),
             }
@@ -691,18 +876,36 @@ impl AppState {
             return;
         }
         for (b, k) in generated {
-            self.apply(Op::RemoveEdge { body: Some(b), edge: k });
+            self.apply(Op::RemoveEdge {
+                body: Some(b),
+                edge: k,
+            });
         }
         if !cad.is_empty() {
             let sels: Vec<EdgeSel> = cad.iter().map(|c| c.2.clone()).collect();
-            let armed = self.tool.cad_delete_armed.take().filter(|(s, t)| *s == sels && self.time - t <= CAD_DELETE_SECS);
+            let armed = self
+                .tool
+                .cad_delete_armed
+                .take()
+                .filter(|(s, t)| *s == sels && self.time - t <= CAD_DELETE_SECS);
             if armed.is_some() {
                 // Second press: confirmation dialog, then apply confirmed.
                 let (b, e, _) = cad[0];
-                let op = Op::RemoveCadEdge { body: Some(b), edge: e, confirmed: true };
-                self.ui.confirm = Some(crate::app::Confirm { title: S::DLG_CAD_EDGE_TITLE.into(), body: S::DLG_CAD_EDGE_BODY.into(), op });
+                let op = Op::RemoveCadEdge {
+                    body: Some(b),
+                    edge: e,
+                    confirmed: true,
+                };
+                self.ui.confirm = Some(crate::app::Confirm {
+                    title: S::DLG_CAD_EDGE_TITLE.into(),
+                    body: S::DLG_CAD_EDGE_BODY.into(),
+                    op,
+                });
                 if cad.len() > 1 {
-                    self.toast(ToastKind::Info, "CAD edges are removed one at a time; repeat for the others.");
+                    self.toast(
+                        ToastKind::Info,
+                        "CAD edges are removed one at a time; repeat for the others.",
+                    );
                 }
             } else {
                 self.tool.cad_delete_armed = Some((sels, self.time));
@@ -717,7 +920,11 @@ impl AppState {
         match self.tool.active {
             Tool::Iso => {
                 if let Some(p) = &self.tool.iso_preview {
-                    let col = if self.tool.iso_split { c.split_preview } else { c.line };
+                    let col = if self.tool.iso_split {
+                        c.split_preview
+                    } else {
+                        c.line
+                    };
                     for piece in &p.pts {
                         o.add_polyline(piece, col, 2.4);
                     }
@@ -739,7 +946,12 @@ impl AppState {
                 }
             }
             Tool::Weld => {
-                if let Some(from) = self.tool.weld_from.as_ref().and_then(|s| self.vd.vert_index(s)) {
+                if let Some(from) = self
+                    .tool
+                    .weld_from
+                    .as_ref()
+                    .and_then(|s| self.vd.vert_index(s))
+                {
                     let a = self.vd.verts[from].pos;
                     o.add_point(a, c.weld_from, 11.0);
                     if let Some(Hover::Vert(i)) = self.hover
@@ -762,7 +974,10 @@ mod tests {
 
     #[test]
     fn cancel_pending_order() {
-        let mut t = ToolState { active: Tool::Cut, ..Default::default() };
+        let mut t = ToolState {
+            active: Tool::Cut,
+            ..Default::default()
+        };
         assert!(!t.cancel_pending());
         t.picking_guide = true;
         assert!(t.cancel_pending());
@@ -771,7 +986,10 @@ mod tests {
 
     #[test]
     fn chip_text_mentions_counts() {
-        let t = ToolState { active: Tool::Connect, ..Default::default() };
+        let t = ToolState {
+            active: Tool::Connect,
+            ..Default::default()
+        };
         assert!(t.chip_text().contains("A 8"));
     }
 }

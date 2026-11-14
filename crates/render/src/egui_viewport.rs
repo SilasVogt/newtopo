@@ -46,12 +46,20 @@ pub struct ViewportResources {
 /// Create the viewport resources. Call once after eframe created its
 /// wgpu render state.
 pub fn install(rs: &egui_wgpu::RenderState) {
-    install_with(&rs.device, rs.target_format, &mut rs.renderer.write().callback_resources);
+    install_with(
+        &rs.device,
+        rs.target_format,
+        &mut rs.renderer.write().callback_resources,
+    );
 }
 
 /// Like [`install`], for a caller-owned `egui_wgpu::Renderer` (headless UI
 /// screenshots).
-pub fn install_with(device: &wgpu::Device, target_format: wgpu::TextureFormat, resources: &mut CallbackResources) {
+pub fn install_with(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    resources: &mut CallbackResources,
+) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("viewport blit"),
         source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
@@ -187,7 +195,17 @@ impl CallbackTrait for ViewportCallback {
         }
         let refs: Vec<&GpuScene> = res.layers.iter().map(|(_, g)| g).collect();
         if std::env::var("NEWTOPO_RENDER_DEBUG").is_ok() {
-            eprintln!("viewport prepare: size {:?} layers {:?} cam eye {:?} near {} far {}", self.size_px, self.layers.iter().map(|(r, s)| (*r, s.mesh.indices.len(), s.lines.len())).collect::<Vec<_>>(), self.camera.eye, self.camera.near, self.camera.far);
+            eprintln!(
+                "viewport prepare: size {:?} layers {:?} cam eye {:?} near {} far {}",
+                self.size_px,
+                self.layers
+                    .iter()
+                    .map(|(r, s)| (*r, s.mesh.indices.len(), s.lines.len()))
+                    .collect::<Vec<_>>(),
+                self.camera.eye,
+                self.camera.near,
+                self.camera.far
+            );
         }
         res.renderer.render(
             queue,

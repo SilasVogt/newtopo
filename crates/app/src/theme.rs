@@ -2,7 +2,10 @@
 //! viewport overlay colours. Two ship built in; users can drop more JSON
 //! files into `<config>/themes/`.
 
-use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow, Stroke, TextStyle};
+use egui::{
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow, Stroke,
+    TextStyle,
+};
 use newtopo_render::OverlayColors;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -78,9 +81,14 @@ pub fn parse_color(s: &str) -> Color32 {
     }
 }
 
+#[cfg(test)]
 pub fn color_hex(c: Color32) -> String {
     let [r, g, b, a] = c.to_srgba_unmultiplied();
-    if a == 255 { format!("#{r:02x}{g:02x}{b:02x}") } else { format!("#{r:02x}{g:02x}{b:02x}{a:02x}") }
+    if a == 255 {
+        format!("#{r:02x}{g:02x}{b:02x}")
+    } else {
+        format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+    }
 }
 
 impl Theme {
@@ -145,18 +153,30 @@ pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "noto-sans".into(),
-        Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf"))),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/NotoSans-Regular.ttf"
+        ))),
     );
     fonts.font_data.insert(
         "noto-sans-medium".into(),
-        Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/NotoSans-Medium.ttf"))),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/NotoSans-Medium.ttf"
+        ))),
     );
     if let Some(p) = fonts.families.get_mut(&FontFamily::Proportional) {
         p.insert(0, "noto-sans".into());
     }
     let mut strong = vec!["noto-sans-medium".to_string()];
-    strong.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
-    fonts.families.insert(FontFamily::Name("medium".into()), strong);
+    strong.extend(
+        fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name("medium".into()), strong);
     ctx.set_fonts(fonts);
 }
 
@@ -169,7 +189,11 @@ pub fn apply(ctx: &egui::Context, theme: &Theme, scale: f32) {
     let p = theme.palette();
     let r = CornerRadius::same(p.rounding.round() as u8);
     let r_small = CornerRadius::same((p.rounding * 0.7).round() as u8);
-    ctx.set_theme(if p.dark { egui::Theme::Dark } else { egui::Theme::Light });
+    ctx.set_theme(if p.dark {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    });
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (TextStyle::Small, FontId::proportional(11.0)),
@@ -281,7 +305,12 @@ pub fn dock_style(style: &egui::Style, p: &Palette) -> egui_dock::Style {
     ds.tab.tab_body.stroke = Stroke::NONE;
     ds.tab.tab_body.corner_radius = CornerRadius::ZERO;
     ds.tab.tab_body.inner_margin = Margin::same(10);
-    let rr = CornerRadius { nw: p.rounding as u8, ne: p.rounding as u8, sw: 0, se: 0 };
+    let rr = CornerRadius {
+        nw: p.rounding as u8,
+        ne: p.rounding as u8,
+        sw: 0,
+        se: 0,
+    };
     ds.tab.active.bg_fill = p.panel;
     ds.tab.active.text_color = p.text_strong;
     ds.tab.active.outline_color = p.panel;

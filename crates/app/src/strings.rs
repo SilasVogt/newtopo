@@ -49,7 +49,8 @@ pub const EMPTY_DEMO: &str = "Explore the sample";
 pub const EMPTY_HINT: &str = "Ctrl+K searches every command";
 pub const EMPTY_OUTLINER: &str = "No objects yet.";
 pub const EMPTY_HISTORY: &str = "Nothing here yet. Rules and edits you add show up in order.";
-pub const EMPTY_TOOL: &str = "Pick a tool: Connect (C), Grid (G), Slice (S), Iso (I), Cut (K) or Weld (W).";
+pub const EMPTY_TOOL: &str =
+    "Pick a tool: Connect (C), Grid (G), Slice (S), Iso (I), Cut (K) or Weld (W).";
 pub const NO_SCENE: &str = "No scene loaded";
 pub const DEMO_BADGE: &str = "Sample model (read-only)";
 
@@ -60,7 +61,6 @@ pub const OUTLINER_DELETE_LAYER: &str = "Delete layer";
 pub const OUTLINER_RENAME: &str = "Rename";
 pub const OUTLINER_EXPAND_ALL: &str = "Expand all";
 pub const OUTLINER_COLLAPSE_ALL: &str = "Collapse all";
-pub const OUTLINER_SET_ACTIVE: &str = "Make active layer";
 pub const OUTLINER_ACTIVE: &str = "active";
 pub const OUTLINER_VISIBLE: &str = "Show / hide (drag down to set many)";
 pub const OUTLINER_LOCK: &str = "Lock / unlock (locked objects can't be selected)";
@@ -77,7 +77,6 @@ pub const STAT_DORMANT: &str = "Dormant edits";
 pub const STAT_TOTAL: &str = "Total";
 pub const STAT_SELECTED: &str = "Selected";
 pub const STAT_SOURCE_PREVIEW: &str = "Output mesh";
-pub const STAT_SOURCE_CAD: &str = "Output mesh (preview off)";
 
 // History
 pub const HIST_RULES: &str = "Rules";
@@ -111,38 +110,45 @@ pub const ISO_SNAP: &str = "Snap (N)";
 pub const CUT_POINTS: &str = "Points";
 pub const CUT_FINISH: &str = "Finish (Enter)";
 pub const CUT_UNDO_POINT: &str = "Remove last (Backspace)";
-pub const WELD_FROM: &str = "From";
-pub const WELD_TO: &str = "To";
 
 // Status bar hints (SPEC §5.9)
 pub const HINT_SELECT: &str = "Click to select · Shift add · Ctrl remove · drag for a box · right-drag for a lasso · double-click for loops";
 pub const HINT_CONNECT: &str = "Connect: select patches · Shift+wheel = A · Ctrl+wheel = B · Tab flips A/B on the hovered patch";
-pub const HINT_GRID: &str = "Surface Grid: select patches · Shift+wheel = U · Ctrl+wheel = V · Tab swaps U and V";
-pub const HINT_SLICE: &str = "Slice: select objects or patches · Shift+wheel = count · A toggles through";
-pub const HINT_ISO: &str = "Iso: click to place · Tab direction · X split mode · A through · N snap";
-pub const HINT_CUT: &str = "Cut: click points · Enter finish · Backspace remove last · click the first point to close";
-pub const HINT_WELD: &str = "Target Weld: click the source vertex, then the target (or drag between them)";
-pub const HINT_DEMO: &str = "Sample model: navigation and selection work; editing needs an imported model";
+pub const HINT_GRID: &str =
+    "Surface Grid: select patches · Shift+wheel = U · Ctrl+wheel = V · Tab swaps U and V";
+pub const HINT_SLICE: &str =
+    "Slice: select objects or patches · Shift+wheel = count · A toggles through";
+pub const HINT_ISO: &str =
+    "Iso: click to place · Tab direction · X split mode · A through · N snap";
+pub const HINT_CUT: &str =
+    "Cut: click points · Enter finish · Backspace remove last · click the first point to close";
+pub const HINT_WELD: &str =
+    "Target Weld: click the source vertex, then the target (or drag between them)";
+pub const HINT_DEMO: &str =
+    "Sample model: navigation and selection work; editing needs an imported model";
 
 // Toasts and refusals
 pub const TOAST_NO_SCENE: &str = "Import a CAD model first.";
-pub const TOAST_DEMO_READONLY: &str = "The sample model is for looking around. Import a CAD file to edit.";
+pub const TOAST_DEMO_READONLY: &str =
+    "The sample model is for looking around. Import a CAD file to edit.";
 pub const TOAST_SELECT_PATCHES: &str = "Select one or more faces first (face mode, 3).";
 pub const TOAST_SELECT_EDGES: &str = "Select edges first (edge mode, 2).";
 pub const TOAST_SELECT_OBJECTS: &str = "Select an object first.";
-pub const TOAST_CAD_EDGE_ARMED: &str = "That's a CAD edge. Press Delete again within a second to remove it from the output.";
-pub const TOAST_FILL_EDGE: &str = "Fill edges can't be removed. Add a line (Iso or Cut) or weld instead.";
+pub const TOAST_CAD_EDGE_ARMED: &str =
+    "That's a CAD edge. Press Delete again within a second to remove it from the output.";
+pub const TOAST_FILL_EDGE: &str =
+    "Fill edges can't be removed. Add a line (Iso or Cut) or weld instead.";
 pub const TOAST_SAVED: &str = "Saved";
-pub const TOAST_AUTOSAVED: &str = "Autosaved";
 pub const TOAST_EXPORTED: &str = "Exported";
 pub const TOAST_ENGINE_MISSING: &str = "This part of the engine isn't available yet";
-pub const TOAST_KERNEL_MISSING: &str = "No CAD kernel in this build, so imported geometry can't be loaded.";
+pub const TOAST_KERNEL_MISSING: &str =
+    "No CAD kernel in this build, so imported geometry can't be loaded.";
 pub const TOAST_NOT_YET: &str = "Not available yet in this build";
 pub const TOAST_COPIED: &str = "Copied";
-pub const TOAST_REPLACE_UNSUPPORTED: &str = "Replace isn't supported by the engine yet; imported as a new object instead.";
+pub const TOAST_REPLACE_UNSUPPORTED: &str =
+    "Replace isn't supported by the engine yet; imported as a new object instead.";
 
 // Dialogs
-pub const DLG_OK: &str = "OK";
 pub const DLG_CANCEL: &str = "Cancel";
 pub const DLG_CONFIRM: &str = "Confirm";
 pub const DLG_CLOSE: &str = "Close";
@@ -155,9 +161,9 @@ pub const DLG_UNSAVED_BODY: &str = "The scene has changes that aren't saved.";
 pub const DLG_CAD_EDGE_TITLE: &str = "Remove CAD edge?";
 pub const DLG_CAD_EDGE_BODY: &str = "This merges the two output polygons on either side. The CAD model itself never changes, but the output can depart from the CAD shape.";
 pub const DLG_RECOVER_TITLE: &str = "Recover autosaved work?";
-pub const DLG_RECOVER_BODY: &str = "newtopo found autosaves newer than their scenes. It may have closed unexpectedly.";
+pub const DLG_RECOVER_BODY: &str =
+    "newtopo found autosaves newer than their scenes. It may have closed unexpectedly.";
 pub const DLG_RECOVER: &str = "Recover";
-pub const DLG_ABOUT_TITLE: &str = "About newtopo";
 pub const DLG_ABOUT_BODY: &str = "Turns CAD solids into clean, game-ready polygon meshes.";
 
 // Import
@@ -193,7 +199,8 @@ pub const EXPORT_MATERIALS: &str = "Materials from CAD colours";
 pub const EXPORT_NORMALS: &str = "Normals";
 pub const EXPORT_NORMALS_CAD: &str = "Exact CAD normals";
 pub const EXPORT_NORMALS_WEIGHTED: &str = "Face-weighted";
-pub const EXPORT_NGON_NOTE: &str = "Auto-fill is off: n-gons are written as n-gons (FBX/OBJ) or triangulated (glTF).";
+pub const EXPORT_NGON_NOTE: &str =
+    "Auto-fill is off: n-gons are written as n-gons (FBX/OBJ) or triangulated (glTF).";
 pub const EXPORT_FAN_TITLE: &str = "Polygons filled by the fallback fan";
 pub const EXPORT_SCOPE_SEL: &str = "Exports the selected objects.";
 pub const EXPORT_SCOPE_ALL: &str = "Nothing selected: exports the whole scene.";
@@ -227,7 +234,8 @@ pub const BRIDGE_PORT: &str = "Port";
 pub const BRIDGE_UNAVAILABLE: &str = "Bridge isn't available in this build yet.";
 pub const BRIDGE_DISCONNECTED: &str = "Not connected";
 pub const BRIDGE_KEEP_BOTH: &str = "Keep both when names match";
-pub const BRIDGE_SCOPE: &str = "Sends the selection, or the whole scene (hidden layers included) when nothing is selected.";
+pub const BRIDGE_SCOPE: &str =
+    "Sends the selection, or the whole scene (hidden layers included) when nothing is selected.";
 pub const UV_TITLE: &str = "Quick UV unwrap";
 pub const UV_COMING_SOON: &str = "Coming soon: the unwrapper lands in a later phase.";
 pub const UV_PADDING: &str = "Padding (px)";
@@ -248,7 +256,6 @@ pub const PALETTE_ADD_FAV: &str = "Add to favourites";
 pub const PALETTE_REMOVE_FAV: &str = "Remove from favourites";
 pub const PALETTE_ADD_RADIAL: &str = "Add to radial menu";
 pub const PALETTE_RESET_SHORTCUT: &str = "Reset shortcut";
-pub const RADIAL_EMPTY_SLOT: &str = "Empty";
 pub const RADIAL_REPLACE: &str = "Replace…";
 pub const RADIAL_REMOVE: &str = "Remove";
 pub const RADIAL_MOVE: &str = "Move…";
@@ -284,7 +291,8 @@ pub const PREFS_SELECT_FILL: &str = "Allow selecting fill edges";
 pub const NAV_BLENDER: &str = "Blender";
 pub const NAV_MAYA: &str = "Maya";
 pub const NAV_MAX: &str = "3ds Max";
-pub const NAV_BLENDER_HELP: &str = "Middle-drag orbit · Shift+middle pan · Ctrl+middle zoom · wheel zoom";
+pub const NAV_BLENDER_HELP: &str =
+    "Middle-drag orbit · Shift+middle pan · Ctrl+middle zoom · wheel zoom";
 pub const NAV_MAYA_HELP: &str = "Alt+left orbit · Alt+middle pan · Alt+right zoom · wheel zoom";
 pub const NAV_MAX_HELP: &str = "Alt+middle orbit · middle pan · Ctrl+Alt+middle zoom · wheel zoom";
 pub const STATS_TOTALS: &str = "Totals";
@@ -303,6 +311,3 @@ pub const VIEW_LEFT: &str = "Left";
 pub const VIEW_RIGHT: &str = "Right";
 pub const VIEW_TOP: &str = "Top";
 pub const VIEW_BOTTOM: &str = "Bottom";
-
-// Engine availability
-pub const ENGINE_PENDING: &str = "engine pending";

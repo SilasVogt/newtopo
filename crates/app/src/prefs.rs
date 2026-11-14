@@ -18,8 +18,19 @@ pub struct Paths {
 
 impl Paths {
     pub fn user() -> Paths {
+        // Override for tests and sandboxes: keep everything in one folder.
+        if let Some(dir) = std::env::var_os("NEWTOPO_CONFIG_DIR") {
+            let dir = PathBuf::from(dir);
+            return Paths {
+                data: Some(dir.join("data")),
+                config: Some(dir),
+            };
+        }
         match directories::ProjectDirs::from("", "", "newtopo") {
-            Some(d) => Paths { config: Some(d.config_dir().to_path_buf()), data: Some(d.data_dir().to_path_buf()) },
+            Some(d) => Paths {
+                config: Some(d.config_dir().to_path_buf()),
+                data: Some(d.data_dir().to_path_buf()),
+            },
             None => Paths::default(),
         }
     }
@@ -31,7 +42,9 @@ impl Paths {
     }
     /// Autosave for scenes that were never saved.
     pub fn untitled_autosave(&self) -> Option<PathBuf> {
-        self.data.as_ref().map(|d| d.join("untitled.ntopo.autosave"))
+        self.data
+            .as_ref()
+            .map(|d| d.join("untitled.ntopo.autosave"))
     }
 }
 
@@ -73,7 +86,16 @@ pub struct StatsPrefs {
 
 impl Default for StatsPrefs {
     fn default() -> Self {
-        StatsPrefs { show: StatsShow::Both, verts: true, edges: true, faces: true, tris: true, quads: true, ngons: true, dormant: true }
+        StatsPrefs {
+            show: StatsShow::Both,
+            verts: true,
+            edges: true,
+            faces: true,
+            tris: true,
+            quads: true,
+            ngons: true,
+            dormant: true,
+        }
     }
 }
 
@@ -87,7 +109,11 @@ pub struct ImportPrefs {
 
 impl Default for ImportPrefs {
     fn default() -> Self {
-        ImportPrefs { heal: true, sewing_tolerance: 1e-3, units: "mm".into() }
+        ImportPrefs {
+            heal: true,
+            sewing_tolerance: 1e-3,
+            units: "mm".into(),
+        }
     }
 }
 
@@ -101,7 +127,11 @@ pub struct BridgePrefs {
 
 impl Default for BridgePrefs {
     fn default() -> Self {
-        BridgePrefs { token: String::new(), ports: [47110, 47111, 47112], keep_both: false }
+        BridgePrefs {
+            token: String::new(),
+            ports: [47110, 47111, 47112],
+            keep_both: false,
+        }
     }
 }
 
@@ -161,7 +191,11 @@ impl Default for Prefs {
             overlay: None,
             ui_scale: 1.0,
             stats: StatsPrefs::default(),
-            favourites: vec!["file.import".into(), "file.export".into(), "view.preview".into()],
+            favourites: vec![
+                "file.import".into(),
+                "file.export".into(),
+                "view.preview".into(),
+            ],
             radial,
             recent: Vec::new(),
             import: ImportPrefs::default(),
@@ -242,7 +276,12 @@ pub fn random_token() -> String {
     for i in 0..2u64 {
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
         h.write_u64(i);
-        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
         h.write_u32(std::process::id());
         out.push_str(&format!("{:016x}", h.finish()));
     }
@@ -256,7 +295,10 @@ mod tests {
     #[test]
     fn prefs_roundtrip_and_defaults() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths { config: Some(dir.path().to_path_buf()), data: None };
+        let paths = Paths {
+            config: Some(dir.path().to_path_buf()),
+            data: None,
+        };
         let mut p = Prefs::load(&paths);
         assert_eq!(p.radial.len(), RADIAL_SLOTS);
         assert_eq!(p.nav, NavPreset::Blender);
@@ -264,7 +306,10 @@ mod tests {
         p.push_recent(Path::new("/a.ntopo"));
         p.push_recent(Path::new("/b.ntopo"));
         p.push_recent(Path::new("/a.ntopo"));
-        assert_eq!(p.recent, vec![PathBuf::from("/a.ntopo"), PathBuf::from("/b.ntopo")]);
+        assert_eq!(
+            p.recent,
+            vec![PathBuf::from("/a.ntopo"), PathBuf::from("/b.ntopo")]
+        );
         p.save(&paths);
         let q = Prefs::load(&paths);
         assert_eq!(q, p);

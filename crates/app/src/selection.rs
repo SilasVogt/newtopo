@@ -66,19 +66,6 @@ pub enum Combine {
 }
 
 impl Selection {
-    pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.faces.is_empty() && self.edges.is_empty() && self.verts.is_empty()
-    }
-
-    pub fn is_empty_in(&self, mode: Mode) -> bool {
-        match mode {
-            Mode::Object => self.objects.is_empty(),
-            Mode::Face => self.faces.is_empty(),
-            Mode::Edge => self.edges.is_empty(),
-            Mode::Vertex => self.verts.is_empty(),
-        }
-    }
-
     pub fn clear_mode(&mut self, mode: Mode) {
         match mode {
             Mode::Object => self.objects.clear(),
@@ -110,7 +97,11 @@ impl Selection {
 }
 
 /// Combine a set into another per click semantics.
-pub fn combine<T: Ord + Clone>(set: &mut BTreeSet<T>, items: impl IntoIterator<Item = T>, how: Combine) {
+pub fn combine<T: Ord + Clone>(
+    set: &mut BTreeSet<T>,
+    items: impl IntoIterator<Item = T>,
+    how: Combine,
+) {
     match how {
         Combine::Replace => {
             set.clear();
@@ -141,7 +132,10 @@ fn ek(a: u32, b: u32) -> (u32, u32) {
 
 impl TopoMesh {
     pub fn new(polys: Vec<Vec<u32>>) -> Self {
-        let mut m = TopoMesh { polys, ..Default::default() };
+        let mut m = TopoMesh {
+            polys,
+            ..Default::default()
+        };
         for (pi, p) in m.polys.iter().enumerate() {
             for k in 0..p.len() {
                 let key = ek(p[k], p[(k + 1) % p.len()]);
@@ -166,7 +160,9 @@ impl TopoMesh {
     }
 
     fn shares_poly(&self, e1: u32, e2: u32) -> bool {
-        self.edge_polys[e1 as usize].iter().any(|p| self.edge_polys[e2 as usize].contains(p))
+        self.edge_polys[e1 as usize]
+            .iter()
+            .any(|p| self.edge_polys[e2 as usize].contains(p))
     }
 
     /// Continue an edge loop through vertex `v` (valence 4 only).
@@ -175,7 +171,11 @@ impl TopoMesh {
         if inc.len() != 4 {
             return None;
         }
-        let cands: Vec<u32> = inc.iter().copied().filter(|&o| o != e && !self.shares_poly(e, o)).collect();
+        let cands: Vec<u32> = inc
+            .iter()
+            .copied()
+            .filter(|&o| o != e && !self.shares_poly(e, o))
+            .collect();
         (cands.len() == 1).then(|| cands[0])
     }
 
@@ -234,8 +234,7 @@ impl TopoMesh {
         let mut out = Vec::new();
         let mut e = start;
         let mut p = first_poly;
-        loop {
-            let Some(o) = self.opposite_in_quad(p, e) else { break };
+        while let Some(o) = self.opposite_in_quad(p, e) {
             if o == start {
                 return (out, true);
             }
@@ -243,7 +242,9 @@ impl TopoMesh {
                 break;
             }
             out.push(o);
-            let Some(&np) = self.edge_polys[o as usize].iter().find(|&&q| q != p) else { break };
+            let Some(&np) = self.edge_polys[o as usize].iter().find(|&&q| q != p) else {
+                break;
+            };
             e = o;
             p = np;
         }
@@ -253,7 +254,9 @@ impl TopoMesh {
     /// Edge ring through `start` (across quad strips).
     pub fn edge_ring(&self, start: u32) -> Vec<u32> {
         let ps = self.edge_polys[start as usize].clone();
-        let Some(&p0) = ps.first() else { return vec![start] };
+        let Some(&p0) = ps.first() else {
+            return vec![start];
+        };
         let (fwd, closed) = self.ring_walk(start, p0);
         let mut out = Vec::new();
         if !closed && let Some(&p1) = ps.get(1) {
@@ -273,21 +276,35 @@ impl TopoMesh {
         if poly.len() != 4 {
             return vec![start_poly];
         }
-        let Some(e) = self.edge(poly[1], poly[2]) else { return vec![start_poly] };
+        let Some(e) = self.edge(poly[1], poly[2]) else {
+            return vec![start_poly];
+        };
         let ring = self.edge_ring(e);
         let mut out: Vec<u32> = Vec::new();
         for w in ring.windows(2) {
-            if let Some(p) = self.edge_polys[w[0] as usize].iter().find(|p| self.edge_polys[w[1] as usize].contains(p)) && !out.contains(p) {
+            if let Some(p) = self.edge_polys[w[0] as usize]
+                .iter()
+                .find(|p| self.edge_polys[w[1] as usize].contains(p))
+                && !out.contains(p)
+            {
                 out.push(*p);
             }
         }
-        if out.is_empty() { vec![start_poly] } else { out }
+        if out.is_empty() {
+            vec![start_poly]
+        } else {
+            out
+        }
     }
 
     /// Keep every other element, anchored so `anchor` stays selected.
     pub fn every_other(seq: &[u32], anchor: u32) -> Vec<u32> {
         let pos = seq.iter().position(|&e| e == anchor).unwrap_or(0);
-        seq.iter().enumerate().filter(|(i, _)| (*i as isize - pos as isize).rem_euclid(2) == 0).map(|(_, e)| *e).collect()
+        seq.iter()
+            .enumerate()
+            .filter(|(i, _)| (*i as isize - pos as isize).rem_euclid(2) == 0)
+            .map(|(_, e)| *e)
+            .collect()
     }
 }
 
@@ -302,7 +319,12 @@ mod tests {
         let mut polys = Vec::new();
         for j in 0..m {
             for i in 0..n {
-                polys.push(vec![idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)]);
+                polys.push(vec![
+                    idx(i, j),
+                    idx(i + 1, j),
+                    idx(i + 1, j + 1),
+                    idx(i, j + 1),
+                ]);
             }
         }
         TopoMesh::new(polys)

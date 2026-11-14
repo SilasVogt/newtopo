@@ -17,14 +17,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
+/// Owned data for one export object (moved to the export thread).
+type ExportItem = (String, String, Option<[f32; 3]>, glam::DMat4, OutputMesh);
+
 pub const CAD_EXTS: [&str; 5] = ["step", "stp", "iges", "igs", "brep"];
 
 pub fn is_cad(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).is_some_and(|e| CAD_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| CAD_EXTS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 pub fn is_scene(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("ntopo"))
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("ntopo"))
 }
 
 pub fn autosave_path(paths: &Paths, scene: Option<&Path>) -> Option<PathBuf> {
@@ -69,9 +76,22 @@ pub fn remove_autosaves(st: &mut AppState) {
 
 pub fn with_confirmed(op: Op) -> Op {
     match op {
-        Op::RemoveCadEdge { body, edge, .. } => Op::RemoveCadEdge { body, edge, confirmed: true },
-        Op::Collapse { body, edge, .. } => Op::Collapse { body, edge, confirmed: true },
-        Op::Weld { body, from, to, .. } => Op::Weld { body, from, to, confirmed: true },
+        Op::RemoveCadEdge { body, edge, .. } => Op::RemoveCadEdge {
+            body,
+            edge,
+            confirmed: true,
+        },
+        Op::Collapse { body, edge, .. } => Op::Collapse {
+            body,
+            edge,
+            confirmed: true,
+        },
+        Op::Weld { body, from, to, .. } => Op::Weld {
+            body,
+            from,
+            to,
+            confirmed: true,
+        },
         other => other,
     }
 }
@@ -149,7 +169,10 @@ impl AppState {
             self.toast(ToastKind::Info, "An import is already running.");
             return;
         }
-        let picked = rfd::FileDialog::new().set_title(S::IMPORT_TITLE).add_filter(S::IMPORT_FILTER, &CAD_EXTS).pick_file();
+        let picked = rfd::FileDialog::new()
+            .set_title(S::IMPORT_TITLE)
+            .add_filter(S::IMPORT_FILTER, &CAD_EXTS)
+            .pick_file();
         if let Some(p) = picked {
             self.start_import(p);
         }
@@ -175,7 +198,9 @@ impl AppState {
                     }
                     !c2.load(Ordering::Relaxed)
                 };
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_import(&path2, &opts, &mut cb)));
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_import(&path2, &opts, &mut cb)
+                }));
                 let r = match r {
                     Ok(Ok(f)) => Ok(f),
                     Ok(Err(e)) => Err(e.to_string()),
@@ -184,7 +209,12 @@ impl AppState {
                 let _ = tx.send(r);
             })
             .ok();
-        self.jobs.import = Some(ImportJob { path, progress, cancel, rx });
+        self.jobs.import = Some(ImportJob {
+            path,
+            progress,
+            cancel,
+            rx,
+        });
     }
 
     pub fn poll_jobs(&mut self, ctx: &egui::Context) {
@@ -200,18 +230,34 @@ impl AppState {
                                 let rows = file
                                     .bodies
                                     .iter()
-                                    .map(|b| ImportRow { name: b.attrs.name.clone(), layer: b.attrs.layer.clone(), choice: ImportChoice::Keep, selected: false })
+                                    .map(|b| ImportRow {
+                                        name: b.attrs.name.clone(),
+                                        layer: b.attrs.layer.clone(),
+                                        choice: ImportChoice::Keep,
+                                        selected: false,
+                                    })
                                     .collect();
-                                self.ui.import_list = Some(ImportList { path: job.path, file, rows, search: String::new() });
+                                self.ui.import_list = Some(ImportList {
+                                    path: job.path,
+                                    file,
+                                    rows,
+                                    search: String::new(),
+                                });
                             } else {
                                 let n = file.bodies.len();
                                 self.finish_import(&job.path, file, vec![ImportChoice::Keep; n]);
                             }
                         }
-                        Err(e) if cancelled => self.toast(ToastKind::Info, format!("{}: {e}", S::IMPORT_CANCELLED)),
+                        Err(e) if cancelled => {
+                            self.toast(ToastKind::Info, format!("{}: {e}", S::IMPORT_CANCELLED))
+                        }
                         Err(e) => {
                             self.ui.import_report = Some(ImportReport {
-                                file: job.path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+                                file: job
+                                    .path
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_default(),
                                 bodies: 0,
                                 faces: 0,
                                 fixes: vec![],
@@ -235,7 +281,10 @@ impl AppState {
                 Ok(r) => {
                     let job = self.jobs.export.take().expect("job");
                     match r.and_then(|files| write_export(&job.path, files)) {
-                        Ok(()) => self.toast(ToastKind::Info, format!("{} {}", S::TOAST_EXPORTED, job.path.display())),
+                        Ok(()) => self.toast(
+                            ToastKind::Info,
+                            format!("{} {}", S::TOAST_EXPORTED, job.path.display()),
+                        ),
                         Err(e) => self.toast(ToastKind::Error, e),
                     }
                 }
@@ -249,7 +298,10 @@ impl AppState {
 
     fn finish_import(&mut self, path: &Path, file: ImportedFile, choices: Vec<ImportChoice>) {
         let mut report = ImportReport {
-            file: path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            file: path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             bodies: 0,
             faces: 0,
             fixes: vec![],
@@ -290,14 +342,23 @@ impl AppState {
     }
 
     pub fn handle_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
         for p in dropped {
             if is_cad(&p) {
                 self.start_import(p);
             } else if is_scene(&p) {
                 self.open_scene(Some(p));
             } else {
-                self.toast(ToastKind::Warn, format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()));
+                self.toast(
+                    ToastKind::Warn,
+                    format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+                );
             }
         }
     }
@@ -310,8 +371,23 @@ impl AppState {
             if ui.small_button("Cancel").clicked() {
                 cancel = true;
             }
-            ui.add(egui::ProgressBar::new(f).desired_width(140.0).desired_height(10.0).fill(pal.accent));
-            ui.label(RichText::new(format!("Importing {} · {msg}", job.path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default())).small().color(pal.text));
+            ui.add(
+                egui::ProgressBar::new(f)
+                    .desired_width(140.0)
+                    .desired_height(10.0)
+                    .fill(pal.accent),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "Importing {} · {msg}",
+                    job.path
+                        .file_name()
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default()
+                ))
+                .small()
+                .color(pal.text),
+            );
         }
         if cancel && let Some(job) = &self.jobs.import {
             job.cancel.store(true, Ordering::Relaxed);
@@ -327,7 +403,10 @@ impl AppState {
     pub fn open_scene(&mut self, path: Option<PathBuf>) {
         let path = match path {
             Some(p) => p,
-            None => match rfd::FileDialog::new().add_filter("newtopo scene", &["ntopo"]).pick_file() {
+            None => match rfd::FileDialog::new()
+                .add_filter("newtopo scene", &["ntopo"])
+                .pick_file()
+            {
                 Some(p) => p,
                 None => return,
             },
@@ -339,12 +418,20 @@ impl AppState {
                 self.dirty_settings = true;
                 self.sel = Default::default();
                 self.view.needs_frame = true;
-                if let Some(cam) = self.doc.scene.as_ref().and_then(|s| guard(|| s.doc().camera).ok()) {
+                if let Some(cam) = self
+                    .doc
+                    .scene
+                    .as_ref()
+                    .and_then(|s| guard(|| s.doc().camera).ok())
+                {
                     self.view.camera = newtopo_render::OrbitCamera::from_doc(&cam, self.prefs.up);
                     self.view.needs_frame = false;
                 }
             }
-            Err(e) => self.toast(ToastKind::Error, format!("Couldn't open {}: {e}", path.display())),
+            Err(e) => self.toast(
+                ToastKind::Error,
+                format!("Couldn't open {}: {e}", path.display()),
+            ),
         }
     }
 
@@ -357,7 +444,11 @@ impl AppState {
             (Some(p), false) => p.clone(),
             _ => {
                 let name = format!("{}.ntopo", self.doc.title());
-                match rfd::FileDialog::new().add_filter("newtopo scene", &["ntopo"]).set_file_name(name).save_file() {
+                match rfd::FileDialog::new()
+                    .add_filter("newtopo scene", &["ntopo"])
+                    .set_file_name(name)
+                    .save_file()
+                {
                     Some(p) => p.with_extension("ntopo"),
                     None => return,
                 }
@@ -371,7 +462,10 @@ impl AppState {
                 }
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
-                self.toast(ToastKind::Info, format!("{} {}", S::TOAST_SAVED, path.display()));
+                self.toast(
+                    ToastKind::Info,
+                    format!("{} {}", S::TOAST_SAVED, path.display()),
+                );
             }
             Err(e) => self.toast(ToastKind::Error, format!("Couldn't save: {e}")),
         }
@@ -393,7 +487,9 @@ impl AppState {
         if !self.doc.is_dirty() {
             return;
         }
-        let Some(p) = autosave_path(&self.paths, self.doc.path.as_deref()) else { return };
+        let Some(p) = autosave_path(&self.paths, self.doc.path.as_deref()) else {
+            return;
+        };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -404,7 +500,11 @@ impl AppState {
     }
 
     fn recover(&mut self, autosave: &Path) {
-        let original = autosave.to_str().and_then(|s| s.strip_suffix(".autosave")).map(PathBuf::from).filter(|p| is_scene(p) && self.paths.untitled_autosave().as_deref() != Some(autosave));
+        let original = autosave
+            .to_str()
+            .and_then(|s| s.strip_suffix(".autosave"))
+            .map(PathBuf::from)
+            .filter(|p| is_scene(p) && self.paths.untitled_autosave().as_deref() != Some(autosave));
         match self.doc.open(autosave) {
             Ok(()) => {
                 self.demo = None;
@@ -424,7 +524,11 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
             return;
         }
-        self.ui.export = Some(ExportDialog { format: self.prefs.export_format, opts: self.prefs.export.clone(), units: self.prefs.units.clone() });
+        self.ui.export = Some(ExportDialog {
+            format: self.prefs.export_format,
+            opts: self.prefs.export.clone(),
+            units: self.prefs.units.clone(),
+        });
     }
 
     fn run_export(&mut self, d: ExportDialog) {
@@ -434,26 +538,43 @@ impl AppState {
             Format::Fbx => ("fbx", "FBX"),
         };
         let name = format!("{}.{ext}", self.doc.title());
-        let Some(path) = rfd::FileDialog::new().add_filter(filter, &[ext]).set_file_name(name).save_file() else { return };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(filter, &[ext])
+            .set_file_name(name)
+            .save_file()
+        else {
+            return;
+        };
         let path = path.with_extension(ext);
-        let Some(scene) = self.doc.scene.as_ref() else { return };
-        let Ok((bodies, layers)) = guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone())) else {
+        let Some(scene) = self.doc.scene.as_ref() else {
+            return;
+        };
+        let Ok((bodies, layers)) =
+            guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone()))
+        else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;
         };
         let selected = &self.sel.objects;
         let outputs: Vec<OutputMesh> = self.vd.outputs.clone();
-        let objects: Vec<(String, String, Option<[f32; 3]>, glam::DMat4, OutputMesh)> = bodies
+        let objects: Vec<ExportItem> = bodies
             .iter()
             .filter(|b| selected.is_empty() || selected.contains(&b.id))
             .filter_map(|b| {
                 let mesh = outputs.iter().find(|o| o.body == b.id)?.clone();
-                let layer = layers.iter().find(|l| l.id == b.layer).map(|l| l.name.clone()).unwrap_or_default();
+                let layer = layers
+                    .iter()
+                    .find(|l| l.id == b.layer)
+                    .map(|l| l.name.clone())
+                    .unwrap_or_default();
                 Some((b.name.clone(), layer, b.color, b.transform, mesh))
             })
             .collect();
         if objects.is_empty() {
-            self.toast(ToastKind::Warn, "Nothing to export: the output mesh is empty.");
+            self.toast(
+                ToastKind::Warn,
+                "Nothing to export: the output mesh is empty.",
+            );
             return;
         }
         let mut opts = d.opts.clone();
@@ -467,8 +588,16 @@ impl AppState {
             .name("export".into())
             .spawn(move || {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let objs: Vec<ExportObject> =
-                        objects.iter().map(|(n, l, c, t, m)| ExportObject { name: n, layer: l, color: *c, transform: *t, mesh: m }).collect();
+                    let objs: Vec<ExportObject> = objects
+                        .iter()
+                        .map(|(n, l, c, t, m)| ExportObject {
+                            name: n,
+                            layer: l,
+                            color: *c,
+                            transform: *t,
+                            mesh: m,
+                        })
+                        .collect();
                     newtopo_core::export::export(format, &objs, &opts)
                 }));
                 let r = match r {
@@ -492,12 +621,24 @@ impl AppState {
             let mut ok = false;
             egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
                 ui.set_width(380.0);
-                ui.label(RichText::new(&c.title).font(crate::theme::medium(16.0)).color(pal.text_strong));
+                ui.label(
+                    RichText::new(&c.title)
+                        .font(crate::theme::medium(16.0))
+                        .color(pal.text_strong),
+                );
                 ui.add_space(6.0);
                 ui.label(&c.body);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new(S::DLG_CONTINUE).color(pal.accent_text)).fill(pal.accent)).clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(S::DLG_CONTINUE).color(pal.accent_text),
+                            )
+                            .fill(pal.accent),
+                        )
+                        .clicked()
+                    {
                         ok = true;
                     }
                     if ui.button(S::DLG_CANCEL).clicked() {
@@ -519,11 +660,21 @@ impl AppState {
             let mut choice = None;
             egui::Modal::new(egui::Id::new("unsaved")).show(ctx, |ui| {
                 ui.set_width(360.0);
-                ui.label(RichText::new(S::DLG_UNSAVED_TITLE).font(crate::theme::medium(16.0)).color(pal.text_strong));
+                ui.label(
+                    RichText::new(S::DLG_UNSAVED_TITLE)
+                        .font(crate::theme::medium(16.0))
+                        .color(pal.text_strong),
+                );
                 ui.label(S::DLG_UNSAVED_BODY);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new(S::DLG_SAVE).color(pal.accent_text)).fill(pal.accent)).clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(S::DLG_SAVE).color(pal.accent_text))
+                                .fill(pal.accent),
+                        )
+                        .clicked()
+                    {
                         choice = Some(0);
                     }
                     if ui.button(S::DLG_DISCARD).clicked() {
@@ -561,12 +712,20 @@ impl AppState {
             let mut discard_all = false;
             egui::Modal::new(egui::Id::new("recovery")).show(ctx, |ui| {
                 ui.set_width(440.0);
-                ui.label(RichText::new(S::DLG_RECOVER_TITLE).font(crate::theme::medium(16.0)).color(pal.text_strong));
+                ui.label(
+                    RichText::new(S::DLG_RECOVER_TITLE)
+                        .font(crate::theme::medium(16.0))
+                        .color(pal.text_strong),
+                );
                 ui.label(RichText::new(S::DLG_RECOVER_BODY).color(pal.text_dim));
                 ui.add_space(8.0);
                 for p in &list {
                     ui.horizontal(|ui| {
-                        ui.label(p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+                        ui.label(
+                            p.file_name()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        );
                         if ui.button(S::DLG_RECOVER).clicked() {
                             recover = Some(p.clone());
                         }
@@ -621,52 +780,120 @@ impl AppState {
     }
 
     fn import_list_ui(&mut self, ctx: &egui::Context) {
-        let Some(list) = &mut self.ui.import_list else { return };
+        let Some(list) = &mut self.ui.import_list else {
+            return;
+        };
         let pal = self.pal;
         let mut done: Option<bool> = None;
         egui::Modal::new(egui::Id::new("import-list")).show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.label(RichText::new(S::IMPORT_LIST_TITLE).font(crate::theme::medium(16.0)).color(pal.text_strong));
-            ui.label(RichText::new(list.path.display().to_string()).small().color(pal.text_dim));
+            ui.label(
+                RichText::new(S::IMPORT_LIST_TITLE)
+                    .font(crate::theme::medium(16.0))
+                    .color(pal.text_strong),
+            );
+            ui.label(
+                RichText::new(list.path.display().to_string())
+                    .small()
+                    .color(pal.text_dim),
+            );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut list.search).hint_text(S::IMPORT_SEARCH).desired_width(200.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut list.search)
+                        .hint_text(S::IMPORT_SEARCH)
+                        .desired_width(200.0),
+                );
                 let q = list.search.to_lowercase();
                 let visible = |r: &ImportRow| q.is_empty() || r.name.to_lowercase().contains(&q);
                 if ui.button(S::IMPORT_ALL).clicked() {
-                    list.rows.iter_mut().filter(|r| visible(r)).for_each(|r| r.selected = true);
+                    list.rows
+                        .iter_mut()
+                        .filter(|r| visible(r))
+                        .for_each(|r| r.selected = true);
                 }
                 if ui.button(S::IMPORT_NONE).clicked() {
                     list.rows.iter_mut().for_each(|r| r.selected = false);
                 }
                 ui.separator();
-                for (c, l) in [(ImportChoice::Keep, S::IMPORT_KEEP), (ImportChoice::Exclude, S::IMPORT_EXCLUDE), (ImportChoice::Replace, S::IMPORT_REPLACE)] {
-                    if ui.button(l).on_hover_text("Set for the selected rows").clicked() {
-                        list.rows.iter_mut().filter(|r| r.selected).for_each(|r| r.choice = c);
+                for (c, l) in [
+                    (ImportChoice::Keep, S::IMPORT_KEEP),
+                    (ImportChoice::Exclude, S::IMPORT_EXCLUDE),
+                    (ImportChoice::Replace, S::IMPORT_REPLACE),
+                ] {
+                    if ui
+                        .button(l)
+                        .on_hover_text("Set for the selected rows")
+                        .clicked()
+                    {
+                        list.rows
+                            .iter_mut()
+                            .filter(|r| r.selected)
+                            .for_each(|r| r.choice = c);
                     }
                 }
             });
             ui.add_space(6.0);
             let q = list.search.to_lowercase();
-            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                egui::Grid::new("import-rows").num_columns(4).striped(true).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
-                    for r in list.rows.iter_mut().filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q)) {
-                        ui.checkbox(&mut r.selected, "");
-                        ui.label(&r.name);
-                        ui.label(RichText::new(r.layer.clone().unwrap_or_default()).small().color(pal.text_dim));
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut r.choice, ImportChoice::Keep, S::IMPORT_KEEP);
-                            ui.selectable_value(&mut r.choice, ImportChoice::Exclude, S::IMPORT_EXCLUDE);
-                            ui.selectable_value(&mut r.choice, ImportChoice::Replace, S::IMPORT_REPLACE);
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    egui::Grid::new("import-rows")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing(vec2(10.0, 4.0))
+                        .show(ui, |ui| {
+                            for r in list
+                                .rows
+                                .iter_mut()
+                                .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
+                            {
+                                ui.checkbox(&mut r.selected, "");
+                                ui.label(&r.name);
+                                ui.label(
+                                    RichText::new(r.layer.clone().unwrap_or_default())
+                                        .small()
+                                        .color(pal.text_dim),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(
+                                        &mut r.choice,
+                                        ImportChoice::Keep,
+                                        S::IMPORT_KEEP,
+                                    );
+                                    ui.selectable_value(
+                                        &mut r.choice,
+                                        ImportChoice::Exclude,
+                                        S::IMPORT_EXCLUDE,
+                                    );
+                                    ui.selectable_value(
+                                        &mut r.choice,
+                                        ImportChoice::Replace,
+                                        S::IMPORT_REPLACE,
+                                    );
+                                });
+                                ui.end_row();
+                            }
                         });
-                        ui.end_row();
-                    }
                 });
-            });
             ui.add_space(10.0);
-            let keep = list.rows.iter().filter(|r| r.choice != ImportChoice::Exclude).count();
+            let keep = list
+                .rows
+                .iter()
+                .filter(|r| r.choice != ImportChoice::Exclude)
+                .count();
             ui.horizontal(|ui| {
-                if ui.add_enabled(keep > 0, egui::Button::new(RichText::new(format!("{} ({keep})", S::IMPORT_RUN)).color(pal.accent_text)).fill(pal.accent)).clicked() {
+                if ui
+                    .add_enabled(
+                        keep > 0,
+                        egui::Button::new(
+                            RichText::new(format!("{} ({keep})", S::IMPORT_RUN))
+                                .color(pal.accent_text),
+                        )
+                        .fill(pal.accent),
+                    )
+                    .clicked()
+                {
                     done = Some(true);
                 }
                 if ui.button(S::DLG_CANCEL).clicked() {
@@ -686,30 +913,49 @@ impl AppState {
     }
 
     fn import_report_ui(&mut self, ctx: &egui::Context) {
-        let Some(r) = &self.ui.import_report else { return };
+        let Some(r) = &self.ui.import_report else {
+            return;
+        };
         let pal = self.pal;
         let mut close = false;
         egui::Modal::new(egui::Id::new("import-report")).show(ctx, |ui| {
             ui.set_width(440.0);
             let failed = !r.errors.is_empty() && r.bodies == 0;
-            let title = if failed { S::IMPORT_FAILED } else { S::IMPORT_REPORT_TITLE };
-            ui.label(RichText::new(title).font(crate::theme::medium(16.0)).color(if failed { pal.error } else { pal.text_strong }));
+            let title = if failed {
+                S::IMPORT_FAILED
+            } else {
+                S::IMPORT_REPORT_TITLE
+            };
+            ui.label(
+                RichText::new(title)
+                    .font(crate::theme::medium(16.0))
+                    .color(if failed { pal.error } else { pal.text_strong }),
+            );
             ui.label(RichText::new(&r.file).small().color(pal.text_dim));
             ui.add_space(8.0);
-            egui::Grid::new("report").num_columns(2).spacing(vec2(16.0, 4.0)).show(ui, |ui| {
-                ui.label("Objects");
-                ui.label(r.bodies.to_string());
-                ui.end_row();
-                ui.label("Faces");
-                ui.label(r.faces.to_string());
-                ui.end_row();
-                ui.label("Fixes applied");
-                ui.label(r.fixes.len().to_string());
-                ui.end_row();
-                ui.label("Faces that failed");
-                ui.label(RichText::new(r.failed_faces.to_string()).color(if r.failed_faces > 0 { pal.warn } else { pal.text }));
-                ui.end_row();
-            });
+            egui::Grid::new("report")
+                .num_columns(2)
+                .spacing(vec2(16.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label("Objects");
+                    ui.label(r.bodies.to_string());
+                    ui.end_row();
+                    ui.label("Faces");
+                    ui.label(r.faces.to_string());
+                    ui.end_row();
+                    ui.label("Fixes applied");
+                    ui.label(r.fixes.len().to_string());
+                    ui.end_row();
+                    ui.label("Faces that failed");
+                    ui.label(RichText::new(r.failed_faces.to_string()).color(
+                        if r.failed_faces > 0 {
+                            pal.warn
+                        } else {
+                            pal.text
+                        },
+                    ));
+                    ui.end_row();
+                });
             if !r.fixes.is_empty() {
                 ui.collapsing("Fixes", |ui| {
                     for f in &r.fixes {
@@ -738,7 +984,9 @@ impl AppState {
     }
 
     fn export_dialog_ui(&mut self, ctx: &egui::Context) {
-        let Some(mut d) = self.ui.export.take() else { return };
+        let Some(mut d) = self.ui.export.take() else {
+            return;
+        };
         let pal = self.pal;
         let autofill = self.scene_toggles().map(|s| s.autofill).unwrap_or(true);
         let fans: Vec<(String, u32)> = self
@@ -746,61 +994,95 @@ impl AppState {
             .outputs
             .iter()
             .flat_map(|o| {
-                let name = self.vd.body(o.body).map(|b| b.name.clone()).unwrap_or_else(|| format!("Body {}", o.body));
-                o.polygons.iter().filter(|p| p.fan_fallback).map(move |p| (name.clone(), p.face.0))
+                let name = self
+                    .vd
+                    .body(o.body)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| format!("Body {}", o.body));
+                o.polygons
+                    .iter()
+                    .filter(|p| p.fan_fallback)
+                    .map(move |p| (name.clone(), p.face.0))
             })
             .collect();
         let mut close = false;
         let mut go = false;
         egui::Modal::new(egui::Id::new("export")).show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.label(RichText::new(S::EXPORT_TITLE).font(crate::theme::medium(16.0)).color(pal.text_strong));
-            ui.label(RichText::new(if self.sel.objects.is_empty() { S::EXPORT_SCOPE_ALL } else { S::EXPORT_SCOPE_SEL }).small().color(pal.text_dim));
-            ui.add_space(8.0);
-            egui::Grid::new("export-opts").num_columns(2).spacing(vec2(16.0, 8.0)).show(ui, |ui| {
-                ui.label(S::EXPORT_FORMAT);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut d.format, Format::Fbx, "FBX");
-                    ui.selectable_value(&mut d.format, Format::Obj, "OBJ");
-                    ui.selectable_value(&mut d.format, Format::Glb, "glTF (.glb)");
-                });
-                ui.end_row();
-                ui.label(S::EXPORT_TRIANGULATE);
-                if d.format == Format::Glb {
-                    ui.label(RichText::new(S::EXPORT_GLB_TRI).small().color(pal.text_dim));
+            ui.label(
+                RichText::new(S::EXPORT_TITLE)
+                    .font(crate::theme::medium(16.0))
+                    .color(pal.text_strong),
+            );
+            ui.label(
+                RichText::new(if self.sel.objects.is_empty() {
+                    S::EXPORT_SCOPE_ALL
                 } else {
-                    ui.checkbox(&mut d.opts.triangulate, "");
-                }
-                ui.end_row();
-                ui.label(S::EXPORT_UNITS);
-                ui.horizontal(|ui| {
-                    for u in ["mm", "cm", "m", "in"] {
-                        ui.selectable_value(&mut d.units, u.to_string(), u);
+                    S::EXPORT_SCOPE_SEL
+                })
+                .small()
+                .color(pal.text_dim),
+            );
+            ui.add_space(8.0);
+            egui::Grid::new("export-opts")
+                .num_columns(2)
+                .spacing(vec2(16.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label(S::EXPORT_FORMAT);
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut d.format, Format::Fbx, "FBX");
+                        ui.selectable_value(&mut d.format, Format::Obj, "OBJ");
+                        ui.selectable_value(&mut d.format, Format::Glb, "glTF (.glb)");
+                    });
+                    ui.end_row();
+                    ui.label(S::EXPORT_TRIANGULATE);
+                    if d.format == Format::Glb {
+                        ui.label(RichText::new(S::EXPORT_GLB_TRI).small().color(pal.text_dim));
+                    } else {
+                        ui.checkbox(&mut d.opts.triangulate, "");
                     }
+                    ui.end_row();
+                    ui.label(S::EXPORT_UNITS);
+                    ui.horizontal(|ui| {
+                        for u in ["mm", "cm", "m", "in"] {
+                            ui.selectable_value(&mut d.units, u.to_string(), u);
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(S::EXPORT_SCALE);
+                    ui.add(
+                        egui::DragValue::new(&mut d.opts.scale)
+                            .speed(0.01)
+                            .range(0.0001..=10000.0),
+                    );
+                    ui.end_row();
+                    ui.label(S::EXPORT_UP);
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut d.opts.up, ExportUp::Y, "Y");
+                        ui.selectable_value(&mut d.opts.up, ExportUp::Z, "Z");
+                    });
+                    ui.end_row();
+                    ui.label(S::EXPORT_NORMALS);
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(
+                            &mut d.opts.face_weighted_normals,
+                            false,
+                            S::EXPORT_NORMALS_CAD,
+                        );
+                        ui.selectable_value(
+                            &mut d.opts.face_weighted_normals,
+                            true,
+                            S::EXPORT_NORMALS_WEIGHTED,
+                        );
+                    });
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut d.opts.layers_as_hierarchy, S::EXPORT_LAYERS);
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut d.opts.materials, S::EXPORT_MATERIALS);
+                    ui.end_row();
                 });
-                ui.end_row();
-                ui.label(S::EXPORT_SCALE);
-                ui.add(egui::DragValue::new(&mut d.opts.scale).speed(0.01).range(0.0001..=10000.0));
-                ui.end_row();
-                ui.label(S::EXPORT_UP);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut d.opts.up, ExportUp::Y, "Y");
-                    ui.selectable_value(&mut d.opts.up, ExportUp::Z, "Z");
-                });
-                ui.end_row();
-                ui.label(S::EXPORT_NORMALS);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut d.opts.face_weighted_normals, false, S::EXPORT_NORMALS_CAD);
-                    ui.selectable_value(&mut d.opts.face_weighted_normals, true, S::EXPORT_NORMALS_WEIGHTED);
-                });
-                ui.end_row();
-                ui.label("");
-                ui.checkbox(&mut d.opts.layers_as_hierarchy, S::EXPORT_LAYERS);
-                ui.end_row();
-                ui.label("");
-                ui.checkbox(&mut d.opts.materials, S::EXPORT_MATERIALS);
-                ui.end_row();
-            });
             if !autofill {
                 ui.add_space(6.0);
                 ui.label(RichText::new(S::EXPORT_NGON_NOTE).small().color(pal.warn));
@@ -808,16 +1090,24 @@ impl AppState {
             if !fans.is_empty() {
                 ui.add_space(6.0);
                 ui.collapsing(format!("{} ({})", S::EXPORT_FAN_TITLE, fans.len()), |ui| {
-                    egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                        for (name, face) in &fans {
-                            ui.label(RichText::new(format!("{name} · face {face}")).small());
-                        }
-                    });
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            for (name, face) in &fans {
+                                ui.label(RichText::new(format!("{name} · face {face}")).small());
+                            }
+                        });
                 });
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.add(egui::Button::new(RichText::new(S::EXPORT_RUN).color(pal.accent_text)).fill(pal.accent)).clicked() {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(S::EXPORT_RUN).color(pal.accent_text))
+                            .fill(pal.accent),
+                    )
+                    .clicked()
+                {
                     go = true;
                 }
                 if ui.button(S::DLG_CANCEL).clicked() {
@@ -834,7 +1124,8 @@ impl AppState {
 }
 
 fn write_export(path: &Path, files: ExportFiles) -> Result<(), String> {
-    std::fs::write(path, &files.main).map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
+    std::fs::write(path, &files.main)
+        .map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
     for (suffix, bytes) in files.side {
         let stem = path.with_extension("");
         let p = PathBuf::from(format!("{}{suffix}", stem.display()));
@@ -857,22 +1148,49 @@ mod tests {
 
     #[test]
     fn autosave_paths() {
-        let paths = Paths { config: None, data: Some(PathBuf::from("/d")) };
-        assert_eq!(autosave_path(&paths, Some(Path::new("/s/a.ntopo"))), Some(PathBuf::from("/s/a.ntopo.autosave")));
-        assert_eq!(autosave_path(&paths, None), Some(PathBuf::from("/d/untitled.ntopo.autosave")));
+        let paths = Paths {
+            config: None,
+            data: Some(PathBuf::from("/d")),
+        };
+        assert_eq!(
+            autosave_path(&paths, Some(Path::new("/s/a.ntopo"))),
+            Some(PathBuf::from("/s/a.ntopo.autosave"))
+        );
+        assert_eq!(
+            autosave_path(&paths, None),
+            Some(PathBuf::from("/d/untitled.ntopo.autosave"))
+        );
     }
 
     #[test]
     fn confirmed() {
-        let op = Op::RemoveCadEdge { body: None, edge: newtopo_kernel::EdgeId(3), confirmed: false };
-        assert_eq!(with_confirmed(op), Op::RemoveCadEdge { body: None, edge: newtopo_kernel::EdgeId(3), confirmed: true });
+        let op = Op::RemoveCadEdge {
+            body: None,
+            edge: newtopo_kernel::EdgeId(3),
+            confirmed: false,
+        };
+        assert_eq!(
+            with_confirmed(op),
+            Op::RemoveCadEdge {
+                body: None,
+                edge: newtopo_kernel::EdgeId(3),
+                confirmed: true
+            }
+        );
     }
 
     #[test]
     fn export_writes_side_files() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("part.obj");
-        write_export(&p, ExportFiles { main: b"o".to_vec(), side: vec![(".mtl".into(), b"m".to_vec())] }).unwrap();
+        write_export(
+            &p,
+            ExportFiles {
+                main: b"o".to_vec(),
+                side: vec![(".mtl".into(), b"m".to_vec())],
+            },
+        )
+        .unwrap();
         assert!(dir.path().join("part.mtl").exists());
     }
 }

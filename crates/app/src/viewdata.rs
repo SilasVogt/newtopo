@@ -6,7 +6,6 @@
 use crate::docstate::guard;
 use crate::selection::{EdgeSel, TopoMesh, VertSel};
 use glam::{DMat4, Vec3};
-use newtopo_core::doc::LayerId;
 use newtopo_core::mesh::{OutEdgeKind, OutputMesh};
 use newtopo_core::scene::Scene;
 use newtopo_kernel::{BodyId, FaceId};
@@ -49,7 +48,6 @@ pub struct VertItem {
 pub struct BodyInfo {
     pub id: BodyId,
     pub name: String,
-    pub layer: LayerId,
     pub min: Vec3,
     pub max: Vec3,
 }
@@ -119,7 +117,14 @@ impl ViewData {
         any.then_some((min, max))
     }
 
-    fn finish(mut self, mut scene: RenderScene, p: &DisplayParams, pick_pos: Vec<Vec3>, pick_tris: Vec<[u32; 3]>, pick_ids: Vec<FaceRef>) -> Self {
+    fn finish(
+        mut self,
+        mut scene: RenderScene,
+        p: &DisplayParams,
+        pick_pos: Vec<Vec3>,
+        pick_tris: Vec<[u32; 3]>,
+        pick_ids: Vec<FaceRef>,
+    ) -> Self {
         for (i, id) in pick_ids.iter().enumerate() {
             self.face_tris.entry(*id).or_default().push(i as u32);
         }
@@ -140,7 +145,13 @@ impl ViewData {
             && let Some((min, max)) = self.bounds
         {
             let mut grid = RenderScene::default();
-            ground_grid(min, max, min.z - (max - min).length() * 0.001, p.colors.grid, &mut grid);
+            ground_grid(
+                min,
+                max,
+                min.z - (max - min).length() * 0.001,
+                p.colors.grid,
+                &mut grid,
+            );
             // Grid first so model lines draw over it.
             grid.lines.append(&mut scene.lines);
             scene.lines = grid.lines;
@@ -171,7 +182,11 @@ pub fn triangulate(pts: &[Vec3]) -> Vec<[usize; 3]> {
     let mut nrm = Vec3::ZERO;
     for i in 0..n {
         let (a, b) = (pts[i], pts[(i + 1) % n]);
-        nrm += Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+        nrm += Vec3::new(
+            (a.y - b.y) * (a.z + b.z),
+            (a.z - b.z) * (a.x + b.x),
+            (a.x - b.x) * (a.y + b.y),
+        );
     }
     let nrm = nrm.normalize_or_zero();
     if nrm == Vec3::ZERO {
@@ -179,7 +194,10 @@ pub fn triangulate(pts: &[Vec3]) -> Vec<[usize; 3]> {
     }
     let u = nrm.any_orthonormal_vector();
     let v = nrm.cross(u);
-    let p2: Vec<glam::Vec2> = pts.iter().map(|p| glam::Vec2::new(p.dot(u), p.dot(v))).collect();
+    let p2: Vec<glam::Vec2> = pts
+        .iter()
+        .map(|p| glam::Vec2::new(p.dot(u), p.dot(v)))
+        .collect();
     let cross = |o: glam::Vec2, a: glam::Vec2, b: glam::Vec2| (a - o).perp_dot(b - o);
     let mut idx: Vec<usize> = (0..n).collect();
     let mut out = Vec::with_capacity(n - 2);
@@ -240,9 +258,15 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
     let mut rs = RenderScene::default();
     let (mut ppos, mut ptris, mut pids) = (Vec::new(), Vec::new(), Vec::new());
 
-    for entry in entries.iter().filter(|e| e.visible && !p.hidden.contains(&e.id)) {
+    for entry in entries
+        .iter()
+        .filter(|e| e.visible && !p.hidden.contains(&e.id))
+    {
         let m = entry.transform;
-        let body_color = entry.color.map(|c| [c[0], c[1], c[2], 1.0]).unwrap_or(DEFAULT_BODY_COLOR);
+        let body_color = entry
+            .color
+            .map(|c| [c[0], c[1], c[2], 1.0])
+            .unwrap_or(DEFAULT_BODY_COLOR);
         let mut bmin = Vec3::splat(f32::INFINITY);
         let mut bmax = Vec3::splat(f32::NEG_INFINITY);
         let output = vd.outputs.iter().find(|o| o.body == entry.id).cloned();
@@ -258,13 +282,20 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                         let base = rs.mesh.vertices.len() as u32;
                         for k in t {
                             let n = nrm.get(k).copied().unwrap_or(Vec3::Z);
-                            rs.mesh.vertices.push(MeshVertex { pos: pts[k].to_array(), normal: n.to_array(), color: c.preview_surface });
+                            rs.mesh.vertices.push(MeshVertex {
+                                pos: pts[k].to_array(),
+                                normal: n.to_array(),
+                                color: c.preview_surface,
+                            });
                         }
                         rs.mesh.indices.extend([base, base + 1, base + 2]);
                         let pb = ppos.len() as u32;
                         ppos.extend(t.map(|k| pts[k]));
                         ptris.push([pb, pb + 1, pb + 2]);
-                        pids.push(FaceRef { body: entry.id.0, face: poly.face.0 });
+                        pids.push(FaceRef {
+                            body: entry.id.0,
+                            face: poly.face.0,
+                        });
                     }
                     for p3 in &pts {
                         bmin = bmin.min(*p3);
@@ -280,7 +311,12 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                         .edge_polylines
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| bv.topology.edges.get(*i).is_none_or(|e| !e.seam && !e.degenerate))
+                        .filter(|(i, _)| {
+                            bv.topology
+                                .edges
+                                .get(*i)
+                                .is_none_or(|e| !e.seam && !e.degenerate)
+                        })
                         .map(|(i, pl)| (i, pl.clone()))
                         .collect();
                     (faces, edges)
@@ -293,7 +329,11 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                         for (k, pos) in fm.positions.iter().enumerate() {
                             let w = xf(&m, *pos);
                             let n = fm.normals.get(k).map(|n| xn(&m, *n)).unwrap_or(Vec3::Z);
-                            rs.mesh.vertices.push(MeshVertex { pos: w.to_array(), normal: n.to_array(), color: body_color });
+                            rs.mesh.vertices.push(MeshVertex {
+                                pos: w.to_array(),
+                                normal: n.to_array(),
+                                color: body_color,
+                            });
                             ppos.push(w);
                             bmin = bmin.min(w);
                             bmax = bmax.max(w);
@@ -301,7 +341,10 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                         for t in &fm.triangles {
                             rs.mesh.indices.extend(t.map(|i| i + base));
                             ptris.push(t.map(|i| i + pbase));
-                            pids.push(FaceRef { body: entry.id.0, face: fi as u32 });
+                            pids.push(FaceRef {
+                                body: entry.id.0,
+                                face: fi as u32,
+                            });
                         }
                     }
                     if output.is_none() {
@@ -310,7 +353,10 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                             rs.add_polyline(&path, c.cad_edge, 1.8);
                             vd.edges.push(EdgeItem {
                                 body: entry.id,
-                                sel: Some(EdgeSel::Cad(entry.id, newtopo_kernel::EdgeId(ei as u32))),
+                                sel: Some(EdgeSel::Cad(
+                                    entry.id,
+                                    newtopo_kernel::EdgeId(ei as u32),
+                                )),
                                 kind: EdgeKind::Cad,
                                 path,
                                 topo: None,
@@ -369,27 +415,43 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                     OutEdgeKind::Cad(id) => Some(id),
                     _ => None,
                 };
-                vd.edges.push(EdgeItem { body: entry.id, sel, kind, path, topo, cad_edge });
+                vd.edges.push(EdgeItem {
+                    body: entry.id,
+                    sel,
+                    kind,
+                    path,
+                    topo,
+                    cad_edge,
+                });
             }
             for (i, v) in out.vertices.iter().enumerate() {
                 let pos = wpos[i];
                 if p.show_verts {
                     rs.add_point(pos, c.vertex, 5.0);
                 }
-                vd.verts.push(VertItem { body: entry.id, sel: VertSel::Key(entry.id, v.key.clone()), pos });
+                vd.verts.push(VertItem {
+                    body: entry.id,
+                    sel: VertSel::Key(entry.id, v.key.clone()),
+                    pos,
+                });
             }
             vd.topo.insert(entry.id, bt);
         }
 
         if bmin.x <= bmax.x {
-            vd.bodies.push(BodyInfo { id: entry.id, name: entry.name.clone(), layer: entry.layer, min: bmin, max: bmax });
+            vd.bodies.push(BodyInfo {
+                id: entry.id,
+                name: entry.name.clone(),
+                min: bmin,
+                max: bmax,
+            });
         }
     }
     vd.finish(rs, p, ppos, ptris, pids)
 }
 
 /// Build from the synthetic sample model (no engine needed).
-pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &DisplayParams) -> ViewData {
+pub fn from_demo(bodies: &[SynthBody], p: &DisplayParams) -> ViewData {
     let mut vd = ViewData::default();
     let c = &p.colors;
     let mut rs = RenderScene::default();
@@ -400,8 +462,12 @@ pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &Display
             continue;
         }
         let (min, max) = b.bounds();
-        let layer = layers.iter().find(|(n, _)| *n == b.layer).map(|(_, l)| *l).unwrap_or_default();
-        vd.bodies.push(BodyInfo { id, name: b.name.clone(), layer, min, max });
+        vd.bodies.push(BodyInfo {
+            id,
+            name: b.name.clone(),
+            min,
+            max,
+        });
 
         // Weld the coarse polygons into an output-like mesh.
         let mut vmap: HashMap<(i64, i64, i64), u32> = HashMap::new();
@@ -414,7 +480,11 @@ pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &Display
                 let ids: Vec<u32> = poly
                     .iter()
                     .map(|q| {
-                        let k = ((q.x * 1000.0).round() as i64, (q.y * 1000.0).round() as i64, (q.z * 1000.0).round() as i64);
+                        let k = (
+                            (q.x * 1000.0).round() as i64,
+                            (q.y * 1000.0).round() as i64,
+                            (q.z * 1000.0).round() as i64,
+                        );
                         *vmap.entry(k).or_insert_with(|| {
                             vpos.push(*q);
                             (vpos.len() - 1) as u32
@@ -426,17 +496,25 @@ pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &Display
                 poly_n.push(*n);
             }
         }
-        let mut bt = BodyTopo { mesh: TopoMesh::new(polys.clone()), poly_face: poly_face.clone(), ..Default::default() };
+        let mut bt = BodyTopo {
+            mesh: TopoMesh::new(polys.clone()),
+            poly_face: poly_face.clone(),
+            ..Default::default()
+        };
 
         if p.preview {
             for ((poly, face), n) in polys.iter().zip(&poly_face).zip(&poly_n) {
                 let pts: Vec<Vec3> = poly.iter().map(|&i| vpos[i as usize]).collect();
                 for t in triangulate(&pts) {
-                    rs.mesh.push_triangle(t.map(|k| pts[k]), [*n; 3], c.preview_surface);
+                    rs.mesh
+                        .push_triangle(t.map(|k| pts[k]), [*n; 3], c.preview_surface);
                     let pb = ppos.len() as u32;
                     ppos.extend(t.map(|k| pts[k]));
                     ptris.push([pb, pb + 1, pb + 2]);
-                    pids.push(FaceRef { body: b.id, face: face.0 });
+                    pids.push(FaceRef {
+                        body: b.id,
+                        face: face.0,
+                    });
                 }
             }
         } else {
@@ -444,13 +522,20 @@ pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &Display
                 let base = rs.mesh.vertices.len() as u32;
                 let pbase = ppos.len() as u32;
                 for (q, n) in f.positions.iter().zip(&f.normals) {
-                    rs.mesh.vertices.push(MeshVertex { pos: q.to_array(), normal: n.to_array(), color: b.color });
+                    rs.mesh.vertices.push(MeshVertex {
+                        pos: q.to_array(),
+                        normal: n.to_array(),
+                        color: b.color,
+                    });
                 }
                 ppos.extend_from_slice(&f.positions);
                 for t in &f.tris {
                     rs.mesh.indices.extend(t.map(|i| i + base));
                     ptris.push(t.map(|i| i + pbase));
-                    pids.push(FaceRef { body: b.id, face: f.id });
+                    pids.push(FaceRef {
+                        body: b.id,
+                        face: f.id,
+                    });
                 }
                 for l in &f.lines {
                     rs.add_polyline(l, c.line, 1.6);
@@ -470,19 +555,34 @@ pub fn from_demo(bodies: &[SynthBody], layers: &[(String, LayerId)], p: &Display
                 .filter(|(_, pl)| pl.contains(&a) && pl.contains(&bb))
                 .map(|(pi, _)| poly_face[pi])
                 .collect();
-            let kind = if faces.len() == 1 { EdgeKind::Line } else { EdgeKind::Cad };
+            let kind = if faces.len() == 1 {
+                EdgeKind::Line
+            } else {
+                EdgeKind::Cad
+            };
             let path = vec![vpos[a as usize], vpos[bb as usize]];
             if p.preview && p.wireframe {
                 rs.add_segment(path[0], path[1], c.preview_wire, 1.0);
             }
             bt.edge_item.insert(ti as u32, vd.edges.len());
-            vd.edges.push(EdgeItem { body: id, sel: Some(EdgeSel::Index(id, ti as u32)), kind, path, topo: Some(ti as u32), cad_edge: None });
+            vd.edges.push(EdgeItem {
+                body: id,
+                sel: Some(EdgeSel::Index(id, ti as u32)),
+                kind,
+                path,
+                topo: Some(ti as u32),
+                cad_edge: None,
+            });
         }
         for (i, q) in vpos.iter().enumerate() {
             if p.show_verts {
                 rs.add_point(*q, c.vertex, 5.0);
             }
-            vd.verts.push(VertItem { body: id, sel: VertSel::Index(id, i as u32), pos: *q });
+            vd.verts.push(VertItem {
+                body: id,
+                sel: VertSel::Index(id, i as u32),
+                pos: *q,
+            });
         }
         vd.topo.insert(id, bt);
     }
@@ -507,31 +607,49 @@ mod tests {
     #[test]
     fn triangulates_concave() {
         // An L shape.
-        let pts = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)].map(|(x, y)| Vec3::new(x, y, 0.0));
+        let pts = [
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (2.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 2.0),
+            (0.0, 2.0),
+        ]
+        .map(|(x, y)| Vec3::new(x, y, 0.0));
         let t = triangulate(&pts);
         assert_eq!(t.len(), 4);
-        let area: f32 = t.iter().map(|t| (pts[t[1]] - pts[t[0]]).cross(pts[t[2]] - pts[t[0]]).length() * 0.5).sum();
+        let area: f32 = t
+            .iter()
+            .map(|t| {
+                (pts[t[1]] - pts[t[0]])
+                    .cross(pts[t[2]] - pts[t[0]])
+                    .length()
+                    * 0.5
+            })
+            .sum();
         assert!((area - 3.0).abs() < 1e-5);
     }
 
     #[test]
     fn demo_view_has_everything() {
         let bodies = newtopo_render::synth::demo_bodies();
-        let layers = vec![("Parts".to_string(), LayerId(0)), ("Details".to_string(), LayerId(1))];
-        let vd = from_demo(&bodies, &layers, &params());
+        let vd = from_demo(&bodies, &params());
         assert_eq!(vd.bodies.len(), 2);
         assert!(!vd.pick.is_empty());
         assert!(!vd.edges.is_empty() && !vd.verts.is_empty());
-        assert!(vd.edges.iter().any(|e| e.kind == EdgeKind::Cad) && vd.edges.iter().any(|e| e.kind == EdgeKind::Line));
+        assert!(
+            vd.edges.iter().any(|e| e.kind == EdgeKind::Cad)
+                && vd.edges.iter().any(|e| e.kind == EdgeKind::Line)
+        );
         // Hiding a body removes it.
         let mut p = params();
         p.hidden.insert(BodyId(1));
-        let vd2 = from_demo(&bodies, &layers, &p);
+        let vd2 = from_demo(&bodies, &p);
         assert_eq!(vd2.bodies.len(), 1);
         // Preview mode builds surfaces from the output polygons.
         p.preview = true;
         p.wireframe = true;
-        let vd3 = from_demo(&bodies, &layers, &p);
+        let vd3 = from_demo(&bodies, &p);
         assert!(!vd3.base.mesh.is_empty());
     }
 }

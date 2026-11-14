@@ -72,6 +72,7 @@ commands! {
 
     Preview => "view.preview", "Preview mode", View, Some(Icon::Preview), ["V"];
     Wireframe => "view.wireframe", "Wireframe in preview", View, None, ["Shift+V"];
+    FlatShading => "view.flat_shading", "Flat shading in preview", View, None, [];
     AutoFill => "toggle.autofill", "Auto-fill on/off", Toggles, Some(Icon::AutoFill), ["Shift+A"];
     Link => "toggle.link", "Link on/off", Toggles, Some(Icon::Link), ["Shift+L"];
     Symmetry => "toggle.symmetry", "Symmetry on/off", Toggles, Some(Icon::Symmetry), ["Shift+M"];
@@ -90,9 +91,9 @@ commands! {
     Remove => "edit.remove_edge", "Remove edge (twice on a CAD edge)", Tools, Some(Icon::Remove), ["Delete"];
     Snap => "tool.snap", "Snap on/off (Iso, Cut)", Tools, None, ["N"];
 
-    Loop => "select.loop", "Select loop", Select, None, ["L"];
+    Loop => "select.loop", "Select loop", Select, Some(Icon::Loop), ["L"];
     LoopAlternate => "select.loop_alternate", "Select every other in loop", Select, None, ["L x2"];
-    Ring => "select.ring", "Select ring", Select, None, ["R"];
+    Ring => "select.ring", "Select ring", Select, Some(Icon::Ring), ["R"];
     RingAlternate => "select.ring_alternate", "Select every other in ring", Select, None, ["R x2"];
     SelectAll => "select.all", "Select all", Select, None, ["Ctrl+A"];
     SelectNone => "select.none", "Select none", Select, None, ["Alt+A"];

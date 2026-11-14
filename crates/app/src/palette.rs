@@ -67,7 +67,16 @@ pub struct RadialState {
 
 impl RadialState {
     pub fn open_at(&mut self, c: Pos2, t: f64, sticky: bool) {
-        *self = RadialState { open: true, center: c, opened_at: t, held: !sticky, sticky, hovered: None, moving: None, menu_slot: None };
+        *self = RadialState {
+            open: true,
+            center: c,
+            opened_at: t,
+            held: !sticky,
+            sticky,
+            hovered: None,
+            moving: None,
+            menu_slot: None,
+        };
     }
     pub fn close(&mut self) {
         self.open = false;
@@ -88,7 +97,11 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
         return Some(0);
     }
     let t: Vec<char> = text.to_lowercase().chars().collect();
-    let q: Vec<char> = query.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let q: Vec<char> = query
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let mut score = 0;
     let mut ti = 0;
     let mut prev_match: Option<usize> = None;
@@ -120,7 +133,12 @@ impl AppState {
     fn palette_matches(&self) -> Vec<Cmd> {
         let q = self.ui.palette.query.trim();
         if q.is_empty() {
-            let mut favs: Vec<Cmd> = self.prefs.favourites.iter().filter_map(|id| Cmd::from_id(id)).collect();
+            let mut favs: Vec<Cmd> = self
+                .prefs
+                .favourites
+                .iter()
+                .filter_map(|id| Cmd::from_id(id))
+                .collect();
             let mut rest: Vec<Cmd> = ALL.iter().copied().filter(|c| !favs.contains(c)).collect();
             rest.sort_by_key(|c| (c.category(), c.label()));
             favs.extend(rest);
@@ -130,9 +148,14 @@ impl AppState {
             .iter()
             .filter_map(|c| {
                 let label = fuzzy_score(q, c.label());
-                let cat = fuzzy_score(q, &format!("{} {}", c.category().label(), c.label())).map(|s| s - 20);
+                let cat = fuzzy_score(q, &format!("{} {}", c.category().label(), c.label()))
+                    .map(|s| s - 20);
                 let s = label.max(cat)?;
-                let fav = if self.prefs.favourites.iter().any(|f| f == c.id()) { 15 } else { 0 };
+                let fav = if self.prefs.favourites.iter().any(|f| f == c.id()) {
+                    15
+                } else {
+                    0
+                };
                 Some((s + fav, *c))
             })
             .collect();
@@ -155,7 +178,10 @@ impl AppState {
             Some(i) => {
                 self.prefs.radial[i] = Some(c.id().to_string());
                 self.dirty_settings = true;
-                self.toast(ToastKind::Info, format!("Added \"{}\" to the radial menu", c.label()));
+                self.toast(
+                    ToastKind::Info,
+                    format!("Added \"{}\" to the radial menu", c.label()),
+                );
             }
             None => self.toast(ToastKind::Warn, S::RADIAL_FULL),
         }
@@ -177,18 +203,31 @@ impl AppState {
         let pal = self.pal;
         let screen = ctx.content_rect();
         // Dim + click-outside-to-close.
-        let dim = egui::Area::new(egui::Id::new("palette-dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
-            let r = ui.allocate_rect(screen, Sense::click());
-            ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(if pal.dark { 90 } else { 40 }));
-            r.clicked()
-        });
+        let dim = egui::Area::new(egui::Id::new("palette-dim"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let r = ui.allocate_rect(screen, Sense::click());
+                ui.painter().rect_filled(
+                    screen,
+                    0.0,
+                    Color32::from_black_alpha(if pal.dark { 90 } else { 40 }),
+                );
+                r.clicked()
+            });
         if dim.inner {
             self.ui.palette.open = false;
             return;
         }
         let matches = self.palette_matches();
         let n = matches.len();
-        let (up, down, enter) = ctx.input(|i| (i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown), i.key_pressed(Key::Enter)));
+        let (up, down, enter) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::ArrowUp),
+                i.key_pressed(Key::ArrowDown),
+                i.key_pressed(Key::Enter),
+            )
+        });
         if down && n > 0 {
             self.ui.palette.selected = (self.ui.palette.selected + 1) % n;
         }
@@ -336,7 +375,11 @@ impl AppState {
             self.dirty_settings = true;
         }
         if let Some(c) = capture {
-            self.ui.key_capture = Some(KeyCapture { cmd: c, captured: None, double: false });
+            self.ui.key_capture = Some(KeyCapture {
+                cmd: c,
+                captured: None,
+                double: false,
+            });
         }
         if let Some(c) = run {
             self.pick_from_palette(c);
@@ -366,7 +409,10 @@ impl AppState {
         }
         let slot = self.ui.radial.hovered;
         self.ui.radial.close();
-        if let Some(c) = slot.and_then(|i| self.prefs.radial[i].clone()).and_then(|id| Cmd::from_id(&id)) {
+        if let Some(c) = slot
+            .and_then(|i| self.prefs.radial[i].clone())
+            .and_then(|id| Cmd::from_id(&id))
+        {
             self.run(c);
         }
     }
@@ -378,13 +424,30 @@ impl AppState {
         let pal = self.pal;
         let hc = self.prefs.radial_style == RadialStyle::HighContrast;
         let (bg, slot_bg, hover_bg, text, dim, hover_text) = if hc {
-            (Color32::from_black_alpha(235), Color32::from_gray(28), Color32::WHITE, Color32::WHITE, Color32::from_gray(150), Color32::BLACK)
+            (
+                Color32::from_black_alpha(235),
+                Color32::from_gray(28),
+                Color32::WHITE,
+                Color32::WHITE,
+                Color32::from_gray(150),
+                Color32::BLACK,
+            )
         } else {
-            (pal.radial_bg, pal.radial_slot, pal.radial_hover, pal.text_strong, pal.text_dim, pal.accent_text)
+            (
+                pal.radial_bg,
+                pal.radial_slot,
+                pal.radial_hover,
+                pal.text_strong,
+                pal.text_dim,
+                pal.accent_text,
+            )
         };
         let screen = ctx.content_rect();
         let margin = vec2(RADIAL_OUTER + 12.0, RADIAL_OUTER + 12.0);
-        let c = self.ui.radial.center.clamp(screen.min + margin, (screen.max - margin).max(screen.min + margin));
+        let c = self.ui.radial.center.clamp(
+            screen.min + margin,
+            (screen.max - margin).max(screen.min + margin),
+        );
         self.ui.radial.center = c;
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         self.ui.radial.hovered = pointer.and_then(|p| self.radial_slot_at(p));
@@ -394,81 +457,135 @@ impl AppState {
         let mut remove: Option<usize> = None;
         let mut start_move: Option<usize> = None;
         let mut swap: Option<(usize, usize)> = None;
-        egui::Area::new(egui::Id::new("radial")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
-            let resp = ui.allocate_rect(screen, Sense::click());
-            let p = ui.painter();
-            p.circle_filled(c + vec2(0.0, 6.0), RADIAL_OUTER + 10.0, Color32::from_black_alpha(if pal.dark { 60 } else { 25 }));
-            p.circle_filled(c, RADIAL_OUTER + 6.0, bg);
-            let step = std::f32::consts::TAU / RADIAL_SLOTS as f32;
-            let gap = 0.022;
-            for i in 0..RADIAL_SLOTS {
-                let a0 = i as f32 * step - step * 0.5 + gap;
-                let a1 = i as f32 * step + step * 0.5 - gap;
-                let cmd = self.prefs.radial[i].as_deref().and_then(Cmd::from_id);
-                let hovered = self.ui.radial.hovered == Some(i);
-                let fill = if hovered { hover_bg } else if cmd.is_some() { slot_bg } else { slot_bg.gamma_multiply(0.5) };
-                p.add(wedge(c, RADIAL_INNER, RADIAL_OUTER, a0, a1, fill));
-                if self.ui.radial.moving == Some(i) {
-                    p.add(wedge(c, RADIAL_OUTER - 4.0, RADIAL_OUTER, a0, a1, pal.warn));
-                }
-                let am = i as f32 * step;
-                let mid = c + vec2(am.sin(), -am.cos()) * (RADIAL_INNER + RADIAL_OUTER) * 0.5;
-                let fg = if hovered { hover_text } else { text };
-                match cmd {
-                    Some(cmd) => {
-                        if let Some(icon) = cmd.icon() {
-                            icons::paint(p, Rect::from_center_size(mid - vec2(0.0, 9.0), vec2(18.0, 18.0)), icon, fg);
+        egui::Area::new(egui::Id::new("radial"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let resp = ui.allocate_rect(screen, Sense::click());
+                let p = ui.painter();
+                p.circle_filled(
+                    c + vec2(0.0, 6.0),
+                    RADIAL_OUTER + 10.0,
+                    Color32::from_black_alpha(if pal.dark { 60 } else { 25 }),
+                );
+                p.circle_filled(c, RADIAL_OUTER + 6.0, bg);
+                let step = std::f32::consts::TAU / RADIAL_SLOTS as f32;
+                let gap = 0.022;
+                for i in 0..RADIAL_SLOTS {
+                    let a0 = i as f32 * step - step * 0.5 + gap;
+                    let a1 = i as f32 * step + step * 0.5 - gap;
+                    let cmd = self.prefs.radial[i].as_deref().and_then(Cmd::from_id);
+                    let hovered = self.ui.radial.hovered == Some(i);
+                    let fill = if hovered {
+                        hover_bg
+                    } else if cmd.is_some() {
+                        slot_bg
+                    } else {
+                        slot_bg.gamma_multiply(0.5)
+                    };
+                    p.add(wedge(c, RADIAL_INNER, RADIAL_OUTER, a0, a1, fill));
+                    if self.ui.radial.moving == Some(i) {
+                        p.add(wedge(c, RADIAL_OUTER - 4.0, RADIAL_OUTER, a0, a1, pal.warn));
+                    }
+                    let am = i as f32 * step;
+                    let mid = c + vec2(am.sin(), -am.cos()) * (RADIAL_INNER + RADIAL_OUTER) * 0.5;
+                    let fg = if hovered { hover_text } else { text };
+                    match cmd {
+                        Some(cmd) => {
+                            if let Some(icon) = cmd.icon() {
+                                icons::paint(
+                                    p,
+                                    Rect::from_center_size(mid - vec2(0.0, 9.0), vec2(18.0, 18.0)),
+                                    icon,
+                                    fg,
+                                );
+                            }
+                            p.text(
+                                mid + vec2(0.0, 10.0),
+                                Align2::CENTER_CENTER,
+                                short_label(cmd),
+                                egui::FontId::proportional(11.5),
+                                fg,
+                            );
                         }
-                        p.text(mid + vec2(0.0, 10.0), Align2::CENTER_CENTER, short_label(cmd), egui::FontId::proportional(11.5), fg);
-                    }
-                    None => {
-                        p.text(mid, Align2::CENTER_CENTER, "+", egui::FontId::proportional(16.0), if hovered { fg } else { dim });
+                        None => {
+                            p.text(
+                                mid,
+                                Align2::CENTER_CENTER,
+                                "+",
+                                egui::FontId::proportional(16.0),
+                                if hovered { fg } else { dim },
+                            );
+                        }
                     }
                 }
-            }
-            // Centre: the hovered command's full name, or a hint.
-            p.circle_filled(c, RADIAL_INNER - 6.0, slot_bg.gamma_multiply(0.6));
-            let centre_text = if self.ui.radial.moving.is_some() {
-                S::RADIAL_MOVE_HINT.to_string()
-            } else {
-                self.ui.radial.hovered.and_then(|i| self.prefs.radial[i].as_deref().and_then(Cmd::from_id)).map(|c| c.label().to_string()).unwrap_or_default()
-            };
-            if !centre_text.is_empty() {
-                let g = p.layout(centre_text, egui::FontId::proportional(12.0), text, (RADIAL_INNER - 12.0) * 2.0);
-                p.galley(c - g.size() * 0.5, g, text);
-            } else {
-                p.text(c, Align2::CENTER_CENTER, &self.keymap.label(Cmd::Radial), egui::FontId::monospace(12.0), dim);
-            }
-            // Clicks: primary runs (or completes a move), secondary opens the slot menu.
-            if resp.secondary_clicked() {
-                self.ui.radial.menu_slot = self.ui.radial.hovered;
-            }
-            if resp.clicked() {
-                match (self.ui.radial.hovered, self.ui.radial.moving) {
-                    (Some(i), Some(src)) => swap = Some((src, i)),
-                    (Some(i), None) => run = self.prefs.radial[i].as_deref().and_then(Cmd::from_id),
-                    (None, _) if self.ui.radial.sticky => close = true,
-                    _ => {}
+                // Centre: the hovered command's full name, or a hint.
+                p.circle_filled(c, RADIAL_INNER - 6.0, slot_bg.gamma_multiply(0.6));
+                let centre_text = if self.ui.radial.moving.is_some() {
+                    S::RADIAL_MOVE_HINT.to_string()
+                } else {
+                    self.ui
+                        .radial
+                        .hovered
+                        .and_then(|i| self.prefs.radial[i].as_deref().and_then(Cmd::from_id))
+                        .map(|c| c.label().to_string())
+                        .unwrap_or_default()
+                };
+                if !centre_text.is_empty() {
+                    let g = p.layout(
+                        centre_text,
+                        egui::FontId::proportional(12.0),
+                        text,
+                        (RADIAL_INNER - 12.0) * 2.0,
+                    );
+                    p.galley(c - g.size() * 0.5, g, text);
+                } else {
+                    p.text(
+                        c,
+                        Align2::CENTER_CENTER,
+                        self.keymap.label(Cmd::Radial),
+                        egui::FontId::monospace(12.0),
+                        dim,
+                    );
                 }
-            }
-            if let Some(i) = self.ui.radial.menu_slot {
-                let has = self.prefs.radial[i].is_some();
-                resp.context_menu(|ui| {
-                    if ui.button(S::RADIAL_REPLACE).clicked() {
-                        replace = Some(i);
-                        ui.close();
+                // Clicks: primary runs (or completes a move), secondary opens the slot menu.
+                if resp.secondary_clicked() {
+                    self.ui.radial.menu_slot = self.ui.radial.hovered;
+                }
+                if resp.clicked() {
+                    match (self.ui.radial.hovered, self.ui.radial.moving) {
+                        (Some(i), Some(src)) => swap = Some((src, i)),
+                        (Some(i), None) => {
+                            run = self.prefs.radial[i].as_deref().and_then(Cmd::from_id)
+                        }
+                        (None, _) if self.ui.radial.sticky => close = true,
+                        _ => {}
                     }
-                    if ui.add_enabled(has, egui::Button::new(S::RADIAL_REMOVE)).clicked() {
-                        remove = Some(i);
-                        ui.close();
-                    }
-                    if ui.add_enabled(has, egui::Button::new(S::RADIAL_MOVE)).clicked() {
-                        start_move = Some(i);
-                        ui.close();
-                    }
-                });
-            }
-        });
+                }
+                if let Some(i) = self.ui.radial.menu_slot {
+                    let has = self.prefs.radial[i].is_some();
+                    resp.context_menu(|ui| {
+                        if ui.button(S::RADIAL_REPLACE).clicked() {
+                            replace = Some(i);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(has, egui::Button::new(S::RADIAL_REMOVE))
+                            .clicked()
+                        {
+                            remove = Some(i);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(has, egui::Button::new(S::RADIAL_MOVE))
+                            .clicked()
+                        {
+                            start_move = Some(i);
+                            ui.close();
+                        }
+                    });
+                }
+            });
         if let Some(i) = replace {
             self.ui.radial.close();
             self.ui.palette.open_fresh();
@@ -500,47 +617,112 @@ impl AppState {
     // ------------------------------------------------------------ key capture
 
     pub fn capture_key(&mut self, key: Key, mods: egui::Modifiers) {
-        let Some(cap) = &mut self.ui.key_capture else { return };
+        let Some(cap) = &mut self.ui.key_capture else {
+            return;
+        };
         if key == Key::Escape && mods.is_none() && cap.captured.is_none() {
             self.ui.key_capture = None;
             return;
         }
-        cap.captured = Some(Binding { double: cap.double, ..Binding::new(key, mods) });
+        cap.captured = Some(Binding {
+            double: cap.double,
+            ..Binding::new(key, mods)
+        });
     }
 
     pub fn key_capture_ui(&mut self, ctx: &egui::Context) {
-        let Some(cap) = &mut self.ui.key_capture else { return };
+        let Some(cap) = &mut self.ui.key_capture else {
+            return;
+        };
         let pal = self.pal;
         let cmd = cap.cmd;
         let mut save = false;
         let mut cancel = false;
         let mut clear = false;
         let current = self.keymap.label(cmd);
-        let conflicts: Vec<Cmd> = cap.captured.map(|b| self.keymap.conflicts(&Binding { double: cap.double, ..b }, cmd)).unwrap_or_default();
+        let conflicts: Vec<Cmd> = cap
+            .captured
+            .map(|b| {
+                self.keymap.conflicts(
+                    &Binding {
+                        double: cap.double,
+                        ..b
+                    },
+                    cmd,
+                )
+            })
+            .unwrap_or_default();
         egui::Modal::new(egui::Id::new("key-capture")).show(ctx, |ui| {
             ui.set_width(360.0);
-            ui.label(RichText::new(S::KEY_CAPTURE_TITLE).font(crate::theme::medium(16.0)).color(pal.text_strong));
+            ui.label(
+                RichText::new(S::KEY_CAPTURE_TITLE)
+                    .font(crate::theme::medium(16.0))
+                    .color(pal.text_strong),
+            );
             ui.label(RichText::new(cmd.label()).color(pal.text_dim));
             ui.add_space(10.0);
-            let shown = cap.captured.map(|b| Binding { double: cap.double, ..b }.display()).unwrap_or_else(|| "…".into());
-            egui::Frame::new().fill(pal.inset).corner_radius(8).inner_margin(12).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.vertical_centered(|ui| ui.label(RichText::new(shown).font(egui::FontId::monospace(20.0)).color(pal.accent)));
-            });
+            let shown = cap
+                .captured
+                .map(|b| {
+                    Binding {
+                        double: cap.double,
+                        ..b
+                    }
+                    .display()
+                })
+                .unwrap_or_else(|| "…".into());
+            egui::Frame::new()
+                .fill(pal.inset)
+                .corner_radius(8)
+                .inner_margin(12)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new(shown)
+                                .font(egui::FontId::monospace(20.0))
+                                .color(pal.accent),
+                        )
+                    });
+                });
             ui.add_space(6.0);
-            if ui.checkbox(&mut cap.double, S::KEY_CAPTURE_DOUBLE).changed()
+            if ui
+                .checkbox(&mut cap.double, S::KEY_CAPTURE_DOUBLE)
+                .changed()
                 && let Some(b) = &mut cap.captured
             {
                 b.double = cap.double;
             }
-            ui.label(RichText::new(format!("Current: {}", if current.is_empty() { S::KEY_NONE.to_string() } else { current })).small().color(pal.text_dim));
+            ui.label(
+                RichText::new(format!(
+                    "Current: {}",
+                    if current.is_empty() {
+                        S::KEY_NONE.to_string()
+                    } else {
+                        current
+                    }
+                ))
+                .small()
+                .color(pal.text_dim),
+            );
             if !conflicts.is_empty() {
                 let names: Vec<&str> = conflicts.iter().map(|c| c.label()).collect();
-                ui.label(RichText::new(format!("{}: {} (saving moves it here)", S::KEY_CAPTURE_CONFLICT, names.join(", "))).small().color(pal.warn));
+                ui.label(
+                    RichText::new(format!(
+                        "{}: {} (saving moves it here)",
+                        S::KEY_CAPTURE_CONFLICT,
+                        names.join(", ")
+                    ))
+                    .small()
+                    .color(pal.warn),
+                );
             }
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(cap.captured.is_some(), egui::Button::new(S::DLG_SAVE)).clicked() {
+                if ui
+                    .add_enabled(cap.captured.is_some(), egui::Button::new(S::DLG_SAVE))
+                    .clicked()
+                {
                     save = true;
                 }
                 if ui.button("No shortcut").clicked() {
@@ -552,9 +734,17 @@ impl AppState {
             });
         });
         if save && let Some(b) = cap.captured {
-            let b = Binding { double: cap.double, ..b };
+            let b = Binding {
+                double: cap.double,
+                ..b
+            };
             for other in self.keymap.conflicts(&b, cmd) {
-                let rest: Vec<Binding> = self.keymap.bindings(other).into_iter().filter(|x| !(x.same_combo(&b) && x.double == b.double)).collect();
+                let rest: Vec<Binding> = self
+                    .keymap
+                    .bindings(other)
+                    .into_iter()
+                    .filter(|x| !(x.same_combo(&b) && x.double == b.double))
+                    .collect();
                 self.keymap.set(other, &rest);
             }
             self.keymap.set(cmd, &[b]);
@@ -592,7 +782,11 @@ fn short_label(c: Cmd) -> &'static str {
         Cmd::Export => "Export",
         c => {
             let l = c.label();
-            if l.len() <= 12 { l } else { l.split_whitespace().next().unwrap_or(l) }
+            if l.len() <= 12 {
+                l
+            } else {
+                l.split_whitespace().next().unwrap_or(l)
+            }
         }
     }
 }
