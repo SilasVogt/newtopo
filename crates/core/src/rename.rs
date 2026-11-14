@@ -127,7 +127,7 @@ fn remove_numbering(name: &str, sep: &str) -> String {
 
 /// Compile the matcher for `Replace` once per batch.
 enum Matcher {
-    Plain { find: String, case_sensitive: bool },
+    Plain { find: String },
     Regex(Regex),
 }
 
@@ -145,7 +145,6 @@ impl Matcher {
         } else if case_sensitive {
             Ok(Matcher::Plain {
                 find: find.to_string(),
-                case_sensitive,
             })
         } else {
             // Case-insensitive plain text: an escaped regex does the work.
@@ -158,7 +157,7 @@ impl Matcher {
     }
     fn apply(&self, name: &str, with: &str, regex_syntax: bool) -> String {
         match self {
-            Matcher::Plain { find, .. } => name.replace(find.as_str(), with),
+            Matcher::Plain { find } => name.replace(find.as_str(), with),
             Matcher::Regex(re) if regex_syntax => re.replace_all(name, with).into_owned(),
             Matcher::Regex(re) => re.replace_all(name, regex::NoExpand(with)).into_owned(),
         }
