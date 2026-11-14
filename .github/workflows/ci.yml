@@ -66,5 +66,5 @@ jobs:
         shell: bash
         run: |
           # macOS: SIP drops DYLD_* when bash starts, so set it again here.
-          if [ "$RUNNER_OS" = macOS ]; then export DYLD_FALLBACK_LIBRARY_PATH="$OCCT_DIR/lib"; fi
+          if [ "$RUNNER_OS" = macOS ]; then export DYLD_LIBRARY_PATH="$OCCT_DIR/lib"; fi
           cargo test --workspace --locked
