@@ -121,6 +121,13 @@ fn has_spread_rule(doc: &Document, p: &Patch, body: BodyId) -> bool {
 
 /// Evaluate one body.
 pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
+    let timing = std::env::var("NT_TIME").is_ok();
+    let t0 = std::time::Instant::now();
+    let mut lap = |what: &str| {
+        if timing {
+            eprintln!("  eval {what}: {:?}", t0.elapsed());
+        }
+    };
     let mut ev = BodyEval::default();
     let nf = ctx.topo.faces.len();
     // 1. Patches.
@@ -132,6 +139,7 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     for s in &s1s {
         ev.patches.extend(s.patches.iter().cloned());
     }
+    lap("stage1");
     // 2. Plans.
     let mut plans = BodyPlans::default();
     let mut rules: Vec<&crate::doc::RuleEntry> = doc.rules.iter().collect();
@@ -227,8 +235,10 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         let (arr, glued) = face::stage3(ctx, ctx.face(f), &s1s[f.idx()], &per_face[f.idx()]);
         faces.push(FaceRes { face: f, arr, glued });
     }
+    lap("stage3");
     // 4. Assembly.
     let mut mesh = assemble::assemble(ctx, doc, body, &faces);
+    lap("assemble");
     let mut pole_target = pole_targets(ctx, &mesh);
     // 5a. Removals of generated edges happen on the glued face graphs so the
     // topology guard can keep (re-insert) seams where a removal would make
@@ -272,8 +282,10 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
             ev.dormant_reasons.push((ed.id, reason));
         }
     }
+    lap("edits");
     // 6. Bridging.
     let failed = bridge::bridge_all(ctx, &mut mesh, &pole_target);
+    lap("bridge");
     for r in failed {
         ev.internal.push(Issue {
             kind: IssueKind::NotSimple,
@@ -284,6 +296,7 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     }
     // 7. Auto-fill.
     let fan = if doc.settings.autofill { bridge::autofill_all(ctx, &mut mesh, &pole_target) } else { HashSet::new() };
+    lap("fill");
     // UV orientation check of every final polygon (the reliable flip test
     // for polygons that span a lot of curvature).
     for (r, walks) in mesh.all_region_walks() {
@@ -309,6 +322,7 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     }
     // 8. Emit.
     ev.mesh = emit::emit(ctx, body, &mesh, &pole_target, &hard, doc.settings.sharp_angle_deg, &fan);
+    lap("emit");
     ev
 }
 

@@ -60,3 +60,12 @@ fn d_ring() {
     s.apply_unchecked(Op::Grid { patches: PatchSel { faces: vec![0], ..Default::default() }, u: 0, v: 3, start_on_seam: false, spacing: Spacing::ArcLength }).unwrap();
     show(&mut s, b);
 }
+
+#[test]
+fn d_plate10() {
+    let Ok(_) = std::env::var("P10") else { return };
+    let (mut s, b) = scene_with(MockBody::plate_with_holes(10, 10));
+    let u: u32 = std::env::var("P10").unwrap().parse().unwrap_or(5);
+    s.apply_unchecked(Op::Grid { patches: PatchSel { faces: vec![6], ..Default::default() }, u, v: 2, start_on_seam: false, spacing: Spacing::ArcLength }).unwrap();
+    show(&mut s, b);
+}

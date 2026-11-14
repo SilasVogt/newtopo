@@ -52,6 +52,13 @@ pub fn fill_polygon(input: &FillInput) -> FillResult {
             if !ear {
                 continue;
             }
+            // Never leave a degenerate last triangle.
+            if m == 4 {
+                let rest: Vec<usize> = idx.iter().copied().filter(|&q| q != b).collect();
+                if orient(rest[0], rest[1], rest[2]) <= 1e-12 * (p[rest[1]] - p[rest[0]]).length_squared().max(1e-300) {
+                    continue;
+                }
+            }
             // Prefer well-shaped ears: maximise the minimum angle proxy.
             let (la, lb, lc) = ((p[b] - p[a]).length(), (p[c] - p[b]).length(), (p[a] - p[c]).length());
             let q = orient(a, b, c) / (la * la + lb * lb + lc * lc).max(1e-300);
