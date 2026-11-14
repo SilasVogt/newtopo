@@ -135,7 +135,7 @@ impl MockBody {
                 };
                 let n = match pc {
                     Curve2::Line { .. } => 1,
-                    Curve2::Ellipse { .. } => 96,
+                    Curve2::Ellipse { .. } => 256,
                 };
                 for i in 0..n {
                     let s = i as f64 / n as f64;

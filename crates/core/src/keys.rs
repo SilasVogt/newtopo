@@ -47,6 +47,8 @@ pub enum LoopId {
     Cad(Vec<EdgeId>),
     Split(SplitId),
     Line(LineKey),
+    /// A seam kept by the topology guard (`face`, 0 = u-seam, 1 = v-seam).
+    Seam(FaceId, u8),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -64,6 +66,11 @@ pub enum VertexKey {
     Crossing { a: LineKey, b: LineKey, occurrence: u32 },
     CutPoint { rule: RuleId, i: u32 },
     Placeholder { lp: LoopId, i: u32 },
+    /// Where a split line ends on (or crosses) a CAD edge, seam or another
+    /// boundary; `end` as for `OnBoundary`.
+    SplitEnd { split: SplitId, on: EdgeOrSplit, end: u32 },
+    /// Crossing of two split lines (`a < b`).
+    SplitCross { a: SplitId, b: SplitId, occurrence: u32 },
 }
 
 impl VertexKey {
