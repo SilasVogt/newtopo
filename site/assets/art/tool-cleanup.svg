@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 230" width="400" height="230" role="img"><title>Target Weld merges one vertex into another; a quad becomes a triangle</title><style>
+svg{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#c9d0d6}
+@media (prefers-color-scheme:light){svg{--lo:#6b7883;--hi:#e3e8ec;--cad:#20272d;--ln:#0b72b5;--fe:#b0620c;--edge:#e9edf0;--edge-q:#0b72b5;--soup:#3a434b}}
+.l0{--f:color-mix(in oklab,var(--hi) 0%,var(--lo))}.l1{--f:color-mix(in oklab,var(--hi) 4%,var(--lo))}.l2{--f:color-mix(in oklab,var(--hi) 8%,var(--lo))}.l3{--f:color-mix(in oklab,var(--hi) 12%,var(--lo))}.l4{--f:color-mix(in oklab,var(--hi) 17%,var(--lo))}.l5{--f:color-mix(in oklab,var(--hi) 21%,var(--lo))}.l6{--f:color-mix(in oklab,var(--hi) 25%,var(--lo))}.l7{--f:color-mix(in oklab,var(--hi) 29%,var(--lo))}.l8{--f:color-mix(in oklab,var(--hi) 33%,var(--lo))}.l9{--f:color-mix(in oklab,var(--hi) 38%,var(--lo))}.l10{--f:color-mix(in oklab,var(--hi) 42%,var(--lo))}.l11{--f:color-mix(in oklab,var(--hi) 46%,var(--lo))}.l12{--f:color-mix(in oklab,var(--hi) 50%,var(--lo))}.l13{--f:color-mix(in oklab,var(--hi) 54%,var(--lo))}.l14{--f:color-mix(in oklab,var(--hi) 58%,var(--lo))}.l15{--f:color-mix(in oklab,var(--hi) 62%,var(--lo))}.l16{--f:color-mix(in oklab,var(--hi) 67%,var(--lo))}.l17{--f:color-mix(in oklab,var(--hi) 71%,var(--lo))}.l18{--f:color-mix(in oklab,var(--hi) 75%,var(--lo))}.l19{--f:color-mix(in oklab,var(--hi) 79%,var(--lo))}.l20{--f:color-mix(in oklab,var(--hi) 83%,var(--lo))}.l21{--f:color-mix(in oklab,var(--hi) 88%,var(--lo))}.l22{--f:color-mix(in oklab,var(--hi) 92%,var(--lo))}.l23{--f:color-mix(in oklab,var(--hi) 96%,var(--lo))}.l24{--f:color-mix(in oklab,var(--hi) 100%,var(--lo))}
+[class^=l]{fill:var(--f);stroke:var(--f);stroke-width:.7;stroke-linejoin:round}
+.cad,.ln,.fe,.mk{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.cad{stroke:var(--cad);stroke-width:1.5}
+.ln{stroke:var(--ln);stroke-width:1.15}
+.fe{stroke:var(--fe);stroke-width:1.1;opacity:.95}
+.q [class^=l]{stroke:var(--edge-q);stroke-width:.85}
+.t [class^=l]{stroke:var(--soup);stroke-width:.45;stroke-opacity:.75}
+.mk{stroke:var(--ln);stroke-width:2}
+.dot{fill:var(--ln)}
+.dotc{fill:var(--cad)}
+.cadf{fill:var(--cad)}
+.ghost{fill:none;stroke:var(--cad);stroke-width:1;stroke-dasharray:4 5;opacity:.6}
+
+</style><g class="q"><path class="l6" d="M28 70 62 70 68 104 34 104Z"/><path class="l6" d="M34 104 68 104 74 138 40 138Z"/><path class="l6" d="M62 70 96 70 102 104 68 104Z"/><path class="l6" d="M68 104 102 104 108 138 74 138Z"/><path class="l6" d="M96 70 130 70 136 104 102 104Z"/><path class="l6" d="M102 104 136 104 142 138 108 138Z"/><path class="l6" d="M130 70 164 70 170 104 136 104Z"/><path class="l6" d="M136 104 170 104 176 138 142 138Z"/><path class="l6" d="M222 70 256 70 262 104 228 104Z"/><path class="l6" d="M228 104 262 104 268 138 234 138Z"/><path class="l6" d="M256 70 290 70 330 104 262 104Z"/><path class="l6" d="M262 104 330 104 302 138 268 138Z"/><path class="l11" d="M290 70 324 70 330 104 330 104Z"/><path class="l11" d="M330 104 330 104 336 138 302 138Z"/><path class="l6" d="M324 70 358 70 364 104 330 104Z"/><path class="l6" d="M330 104 364 104 370 138 336 138Z"/></g><circle class="dot" cx="102" cy="104" r="5"/><circle class="dotc" cx="136" cy="104" r="5"/><path class="mk" d="M109 95Q119 74 130 94"/><circle class="dotc" cx="330" cy="104" r="5"/><path class="ghost" d="M190 60V170"/></svg>
