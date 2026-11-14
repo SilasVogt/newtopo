@@ -423,6 +423,11 @@ impl AppState {
     // ------------------------------------------------------------ clicks, box, lasso
 
     fn handle_clicks(&mut self, ui: &mut Ui, resp: &egui::Response) {
+        // The view cube and its buttons own their area.
+        let press = ui.input(|i| i.pointer.press_origin());
+        if press.is_some_and(|p| cube_area(self.view.rect).contains(p)) && self.has_content() {
+            return;
+        }
         let mods = ui.input(|i| i.modifiers);
         let nav_primary = nav_for(self.prefs.nav, egui::PointerButton::Primary, mods).is_some();
         let nav_secondary = nav_for(self.prefs.nav, egui::PointerButton::Secondary, mods).is_some();
@@ -1162,7 +1167,7 @@ impl AppState {
             return;
         }
         let pal = self.pal;
-        let size = 84.0;
+        let size = CUBE_SIZE;
         let center = pos2(
             rect.right() - size * 0.5 - 16.0,
             rect.top() + size * 0.5 + 14.0,
@@ -1356,6 +1361,21 @@ impl AppState {
         child.label(RichText::new(S::EMPTY_HINT).small().color(pal.text_dim));
     }
 }
+
+/// Screen area of the view cube and the buttons under it.
+fn cube_area(rect: Rect) -> Rect {
+    let size = CUBE_SIZE;
+    let center = pos2(
+        rect.right() - size * 0.5 - 16.0,
+        rect.top() + size * 0.5 + 14.0,
+    );
+    Rect::from_center_size(
+        center + vec2(0.0, 16.0),
+        vec2(size * 1.3, size * 1.3 + 32.0),
+    )
+}
+
+const CUBE_SIZE: f32 = 84.0;
 
 fn point_in_quad(p: Pos2, q: &[Pos2]) -> bool {
     let pts: Vec<DVec2> = q

@@ -24,7 +24,12 @@ impl Harness {
         if sample {
             app.st.load_sample();
         }
-        let mut h = Harness { ctx, app, t: 1.0, mods: Modifiers::NONE };
+        let mut h = Harness {
+            ctx,
+            app,
+            t: 1.0,
+            mods: Modifiers::NONE,
+        };
         h.frames(3);
         h
     }
@@ -52,16 +57,38 @@ impl Harness {
 
     fn key(&mut self, key: Key, modifiers: Modifiers) {
         self.mods = modifiers;
-        self.frame(vec![Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers }]);
-        self.frame(vec![Event::Key { key, physical_key: Some(key), pressed: false, repeat: false, modifiers }]);
+        self.frame(vec![Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }]);
+        self.frame(vec![Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: false,
+            repeat: false,
+            modifiers,
+        }]);
         self.mods = Modifiers::NONE;
     }
 
     fn click(&mut self, at: Pos2, modifiers: Modifiers) {
         self.mods = modifiers;
         self.frame(vec![Event::PointerMoved(at)]);
-        self.frame(vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers }]);
-        self.frame(vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers }]);
+        self.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers,
+        }]);
+        self.frame(vec![Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers,
+        }]);
         self.mods = Modifiers::NONE;
         self.frames(1);
     }
@@ -69,12 +96,22 @@ impl Harness {
     fn drag(&mut self, from: Pos2, to: Pos2, button: PointerButton) {
         let m = Modifiers::NONE;
         self.frame(vec![Event::PointerMoved(from)]);
-        self.frame(vec![Event::PointerButton { pos: from, button, pressed: true, modifiers: m }]);
+        self.frame(vec![Event::PointerButton {
+            pos: from,
+            button,
+            pressed: true,
+            modifiers: m,
+        }]);
         for k in 1..=6 {
             let p = from + (to - from) * (k as f32 / 6.0);
             self.frame(vec![Event::PointerMoved(p)]);
         }
-        self.frame(vec![Event::PointerButton { pos: to, button, pressed: false, modifiers: m }]);
+        self.frame(vec![Event::PointerButton {
+            pos: to,
+            button,
+            pressed: false,
+            modifiers: m,
+        }]);
         self.frames(1);
     }
 
@@ -117,11 +154,20 @@ fn click_selects_face_and_shift_adds() {
     let front = boss + (h.app.st.view.camera.eye().as_vec3() - boss).normalize() * 2.0;
     let at = h.screen_of(boss.lerp(front, 0.0));
     h.click(at, Modifiers::NONE);
-    assert!(h.app.st.sel.faces.contains(&(BodyId(0), FaceId(4))), "selected {:?}", h.app.st.sel.faces);
+    assert!(
+        h.app.st.sel.faces.contains(&(BodyId(0), FaceId(4))),
+        "selected {:?}",
+        h.app.st.sel.faces
+    );
     let ring = h.app.st.vd.face_centers[&FaceRef { body: 1, face: 0 }];
     let ring_at = h.screen_of(ring + glam::Vec3::new(0.0, -14.0, 5.0));
     h.click(ring_at, Modifiers::SHIFT);
-    assert_eq!(h.app.st.sel.faces.len(), 2, "shift adds: {:?}", h.app.st.sel.faces);
+    assert_eq!(
+        h.app.st.sel.faces.len(),
+        2,
+        "shift adds: {:?}",
+        h.app.st.sel.faces
+    );
     // Ctrl removes.
     h.click(at, Modifiers::COMMAND);
     assert!(!h.app.st.sel.faces.contains(&(BodyId(0), FaceId(4))));
@@ -135,7 +181,11 @@ fn click_selects_face_and_shift_adds() {
 fn box_select_objects() {
     let mut h = Harness::new(true);
     let r = h.app.st.view.rect;
-    h.drag(r.left_top() + vec2(5.0, 160.0), r.right_bottom() - vec2(5.0, 5.0), PointerButton::Primary);
+    h.drag(
+        r.left_top() + vec2(5.0, 160.0),
+        r.right_bottom() - vec2(5.0, 5.0),
+        PointerButton::Primary,
+    );
     assert_eq!(h.app.st.sel.objects.len(), 2, "box covers both bodies");
     // Hide, then unhide all.
     h.key(Key::H, Modifiers::NONE);
@@ -149,16 +199,31 @@ fn lasso_select_with_right_drag() {
     let mut h = Harness::new(true);
     let r = h.app.st.view.rect;
     let m = Modifiers::NONE;
-    let pts = [r.left_top() + vec2(5.0, 160.0), r.right_top() + vec2(-5.0, 160.0), r.right_bottom() - vec2(5.0, 5.0), r.left_bottom() + vec2(5.0, -5.0)];
+    let pts = [
+        r.left_top() + vec2(5.0, 160.0),
+        r.right_top() + vec2(-5.0, 160.0),
+        r.right_bottom() - vec2(5.0, 5.0),
+        r.left_bottom() + vec2(5.0, -5.0),
+    ];
     h.frame(vec![Event::PointerMoved(pts[0])]);
-    h.frame(vec![Event::PointerButton { pos: pts[0], button: PointerButton::Secondary, pressed: true, modifiers: m }]);
+    h.frame(vec![Event::PointerButton {
+        pos: pts[0],
+        button: PointerButton::Secondary,
+        pressed: true,
+        modifiers: m,
+    }]);
     for w in 0..4 {
         for k in 1..=4 {
             let p = pts[w] + (pts[(w + 1) % 4] - pts[w]) * (k as f32 / 4.0);
             h.frame(vec![Event::PointerMoved(p)]);
         }
     }
-    h.frame(vec![Event::PointerButton { pos: pts[0], button: PointerButton::Secondary, pressed: false, modifiers: m }]);
+    h.frame(vec![Event::PointerButton {
+        pos: pts[0],
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: m,
+    }]);
     h.frames(1);
     assert_eq!(h.app.st.sel.objects.len(), 2);
 }
@@ -174,12 +239,26 @@ fn radial_tap_keeps_open_and_hold_runs() {
     // Hold over the slot at 12 o'clock (Connect by default) and release.
     let c = h.app.st.view.rect.center();
     h.frame(vec![Event::PointerMoved(c)]);
-    h.frame(vec![Event::Key { key: Key::Q, physical_key: Some(Key::Q), pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    h.frame(vec![Event::Key {
+        key: Key::Q,
+        physical_key: Some(Key::Q),
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }]);
     let centre = h.app.st.ui.radial.center;
     for k in 0..8 {
-        h.frame(vec![Event::PointerMoved(centre + vec2(0.0, -20.0 - 12.0 * k as f32))]);
+        h.frame(vec![Event::PointerMoved(
+            centre + vec2(0.0, -20.0 - 12.0 * k as f32),
+        )]);
     }
-    h.frame(vec![Event::Key { key: Key::Q, physical_key: Some(Key::Q), pressed: false, repeat: false, modifiers: Modifiers::NONE }]);
+    h.frame(vec![Event::Key {
+        key: Key::Q,
+        physical_key: Some(Key::Q),
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }]);
     h.frames(1);
     assert!(!h.app.st.ui.radial.open);
     assert_eq!(h.app.st.tool.active, Tool::Connect);
@@ -194,7 +273,11 @@ fn escape_precedence_tool_then_isolate() {
     h.key(Key::C, Modifiers::NONE);
     assert_eq!(h.app.st.tool.active, Tool::Connect);
     h.key(Key::Escape, Modifiers::NONE);
-    assert_eq!(h.app.st.tool.active, Tool::Select, "first Esc leaves the tool");
+    assert_eq!(
+        h.app.st.tool.active,
+        Tool::Select,
+        "first Esc leaves the tool"
+    );
     assert!(h.app.st.view.isolate.is_some());
     h.key(Key::Escape, Modifiers::NONE);
     assert!(h.app.st.view.isolate.is_none(), "second Esc exits isolate");
@@ -211,7 +294,12 @@ fn edge_loop_double_press() {
         .vd
         .edges
         .iter()
-        .position(|e| e.body == BodyId(0) && (e.path[0].z - e.path[1].z).abs() < 1e-3 && e.path[0].z > 20.0 && e.path[0].z < 40.0)
+        .position(|e| {
+            e.body == BodyId(0)
+                && (e.path[0].z - e.path[1].z).abs() < 1e-3
+                && e.path[0].z > 20.0
+                && e.path[0].z < 40.0
+        })
         .expect("edge");
     let sel = h.app.st.vd.edges[i].sel.clone().unwrap();
     h.app.st.sel.edges.insert(sel);
@@ -219,7 +307,11 @@ fn edge_loop_double_press() {
     assert_eq!(h.app.st.sel.edges.len(), 16, "loop around the boss");
     h.frames(10); // let the double-press window pass
     h.app.st.sel.edges.clear();
-    h.app.st.sel.edges.insert(h.app.st.vd.edges[i].sel.clone().unwrap());
+    h.app
+        .st
+        .sel
+        .edges
+        .insert(h.app.st.vd.edges[i].sel.clone().unwrap());
     h.key(Key::L, Modifiers::NONE);
     h.key(Key::L, Modifiers::NONE);
     assert_eq!(h.app.st.sel.edges.len(), 8, "double L = every other");
@@ -230,7 +322,10 @@ fn commands_all_run_without_scene() {
     // Every command must degrade gracefully with no scene and no sample.
     let mut h = Harness::new(false);
     for c in crate::commands::ALL {
-        if matches!(c, Cmd::Quit | Cmd::Open | Cmd::Import | Cmd::SaveAs | Cmd::New) {
+        if matches!(
+            c,
+            Cmd::Quit | Cmd::Open | Cmd::Import | Cmd::SaveAs | Cmd::New
+        ) {
             continue; // file dialogs / quitting
         }
         h.app.st.run(*c);
@@ -240,7 +335,10 @@ fn commands_all_run_without_scene() {
     let mut h = Harness::new(true);
     h.app.st.sel.objects.insert(BodyId(0));
     for c in crate::commands::ALL {
-        if matches!(c, Cmd::Quit | Cmd::Open | Cmd::Import | Cmd::SaveAs | Cmd::New) {
+        if matches!(
+            c,
+            Cmd::Quit | Cmd::Open | Cmd::Import | Cmd::SaveAs | Cmd::New
+        ) {
             continue;
         }
         h.app.st.run(*c);
@@ -254,5 +352,8 @@ fn viewport_orbit_with_middle_drag() {
     let yaw = h.app.st.view.camera.yaw;
     let c = h.app.st.view.rect.center();
     h.drag(c, c + vec2(120.0, 0.0), PointerButton::Middle);
-    assert!((h.app.st.view.camera.yaw - yaw).abs() > 0.1, "middle drag orbits (Blender preset)");
+    assert!(
+        (h.app.st.view.camera.yaw - yaw).abs() > 0.1,
+        "middle drag orbits (Blender preset)"
+    );
 }

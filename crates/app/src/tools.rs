@@ -876,10 +876,15 @@ impl AppState {
             return;
         }
         for (b, k) in generated {
-            self.apply(Op::RemoveEdge {
-                body: Some(b),
-                edge: k,
-            });
+            if self
+                .apply(Op::RemoveEdge {
+                    body: Some(b),
+                    edge: k.clone(),
+                })
+                .is_some()
+            {
+                self.sel.edges.remove(&EdgeSel::Key(b, k));
+            }
         }
         if !cad.is_empty() {
             let sels: Vec<EdgeSel> = cad.iter().map(|c| c.2.clone()).collect();
