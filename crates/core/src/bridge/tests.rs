@@ -8,7 +8,9 @@ use std::thread;
 
 /// Minimal host: serves `n` connections; checks the token, answers hello
 /// and push (renaming a duplicate the way Maya would).
-fn serve(n: usize, token: &'static str) -> (u16, thread::JoinHandle<Vec<(Layout, Vec<u8>)>>) {
+type Pushes = Vec<(Layout, Vec<u8>)>;
+
+fn serve(n: usize, token: &'static str) -> (u16, thread::JoinHandle<Pushes>) {
     let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = l.local_addr().unwrap().port();
     let h = thread::spawn(move || {
