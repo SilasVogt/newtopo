@@ -198,6 +198,8 @@ pub struct AppState {
     pub overlay_rev: u64,
     pub hover: Option<crate::viewport::Hover>,
     pub ui_pointer: Option<egui::Pos2>,
+    /// Selection before the last key command (double-press support).
+    pub sel_before_key: Option<Selection>,
     pub drag: Option<crate::viewport::DragState>,
     pub jobs: crate::jobs::Jobs,
     pub time: f64,
@@ -273,6 +275,7 @@ impl App {
             overlay_rev: newtopo_render::egui_viewport::next_revision(),
             hover: None,
             ui_pointer: None,
+            sel_before_key: None,
             drag: None,
             jobs: Default::default(),
             time: 0.0,
@@ -958,7 +961,16 @@ impl AppState {
                 continue;
             }
             let b = Binding::new(key, mods);
-            if let Some(cmd) = self.dispatcher.press(&self.keymap, b, self.time) {
+            if let Some((cmd, double)) = self.dispatcher.press_ex(&self.keymap, b, self.time) {
+                if double {
+                    // The first press already ran the single command: undo
+                    // its selection change so the double command starts fresh.
+                    if let Some(prev) = self.sel_before_key.take() {
+                        self.sel = prev;
+                    }
+                } else {
+                    self.sel_before_key = Some(self.sel.clone());
+                }
                 self.run(cmd);
             }
         }

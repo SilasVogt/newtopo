@@ -22,6 +22,8 @@ mod studio;
 mod theme;
 mod toasts;
 mod tools;
+#[cfg(test)]
+mod uitest;
 mod viewdata;
 mod viewport;
 

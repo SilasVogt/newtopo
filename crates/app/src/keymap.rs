@@ -206,21 +206,22 @@ impl Dispatcher {
     /// On a double press the double binding wins if one exists; otherwise
     /// the single binding runs again.
     pub fn press(&mut self, keymap: &Keymap, b: Binding, t: f64) -> Option<Cmd> {
-        let is_double = self
-            .last
-            .is_some_and(|(l, lt)| l.same_combo(&b) && t - lt <= DOUBLE_PRESS_SECS);
+        self.press_ex(keymap, b, t).map(|(c, _)| c)
+    }
+
+    /// Like [`Dispatcher::press`], also telling whether a double binding fired
+    /// (the caller undoes the first press's effect, e.g. restores selection).
+    pub fn press_ex(&mut self, keymap: &Keymap, b: Binding, t: f64) -> Option<(Cmd, bool)> {
+        let is_double = self.last.is_some_and(|(l, lt)| l.same_combo(&b) && t - lt <= DOUBLE_PRESS_SECS);
         if is_double {
             let dbl = Binding { double: true, ..b };
             if let Some(c) = keymap.lookup(&dbl).first() {
                 self.last = None;
-                return Some(*c);
+                return Some((*c, true));
             }
         }
         self.last = Some((b, t));
-        keymap
-            .lookup(&Binding { double: false, ..b })
-            .first()
-            .copied()
+        keymap.lookup(&Binding { double: false, ..b }).first().map(|c| (*c, false))
     }
 }
 
