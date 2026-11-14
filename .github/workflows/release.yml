@@ -6,7 +6,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [wip/ship] # TEMP: exercise packaging before merge; remove at merge
   workflow_dispatch:
 
 concurrency:
