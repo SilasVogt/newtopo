@@ -95,7 +95,7 @@ export or send to a DCC app.
 | **Rule** | A stored, editable instruction that generates lines: Connect counts on a patch, a grid, a slice set, one iso line, one cut path. |
 | **Edit** | A manual change to the generated mesh: remove an edge, collapse, weld. Stored against stable keys (§4.5). |
 | **Output mesh** | What export writes: patches cut by lines, edits applied, auto-fill applied. Shown in **preview mode**. |
-| **Fill edge** | An edge the evaluator adds between existing vertices: bridge chords (always, §4.6 step 6) and auto-fill diagonals (when on, §7). Drawn in its own colour; not editable directly. |
+| **Fill edge** | A keyless edge the evaluator adds or keeps: bridge chords (always, §4.6 step 6), seam cuts kept by the topology guard (§4.1), and auto-fill diagonals (when on, §7). Drawn in its own colour; not editable directly. |
 | **Link set** | Faces in a body that have the same shape (congruent), so a rule on one applies to all (§6.11). |
 
 ---
@@ -236,21 +236,27 @@ represents them in ways that don't map to polygons directly:
 - **Seam edges** are never output edges. The arrangement is computed in the
   face's UV domain cut at the CAD seam(s) (one for a cylinder, two for a
   torus), with vertices on both copies of each seam identified. Afterwards
-  every seam edge is dissolved, merging the polygons on its two sides, and
+  every seam edge is dissolved (unless the topology guard below keeps it),
+  merging the polygons on its two sides, and
   every vertex that exists **only because of the seam** is dropped: the
   closed CAD edge's own CAD vertex where it meets the seam, crossings of
   lines with the seam (`OnBoundary(line, seam, …)`), and the torus seam
-  corner. A vertex stays if a line or a non-seam CAD edge ends there. The
+  corner. A vertex stays if a line, a split line or another non-seam CAD edge ends there. The
   drop is per vertex, so every face sharing that vertex drops it. A polygon
   that wraps around the period becomes a polygon with two loops or a
   self-touching boundary, which the always-on bridging step (§4.6 step 6)
   makes simple.
-- **Topology guard.** A seam is dissolved inside a region only if the region
+- **Topology guard.** A seam is dissolved inside an arrangement region (one
+  cell of the arrangement, not a whole patch) only if that region
   stays a disk with holes (check the Euler characteristic of the region after
-  dissolving: χ = 1 − number of inner loops). Otherwise (for example a torus
+  dissolving: χ = 2 − number of boundary loops). Seams are tried in a fixed
+  order (u-seam, then v-seam), so which seam stays is deterministic; a kept
+  seam loop with fewer than 3 vertices gets placeholders like any loop. Otherwise (for example a torus
   face trimmed only by a hole, which would become a handle with one boundary
-  loop) that seam stays as an internal cut made of fill edges, keeping its
-  vertices, until lines make the region a disk; then it dissolves normally.
+  loop) the seam edges bounding that region stay as output edges marked as
+  fill edges (keyless, drawn in the fill colour), keeping their vertices,
+  until lines make the region a disk; then they dissolve normally. With the
+  implicit grid and the ≥ 3 clamp this is a safety net, rarely reached.
 - **Short closed loops.** After seams are dissolved (§4.6 step 3), any
   closed loop (a closed CAD edge, a CAD circle exported as two arcs, a closed
   split line, or a closed generated line such as an around-direction iso, a
@@ -266,24 +272,26 @@ represents them in ways that don't map to polygons directly:
   for a split line, its `SplitLine` id; for a generated line, its `LineKey`. So an untouched cylinder has two 8-vertex rims aligned
   to the phase reference, and a cylinder with one generator line has that
   line's endpoints on both rims plus placeholders.
-- **Phase reference.** Every periodic face, and every closed CAD edge (so
+- **Phase reference.** Every periodic face, every planar ring face, and every closed CAD edge (so
   planar caps bounded by a circle have one too), has a phase reference
   direction used for the canonical angle (§6.2) and for placeholders.
   Default: world X projected onto the plane perpendicular to the face's or
-  circle's axis (world Y if X is within 10° of the axis, then Z). A face
+  circle's axis (for a non-circular closed edge: the normal of its best-fit
+  plane; world Y if X is within 10° of the axis, then Z). A face
   mapping (Link §6.11, symmetry §6.12, paste §6.13) sets the target's phase
   reference to the source's reference mapped through the same rigid
   transform, stored per face/edge in the document. Paste sets it on every
   matched face and closed edge, whether or not a rule lands there. If two
   mappings reach the same target, the most recent one wins (and the History
-  panel shows it). So rotated copies get rigidly transformed lines and
+  panel lists phase-reference overrides alongside rules and edits). So rotated copies get rigidly transformed lines and
   placeholders, not world-aligned ones.
 - **Faces with no outer boundary** in the seam-cut domain (full torus, full
   sphere, a torus trimmed only by holes, other closed periodic surfaces):
   until a spread rule is applied, they get an implicit
   Grid with U = V = `min_closed_segments` (sphere: V = half of that, with
   pole fans). The implicit grid is shown like any rule and is replaced by
-  the first spread rule the user applies.
+  the first spread rule the user applies. It applies per **patch**: every
+  patch of such a face with no spread rule and no outer boundary gets it.
 - **Poles and apexes** (sphere poles, cone tips: degenerate edges or
   singular points where `du` or `dv` vanish) collapse to a single
   `CadVertex`-like pole vertex. Polygons touching a pole may be triangles
@@ -315,6 +323,9 @@ represents them in ways that don't map to polygons directly:
   ≥ 1); line density stays about the same and lines re-space evenly within
   each piece. Lines **crossing the split** run through both pieces, so their
   count is **copied** unchanged to both.
+  A split that doesn't separate the patch (a generator line on a full
+  cylinder, one iso on a torus) leaves a single patch: its rule is unchanged,
+  and the split line is just an output edge that lines end on.
   Slice rules aren't distributed: their planes are geometry, so the pieces
   just clip them. If the two pieces carry different rule kinds when merged,
   the merged patch takes the rule of the larger piece (by area).
@@ -428,23 +439,36 @@ pub enum Edit {
 2. Each rule generates lines as UV polylines per face (exact iso lines, plane
    sections, sampled geodesic-in-UV for cut segments).
 3. Per patch, build a planar **arrangement** in UV of patch boundary + lines,
-   with exact/robust predicates, in the seam-cut domain; dissolve seam edges
-   and seam-only vertices, then add placeholders to short closed loops (§4.1).
+   with exact/robust predicates, in the seam-cut domain. Then, as one global
+   pass over all patches (these steps cross patch boundaries): dissolve seam
+   edges and seam-only vertices, then add placeholders to short closed loops
+   (§4.1).
 4. Create output vertices (anchors + keys) and polygons; share vertices on CAD
    edges and split lines between neighbouring patches so the mesh is watertight.
 5. Apply edits in order (removals, collapses, welds, CAD-edge removals can
    merge polygons and create new holes or annuli).
 6. **Polygon normalisation / bridging (always runs, after edits, independent
-   of auto-fill)**: a polygon needs it when its boundary is **not one simple
+   of auto-fill)**. First, re-run the **topology guard** (§4.1) on every
+   region after edits: if an edit merged regions into something that isn't
+   a disk with holes (e.g. RemoveEdge on a torus-with-hole grid recreating
+   the handle), re-insert the face's seam curve(s) through that region as
+   fill-edge cuts, with their seam vertices, until it is a disk with holes.
+   Then a polygon needs bridging when its boundary is **not one simple
    cycle**: several loops (holes, an annulus around a period, one created by
    an edit), or one boundary walk that visits a vertex twice (a cylinder band
    cut by a single generator, a line from a hole to the outer edge, a cut
    that ends inside a face). Repeatedly add a chord between existing
    vertices until every piece is simple:
-   - candidate chords connect two different boundary loops, or two
-     non-adjacent occurrences on the same walk, cross nothing (including
-     chords already added), and lie inside the polygon in its domain;
-   - pick the shortest candidate (3D length), ties broken by vertex key order;
+   - a candidate chord joins **two distinct vertices not already joined by
+     an edge**, and either connects two different boundary loops or, on one
+     walk, touches a repeated vertex or a dangling end (so every chord fixes
+     something); it crosses nothing (including chords already added) and
+     lies inside the polygon, tested in the periodic cover of the domain;
+   - pick the shortest candidate, measured as the 3D length of the chord's
+     surface path (its domain segment mapped onto the surface), not the
+     straight distance between its ends; ties broken by vertex key order,
+     where key kinds order as `Cad` < `OnBoundary` < `Crossing` < `CutPoint`
+     < `Placeholder`, then by their fields;
    - a chord between two loops joins them; a second chord between the same
      two loops (with different endpoints on both) then splits the joined
      region. Loops may be joined to any other loop, not only the "outer" one
@@ -465,14 +489,16 @@ pub enum Edit {
   polygons and the output validates, with auto-fill on and off.
 - A cylinder with exactly one generator line, and a planar face with one
   iso line from a hole to the outer edge: both validate (no repeated vertex).
-- Planar Grid with 10 constant-u lines and 4 constant-v lines (count_u = 10
+- Rectangular planar Grid with 10 constant-u lines and 4 constant-v lines (count_u = 10
   counts the constant-u lines), split at u = 0.3 of the u-extent (a
   constant-u split, parallel to the constant-u lines): the pieces get
   count_u = 3 and 7 (largest-remainder rounding of 10 × 0.3 / 0.7), both keep
   count_v = 4, and the constant-v lines meet across the split. Removing the
   split gives count_u = 10, count_v = 4.
 - Torus trimmed by one hole: untouched, it gets the implicit grid and
-  validates; with Grid 6 × 6 it validates and all seams dissolve.
+  validates; with Grid 6 × 6 it validates and all seams dissolve; then
+  RemoveEdge on every grid edge: the seams come back as fill-edge cuts and
+  the output validates, with auto-fill on and off.
 
 **Incremental**: track dirty patches. Changing a rule re-evaluates only its
 patches and their neighbours' shared boundaries. Budgets: < 16 ms for a
@@ -497,7 +523,8 @@ of a 2,000-face body (auto-fill on).
   symmetry, scene title with an unsaved-changes marker.
 - **Left: outliner** with layers and objects (§5.5).
 - **Centre: viewport** with a clickable view cube.
-- **Right: panels**: the active tool's panel, statistics, history (rules and
+- **Right: panels**: the active tool's panel, statistics, history (rules,
+  phase-reference overrides and
   edits, including dormant ones).
 - Panels can dock or float (egui_dock). "Hide panels" hides docked panels;
   floating ones stay where they are. Layout saved per user.
@@ -768,7 +795,8 @@ Draws lines exactly where you click.
   degenerate edges/faces are removed. Refuses (with a toast) if the result
   would be non-manifold. Tool stays active.
 - A weld whose source has a higher-priority anchor than the target (e.g. a
-  CAD vertex into a face point), or that welds two CAD vertices, needs a
+  CAD vertex into a face point), or whose both ends have CAD anchors (as in
+  §6.8, anchor-based), needs a
   confirmation, as in §6.8.
 - **AC**: welding two vertices of a quad strip turns one quad into a triangle
   and the mesh still validates.
@@ -904,7 +932,7 @@ Properties:
   layers, objects, split lines, rules, edits, camera), `cad/<body>.bbrep`
   (healed B-rep in OCCT's `BinTools` binary format, so reload doesn't need the
   source file),
-  `cad/source.sha256`, `uv/<body>.bin` (UVs from §9.2 keyed by polygon
+  `cad/source.sha256` (phase-reference overrides are part of `scene.json`), `uv/<body>.bin` (UVs from §9.2 keyed by polygon
   vertex keys, with a stale flag). The output mesh is not stored; it's
   re-evaluated. Hard-edge overrides are edits (§4.5) and live in `scene.json`.
 - Newer format → refuse with a clear message. Older → migrate; one migration
