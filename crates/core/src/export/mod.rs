@@ -33,7 +33,14 @@ pub struct ExportOptions {
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        ExportOptions { triangulate: false, scale: 1.0, up: ExportUp::Y, layers_as_hierarchy: true, materials: true, face_weighted_normals: false }
+        ExportOptions {
+            triangulate: false,
+            scale: 1.0,
+            up: ExportUp::Y,
+            layers_as_hierarchy: true,
+            materials: true,
+            face_weighted_normals: false,
+        }
     }
 }
 
@@ -48,7 +55,11 @@ pub struct ExportObject<'a> {
     pub mesh: &'a OutputMesh,
 }
 
-pub fn export(format: Format, objects: &[ExportObject], opts: &ExportOptions) -> anyhow::Result<ExportFiles> {
+pub fn export(
+    format: Format,
+    objects: &[ExportObject],
+    opts: &ExportOptions,
+) -> anyhow::Result<ExportFiles> {
     let _ = (format, objects, opts);
     todo!("export")
 }
