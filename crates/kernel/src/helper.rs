@@ -376,6 +376,63 @@ mod tests {
         assert_eq!(parse_progress("hello"), None);
     }
 
+    /// Fake helpers (shell scripts) exercise crash, hang and failure paths
+    /// without OCCT.
+    #[cfg(unix)]
+    fn fake_helper(body: &str) -> (TempDir, PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let script = dir.0.join("newtopo-import");
+        std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let input = dir.0.join("model.step");
+        std::fs::write(&input, "ISO-10303-21;").unwrap();
+        (dir, script, input)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn crashing_hanging_and_failing_helpers() {
+        let run = |body: &str, timeout_ms: u64| {
+            let (_dir, script, input) = fake_helper(body);
+            let opts = ImportOptions {
+                helper: Some(script),
+                timeout: Duration::from_millis(timeout_ms),
+                ..Default::default()
+            };
+            run_import(&input, &opts, &mut |_, _| true).unwrap_err().0
+        };
+        let e = run("echo 'progress 0.1 reading'; echo 'reader exploded' >&2; kill -SEGV $$", 10_000);
+        assert!(e.starts_with("import failed:") && e.contains("reader exploded"), "{e}");
+        let e = run("kill -SEGV $$", 10_000);
+        assert!(e.starts_with("import failed:") && e.contains("signal"), "{e}");
+        let started = Instant::now();
+        let e = run("echo 'stuck' >&2; sleep 30", 300);
+        assert!(e.contains("timed out") && e.contains("stuck"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let e = run("echo 'warning: odd entity' >&2; echo 'bad file' >&2; exit 3", 10_000);
+        assert!(e.contains("bad file") && !e.contains("odd entity"), "{e}");
+        // Exit 0 without a sidecar is still a failure.
+        let e = run("exit 0", 10_000);
+        assert!(e.contains("no sidecar"), "{e}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancel_while_helper_is_silent() {
+        let (_dir, script, input) = fake_helper("echo 'progress 0.2 reading'; sleep 30");
+        let opts = ImportOptions { helper: Some(script), ..Default::default() };
+        let started = Instant::now();
+        let mut calls = 0;
+        let e = run_import(&input, &opts, &mut |_, _| {
+            calls += 1;
+            calls < 3
+        })
+        .unwrap_err();
+        assert_eq!(e.0, "import cancelled");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
     #[test]
     fn missing_helper_is_an_error() {
         let opts = ImportOptions {
