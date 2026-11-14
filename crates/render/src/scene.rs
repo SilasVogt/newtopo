@@ -233,12 +233,12 @@ impl Default for OverlayColors {
         OverlayColors {
             cad_edge: hex("#1c2026", 1.0),
             line: hex("#f2a93b", 1.0),
-            fill_edge: hex("#4fb6c7", 0.85),
-            selection: hex("#ffd84a", 1.0),
+            fill_edge: hex("#7cc98a", 0.85),
+            selection: hex("#4fe0ff", 1.0),
             hover: hex("#ffffff", 0.9),
             vertex: hex("#e9edf2", 1.0),
             arrow_a: hex("#ff6b6b", 1.0),
-            arrow_b: hex("#5ec2ff", 1.0),
+            arrow_b: hex("#ffe14a", 1.0),
             linked_tint: hex("#8f7cff", 0.35),
             symmetry_plane: hex("#5ec2ff", 0.08),
             split_preview: hex("#ff5fa2", 1.0),
@@ -262,8 +262,10 @@ impl OverlayColors {
             background_top: hex("#eef1f5", 1.0),
             background_bottom: hex("#c9d0da", 1.0),
             grid: hex("#000000", 0.06),
-            hover: hex("#1d6fe0", 0.9),
-            selection: hex("#f0a500", 1.0),
+            hover: hex("#6a3df0", 0.9),
+            selection: hex("#0a7cff", 1.0),
+            fill_edge: hex("#3f9a52", 0.85),
+            arrow_b: hex("#c99a00", 1.0),
             ..OverlayColors::default()
         }
     }
