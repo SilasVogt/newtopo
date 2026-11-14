@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = ["occt"]
-occt = ["newtopo-kernel/occt"]
+occt = ["newtopo-kernel/occt", "dep:newtopo-occt-shim"]
 
 [dependencies]
 newtopo-kernel.workspace = true
@@ -15,7 +15,14 @@ serde_json.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 clap.workspace = true
+sha2.workspace = true
+# Direct dependency only so build.rs sees DEP_OCCT_SHIM_LIB_DIR (rpath).
+newtopo-occt-shim = { workspace = true, optional = true }
 
 [[bin]]
 name = "newtopo-import"
 path = "src/main.rs"
+
+[dev-dependencies]
+newtopo-testmodels = { workspace = true, features = ["occt"] }
+tempfile.workspace = true

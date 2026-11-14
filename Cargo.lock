@@ -2483,9 +2483,12 @@ dependencies = [
  "log",
  "newtopo-core",
  "newtopo-kernel",
+ "newtopo-occt-shim",
  "newtopo-render",
+ "newtopo-testmodels",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2518,8 +2521,12 @@ dependencies = [
  "clap",
  "glam",
  "newtopo-kernel",
+ "newtopo-occt-shim",
+ "newtopo-testmodels",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -2566,6 +2573,7 @@ dependencies = [
  "glam",
  "newtopo-kernel",
  "newtopo-occt-shim",
+ "tempfile",
 ]
 
 [[package]]

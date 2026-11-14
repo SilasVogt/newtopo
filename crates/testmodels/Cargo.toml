@@ -13,3 +13,10 @@ newtopo-kernel.workspace = true
 newtopo-occt-shim = { workspace = true, optional = true }
 anyhow.workspace = true
 glam.workspace = true
+
+[[bin]]
+name = "newtopo-testmodels"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile.workspace = true
