@@ -20,10 +20,30 @@ fn perf_budgets() {
         let full = t.elapsed();
         // One-patch change: a grid on one hole wall.
         let t = Instant::now();
-        s.apply(Op::Grid { patches: PatchSel { faces: vec![6], ..Default::default() }, u: 4, v: 2, start_on_seam: false, spacing: Spacing::ArcLength }).unwrap();
+        s.apply(Op::Grid {
+            patches: PatchSel {
+                faces: vec![6],
+                ..Default::default()
+            },
+            u: 4,
+            v: 2,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        })
+        .unwrap();
         let one = t.elapsed();
         let t = Instant::now();
-        s.apply(Op::Grid { patches: PatchSel { faces: vec![6], ..Default::default() }, u: 5, v: 2, start_on_seam: false, spacing: Spacing::ArcLength }).unwrap();
+        s.apply(Op::Grid {
+            patches: PatchSel {
+                faces: vec![6],
+                ..Default::default()
+            },
+            u: 5,
+            v: 2,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        })
+        .unwrap();
         let one2 = t.elapsed();
         println!(
             "plate {n}x{m}: {faces} faces, ctx build {build:?}, full eval {full:?} ({} polys), one-patch apply {one:?} / {one2:?}",

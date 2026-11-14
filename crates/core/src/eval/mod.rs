@@ -11,6 +11,13 @@
 //! 5. edits ([`hmesh`]); 6. bridging; 7. auto-fill ([`bridge`]);
 //! 8. emission ([`emit`]) and validation ([`validate`]).
 
+// Index loops over parallel arrays read best as such in geometry code.
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
+
 pub mod arr;
 pub mod assemble;
 pub mod bridge;
@@ -66,7 +73,11 @@ pub struct BodyEval {
 /// Faces touched by a rule (for dirty tracking and patch queries).
 pub fn rule_faces(r: &Rule, body: BodyId, ctx: &BodyCtx) -> Vec<FaceId> {
     let mut v: Vec<FaceId> = match r {
-        Rule::Connect { patches, .. } => patches.iter().filter(|p| p.body == body).map(|p| p.face).collect(),
+        Rule::Connect { patches, .. } => patches
+            .iter()
+            .filter(|p| p.body == body)
+            .map(|p| p.face)
+            .collect(),
         Rule::Grid { patch, .. } => {
             if patch.body == body {
                 vec![patch.face]
@@ -75,13 +86,21 @@ pub fn rule_faces(r: &Rule, body: BodyId, ctx: &BodyCtx) -> Vec<FaceId> {
             }
         }
         Rule::Slice { scope, .. } => lines::slice_faces(ctx, body, scope),
-        Rule::Iso { pieces, .. } => pieces.iter().filter(|p| p.body == body).map(|p| p.face).collect(),
+        Rule::Iso { pieces, .. } => pieces
+            .iter()
+            .filter(|p| p.body == body)
+            .map(|p| p.face)
+            .collect(),
         Rule::Cut { points, .. } => points
             .iter()
             .flat_map(|p| match p {
                 crate::doc::CutPoint::Face { body: b, face, .. } if *b == body => vec![*face],
-                crate::doc::CutPoint::CadEdge { body: b, edge, .. } if *b == body => ctx.topo.edge(*edge).faces.clone(),
-                crate::doc::CutPoint::Vertex { body: b, .. } if *b == body => ctx.topo.face_ids().collect(),
+                crate::doc::CutPoint::CadEdge { body: b, edge, .. } if *b == body => {
+                    ctx.topo.edge(*edge).faces.clone()
+                }
+                crate::doc::CutPoint::Vertex { body: b, .. } if *b == body => {
+                    ctx.topo.face_ids().collect()
+                }
                 _ => vec![],
             })
             .collect(),
@@ -102,7 +121,11 @@ pub fn rule_faces(r: &Rule, body: BodyId, ctx: &BodyCtx) -> Vec<FaceId> {
 pub fn body_patches(ctx: &BodyCtx, doc: &Document, body: BodyId) -> Vec<Patch> {
     let mut out = Vec::new();
     for f in ctx.topo.face_ids() {
-        let splits: Vec<&crate::doc::SplitLine> = doc.split_lines.iter().filter(|s| s.body == body && s.face == f).collect();
+        let splits: Vec<&crate::doc::SplitLine> = doc
+            .split_lines
+            .iter()
+            .filter(|s| s.body == body && s.face == f)
+            .collect();
         let s1 = face::stage1(ctx, body, ctx.face(f), &splits);
         out.extend(s1.patches);
     }
@@ -113,8 +136,14 @@ fn has_spread_rule(doc: &Document, p: &Patch, body: BodyId) -> bool {
     doc.rules.iter().any(|r| match &r.rule {
         Rule::Connect { patches, .. } => patches.contains(&p.id),
         Rule::Grid { patch, .. } => *patch == p.id,
-        Rule::Slice { scope: SliceScope::Body(b), .. } => *b == body,
-        Rule::Slice { scope: SliceScope::Patches(list), .. } => list.contains(&p.id),
+        Rule::Slice {
+            scope: SliceScope::Body(b),
+            ..
+        } => *b == body,
+        Rule::Slice {
+            scope: SliceScope::Patches(list),
+            ..
+        } => list.contains(&p.id),
         _ => false,
     })
 }
@@ -123,7 +152,7 @@ fn has_spread_rule(doc: &Document, p: &Patch, body: BodyId) -> bool {
 pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     let timing = std::env::var("NT_TIME").is_ok();
     let t0 = std::time::Instant::now();
-    let mut lap = |what: &str| {
+    let lap = |what: &str| {
         if timing {
             eprintln!("  eval {what}: {:?}", t0.elapsed());
         }
@@ -133,7 +162,11 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     // 1. Patches.
     let mut s1s = Vec::with_capacity(nf);
     for f in ctx.topo.face_ids() {
-        let splits: Vec<&crate::doc::SplitLine> = doc.split_lines.iter().filter(|s| s.body == body && s.face == f).collect();
+        let splits: Vec<&crate::doc::SplitLine> = doc
+            .split_lines
+            .iter()
+            .filter(|s| s.body == body && s.face == f)
+            .collect();
         s1s.push(face::stage1(ctx, body, ctx.face(f), &splits));
     }
     for s in &s1s {
@@ -145,7 +178,14 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     let mut rules: Vec<&crate::doc::RuleEntry> = doc.rules.iter().collect();
     rules.sort_by_key(|r| (r.ordinal, r.id));
     for r in &rules {
-        if let Rule::Slice { scope, count, orient, frozen_planes, .. } = &r.rule {
+        if let Rule::Slice {
+            scope,
+            count,
+            orient,
+            frozen_planes,
+            ..
+        } = &r.rule
+        {
             let faces = lines::slice_faces(ctx, body, scope);
             if faces.is_empty() {
                 continue;
@@ -198,7 +238,16 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         let pts: Option<(Vec<crate::doc::CutPoint>, bool)> = match &r.rule {
             Rule::Cut { points, closed } => Some((points.clone(), *closed)),
             Rule::Join { body: b, a, b: bb } if *b == body => Some((
-                vec![crate::doc::CutPoint::Vertex { body, key: a.clone() }, crate::doc::CutPoint::Vertex { body, key: bb.clone() }],
+                vec![
+                    crate::doc::CutPoint::Vertex {
+                        body,
+                        key: a.clone(),
+                    },
+                    crate::doc::CutPoint::Vertex {
+                        body,
+                        key: bb.clone(),
+                    },
+                ],
                 false,
             )),
             _ => None,
@@ -207,7 +256,9 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         let pts: Vec<crate::doc::CutPoint> = pts
             .into_iter()
             .filter(|p| match p {
-                crate::doc::CutPoint::Face { body: b, .. } | crate::doc::CutPoint::CadEdge { body: b, .. } | crate::doc::CutPoint::Vertex { body: b, .. } => *b == body,
+                crate::doc::CutPoint::Face { body: b, .. }
+                | crate::doc::CutPoint::CadEdge { body: b, .. }
+                | crate::doc::CutPoint::Vertex { body: b, .. } => *b == body,
             })
             .collect();
         if pts.len() < 2 {
@@ -233,7 +284,11 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     let mut faces: Vec<FaceRes> = Vec::with_capacity(nf);
     for f in ctx.topo.face_ids() {
         let (arr, glued) = face::stage3(ctx, ctx.face(f), &s1s[f.idx()], &per_face[f.idx()]);
-        faces.push(FaceRes { face: f, arr, glued });
+        faces.push(FaceRes {
+            face: f,
+            arr,
+            glued,
+        });
     }
     lap("stage3");
     // 4. Assembly.
@@ -243,7 +298,8 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     // 5a. Removals of generated edges happen on the glued face graphs so the
     // topology guard can keep (re-insert) seams where a removal would make
     // a region that isn't a disk with holes (SPEC §4.6 step 6).
-    let edits: Vec<&crate::doc::EditEntry> = doc.edits.iter().filter(|e| e.edit.body() == body).collect();
+    let edits: Vec<&crate::doc::EditEntry> =
+        doc.edits.iter().filter(|e| e.edit.body() == body).collect();
     let mut done_at_glue: HashSet<u32> = HashSet::new();
     let mut forced: Vec<Vec<usize>> = vec![vec![]; faces.len()];
     for ed in &edits {
@@ -289,13 +345,20 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     for r in failed {
         ev.internal.push(Issue {
             kind: IssueKind::NotSimple,
-            message: format!("could not make polygon region {r} on face {} simple", mesh.regions[r].face),
+            message: format!(
+                "could not make polygon region {r} on face {} simple",
+                mesh.regions[r].face
+            ),
             polygon: None,
             vertices: vec![],
         });
     }
     // 7. Auto-fill.
-    let fan = if doc.settings.autofill { bridge::autofill_all(ctx, &mut mesh, &pole_target) } else { HashSet::new() };
+    let fan = if doc.settings.autofill {
+        bridge::autofill_all(ctx, &mut mesh, &pole_target)
+    } else {
+        HashSet::new()
+    };
     lap("fill");
     // UV orientation check of every final polygon (the reliable flip test
     // for polygons that span a lot of curvature).
@@ -314,14 +377,25 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         if geom2::signed_area(&poly) <= 0.0 {
             ev.internal.push(Issue {
                 kind: IssueKind::Flipped,
-                message: format!("polygon reversed in its UV domain (face {})", mesh.regions[r].face),
+                message: format!(
+                    "polygon reversed in its UV domain (face {})",
+                    mesh.regions[r].face
+                ),
                 polygon: None,
                 vertices: vec![],
             });
         }
     }
     // 8. Emit.
-    ev.mesh = emit::emit(ctx, body, &mesh, &pole_target, &hard, doc.settings.sharp_angle_deg, &fan);
+    ev.mesh = emit::emit(
+        ctx,
+        body,
+        &mesh,
+        &pole_target,
+        &hard,
+        doc.settings.sharp_angle_deg,
+        &fan,
+    );
     lap("emit");
     ev
 }
@@ -352,14 +426,23 @@ fn priority(a: &Anchor) -> u8 {
     a.priority()
 }
 
-fn apply_edit(ctx: &BodyCtx, mesh: &mut HMesh, pt: &HashMap<EdgeId, usize>, edit: &Edit, hard: &mut HashMap<EdgeKey, bool>) -> Result<(), String> {
+fn apply_edit(
+    ctx: &BodyCtx,
+    mesh: &mut HMesh,
+    pt: &HashMap<EdgeId, usize>,
+    edit: &Edit,
+    hard: &mut HashMap<EdgeKey, bool>,
+) -> Result<(), String> {
     match edit {
         Edit::RemoveEdge { edge, .. } => {
             let h = mesh.find_edge(edge, pt).ok_or("edge no longer exists")?;
             mesh.remove_edge(h)
         }
         Edit::RemoveCadEdge { edge, .. } => {
-            let hs: Vec<usize> = mesh.alive_he().filter(|&h| mesh.he[h].owner == Owner::Cad(*edge)).collect();
+            let hs: Vec<usize> = mesh
+                .alive_he()
+                .filter(|&h| mesh.he[h].owner == Owner::Cad(*edge))
+                .collect();
             if hs.is_empty() {
                 return Err("CAD edge has no output edges".into());
             }
@@ -383,7 +466,10 @@ fn apply_edit(ctx: &BodyCtx, mesh: &mut HMesh, pt: &HashMap<EdgeId, usize>, edit
             if mesh.verts[a].pole.is_some() || mesh.verts[b].pole.is_some() {
                 return Err("can't collapse into a pole".into());
             }
-            let (pa, pb) = (priority(&mesh.verts[a].anchor), priority(&mesh.verts[b].anchor));
+            let (pa, pb) = (
+                priority(&mesh.verts[a].anchor),
+                priority(&mesh.verts[b].anchor),
+            );
             let (keep_to, anchor) = if pa > pb {
                 (false, None)
             } else if pb > pa {
@@ -393,14 +479,22 @@ fn apply_edit(ctx: &BodyCtx, mesh: &mut HMesh, pt: &HashMap<EdgeId, usize>, edit
                 let keep_to = mesh.verts[b].key < mesh.verts[a].key;
                 let he = &mesh.he[h];
                 let mid = match (mesh.verts[a].anchor, mesh.verts[b].anchor) {
-                    (Anchor::Face { face, .. }, Anchor::Face { .. }) if !he.uv.is_empty() && he.face == face => {
+                    (Anchor::Face { face, .. }, Anchor::Face { .. })
+                        if !he.uv.is_empty() && he.face == face =>
+                    {
                         let uv = he.uv[he.uv.len() / 2];
-                        let uv = if he.uv.len() == 2 { (he.uv[0] + he.uv[1]) * 0.5 } else { uv };
+                        let uv = if he.uv.len() == 2 {
+                            (he.uv[0] + he.uv[1]) * 0.5
+                        } else {
+                            uv
+                        };
                         let fg = ctx.face(face);
                         let uv = fg.wrap(uv);
                         Some((Anchor::Face { face, uv }, ctx.point(face, uv)))
                     }
-                    (Anchor::CadEdge { edge: e1, t: t1 }, Anchor::CadEdge { edge: e2, t: t2 }) if e1 == e2 => {
+                    (Anchor::CadEdge { edge: e1, t: t1 }, Anchor::CadEdge { edge: e2, t: t2 })
+                        if e1 == e2 =>
+                    {
                         let t = 0.5 * (t1 + t2);
                         Some((Anchor::CadEdge { edge: e1, t }, ctx.edge_point(e1, t)))
                     }
@@ -411,7 +505,9 @@ fn apply_edit(ctx: &BodyCtx, mesh: &mut HMesh, pt: &HashMap<EdgeId, usize>, edit
             mesh.collapse(h, keep_to, anchor).map(|_| ())
         }
         Edit::Weld { from, to, .. } => {
-            let s = mesh.vertex_of(from).ok_or("source vertex no longer exists")?;
+            let s = mesh
+                .vertex_of(from)
+                .ok_or("source vertex no longer exists")?;
             let t = mesh.vertex_of(to).ok_or("target vertex no longer exists")?;
             if mesh.verts[s].pole.is_some() || mesh.verts[t].pole.is_some() {
                 return Err("can't weld pole vertices".into());

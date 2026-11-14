@@ -86,7 +86,11 @@ impl HMesh {
         }
     }
 
-    pub fn edge_key(&self, h: usize, pole_target: &HashMap<newtopo_kernel::EdgeId, usize>) -> Option<EdgeKey> {
+    pub fn edge_key(
+        &self,
+        h: usize,
+        pole_target: &HashMap<newtopo_kernel::EdgeId, usize>,
+    ) -> Option<EdgeKey> {
         let he = &self.he[h];
         let a = self.verts[self.final_v(he.from, pole_target)].key.clone();
         let b = self.verts[self.final_v(he.to, pole_target)].key.clone();
@@ -98,7 +102,11 @@ impl HMesh {
         }
     }
 
-    pub fn find_edge(&self, key: &EdgeKey, pole_target: &HashMap<newtopo_kernel::EdgeId, usize>) -> Option<usize> {
+    pub fn find_edge(
+        &self,
+        key: &EdgeKey,
+        pole_target: &HashMap<newtopo_kernel::EdgeId, usize>,
+    ) -> Option<usize> {
         // Fast path by owner, then compare keys (with aliases).
         let (a, b) = key.ends();
         let va = self.key_index.get(a).copied();
@@ -114,7 +122,10 @@ impl HMesh {
         self.alive_he().find(|&h| {
             let he = &self.he[h];
             he.owner == owner && {
-                let (x, y) = (self.final_v(he.from, pole_target), self.final_v(he.to, pole_target));
+                let (x, y) = (
+                    self.final_v(he.from, pole_target),
+                    self.final_v(he.to, pole_target),
+                );
                 (x == fa && y == fb) || (x == fb && y == fa)
             }
         })
@@ -144,7 +155,9 @@ impl HMesh {
 
     /// Remove an edge, merging the polygons on its two sides.
     pub fn remove_edge(&mut self, h: usize) -> Result<(), String> {
-        let Some(t) = self.he[h].twin else { return Err("cannot remove a boundary edge".into()) };
+        let Some(t) = self.he[h].twin else {
+            return Err("cannot remove a boundary edge".into());
+        };
         let (ph, pt) = (self.prev(h), self.prev(t));
         let (nh, nt) = (self.he[h].next, self.he[t].next);
         if nh == t && nt == h {
@@ -160,7 +173,11 @@ impl HMesh {
         self.kill_pair(h);
         let (rh, rt) = (self.he[h].region, self.he[t].region);
         if rh != rt {
-            let multi = self.he.iter().any(|e| e.alive && e.region == rt && e.face != self.regions[rh].face) || self.regions[rt].face != self.regions[rh].face;
+            let multi = self
+                .he
+                .iter()
+                .any(|e| e.alive && e.region == rt && e.face != self.regions[rh].face)
+                || self.regions[rt].face != self.regions[rh].face;
             for e in &mut self.he {
                 if e.region == rt {
                     e.region = rh;
@@ -176,14 +193,23 @@ impl HMesh {
 
     /// Collapse half-edge `h` (a→b) merging `a` into `b` if `keep_to`, else
     /// `b` into `a`. `anchor` overrides the kept vertex's anchor.
-    pub fn collapse(&mut self, h: usize, keep_to: bool, anchor: Option<(Anchor, glam::DVec3)>) -> Result<usize, String> {
+    pub fn collapse(
+        &mut self,
+        h: usize,
+        keep_to: bool,
+        anchor: Option<(Anchor, glam::DVec3)>,
+    ) -> Result<usize, String> {
         let (a, b) = (self.he[h].from, self.he[h].to);
         if a == b {
             return Err("edge is a loop".into());
         }
         let (keep, rem) = if keep_to { (b, a) } else { (a, b) };
         // Link condition.
-        let common: HashSet<usize> = self.neighbours(a).intersection(&self.neighbours(b)).copied().collect();
+        let common: HashSet<usize> = self
+            .neighbours(a)
+            .intersection(&self.neighbours(b))
+            .copied()
+            .collect();
         let mut allowed = HashSet::new();
         let t = self.he[h].twin;
         for side in [Some(h), t].into_iter().flatten() {
@@ -235,7 +261,14 @@ impl HMesh {
         if keep_uv.is_empty() {
             let e = &self.he[h];
             if !e.uv.is_empty() {
-                keep_uv.push((e.face, if keep_to { *e.uv.last().unwrap() } else { e.uv[0] }));
+                keep_uv.push((
+                    e.face,
+                    if keep_to {
+                        *e.uv.last().unwrap()
+                    } else {
+                        e.uv[0]
+                    },
+                ));
             }
         }
         let moved = anchor.is_some();
@@ -284,7 +317,10 @@ impl HMesh {
     fn cleanup_degenerate(&mut self, v: usize) {
         loop {
             let mut changed = false;
-            let hs: Vec<usize> = self.alive_he().filter(|&h| self.he[h].from == v || self.he[h].to == v).collect();
+            let hs: Vec<usize> = self
+                .alive_he()
+                .filter(|&h| self.he[h].from == v || self.he[h].to == v)
+                .collect();
             for h in hs {
                 if !self.he[h].alive {
                     continue;
@@ -308,7 +344,11 @@ impl HMesh {
                             self.he[y].twin = Some(x);
                             let ox = self.he[x].owner;
                             let oy = self.he[y].owner;
-                            let o = if owner_rank(&ox) <= owner_rank(&oy) { ox } else { oy };
+                            let o = if owner_rank(&ox) <= owner_rank(&oy) {
+                                ox
+                            } else {
+                                oy
+                            };
                             self.he[x].owner = o;
                             self.he[y].owner = o;
                         }
@@ -328,7 +368,13 @@ impl HMesh {
     /// Insert a chord between the corner of `x` before half-edge `hx`
     /// (leaving x) and the corner of `y` before `hy` (leaving y), both in
     /// the same region. Returns the chord half-edge x→y.
-    pub fn insert_chord(&mut self, hx: usize, hy: usize, uv: Vec<DVec2>, p3: Option<Vec<glam::DVec3>>) -> usize {
+    pub fn insert_chord(
+        &mut self,
+        hx: usize,
+        hy: usize,
+        uv: Vec<DVec2>,
+        p3: Option<Vec<glam::DVec3>>,
+    ) -> usize {
         let (px, py) = (self.prev(hx), self.prev(hy));
         let (x, y) = (self.he[hx].from, self.he[hy].from);
         let r = self.he[hx].region;
@@ -338,8 +384,32 @@ impl HMesh {
         let mut ruv = uv.clone();
         ruv.reverse();
         let rp3 = p3.as_ref().map(|v| v.iter().rev().copied().collect());
-        self.he.push(HE { from: x, to: y, twin: Some(cr), next: hy, region: r, owner: Owner::Fill, face, uv, p3, alive: true, src: vec![] });
-        self.he.push(HE { from: y, to: x, twin: Some(c), next: hx, region: r, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true, src: vec![] });
+        self.he.push(HE {
+            from: x,
+            to: y,
+            twin: Some(cr),
+            next: hy,
+            region: r,
+            owner: Owner::Fill,
+            face,
+            uv,
+            p3,
+            alive: true,
+            src: vec![],
+        });
+        self.he.push(HE {
+            from: y,
+            to: x,
+            twin: Some(c),
+            next: hx,
+            region: r,
+            owner: Owner::Fill,
+            face,
+            uv: ruv,
+            p3: rp3,
+            alive: true,
+            src: vec![],
+        });
         self.he[px].next = c;
         self.he[py].next = cr;
         c
@@ -350,21 +420,33 @@ impl HMesh {
         if s == t {
             return Ok(t);
         }
-        let fwd = self.alive_he().find(|&h| self.he[h].from == s && self.he[h].to == t);
+        let fwd = self
+            .alive_he()
+            .find(|&h| self.he[h].from == s && self.he[h].to == t);
         if let Some(h) = fwd {
             return self.collapse(h, true, None);
         }
-        let bwd = self.alive_he().find(|&h| self.he[h].from == t && self.he[h].to == s);
+        let bwd = self
+            .alive_he()
+            .find(|&h| self.he[h].from == t && self.he[h].to == s);
         if let Some(h) = bwd {
             return self.collapse(h, false, None);
         }
         // Common polygon.
-        for hs in self.alive_he().filter(|&h| self.he[h].from == s).collect::<Vec<_>>() {
+        for hs in self
+            .alive_he()
+            .filter(|&h| self.he[h].from == s)
+            .collect::<Vec<_>>()
+        {
             let o = self.orbit(hs);
             if let Some(&ht) = o.iter().find(|&&h| self.he[h].from == t) {
                 let uv = vec![];
                 let c = self.insert_chord(hs, ht, uv, None);
-                let side: Vec<usize> = self.orbit(c + 1).into_iter().filter(|&x| x != c + 1).collect();
+                let side: Vec<usize> = self
+                    .orbit(c + 1)
+                    .into_iter()
+                    .filter(|&x| x != c + 1)
+                    .collect();
                 let res = match self.collapse(c, true, None) {
                     Ok(r) => r,
                     Err(e) => {
@@ -394,6 +476,9 @@ impl HMesh {
 
     /// Alive vertex for a key (aliases included).
     pub fn vertex_of(&self, k: &VertexKey) -> Option<usize> {
-        self.key_index.get(k).copied().filter(|&v| self.verts[v].alive)
+        self.key_index
+            .get(k)
+            .copied()
+            .filter(|&v| self.verts[v].alive)
     }
 }

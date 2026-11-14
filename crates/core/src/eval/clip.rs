@@ -4,10 +4,10 @@
 //! pole lines and split lines), its pieces are classified into patches, and
 //! kept runs become components with deterministic event keys.
 
+use super::Owner;
 use super::arr::{ACurve, AEvent};
 use super::ctx::FaceGeom;
 use super::geom2::*;
-use super::Owner;
 use crate::keys::{EdgeOrSplit, LineKey, SplitId, VertexKey};
 use glam::DVec2;
 
@@ -27,7 +27,10 @@ impl Who {
     }
     fn with_sub(&self, comp: u32) -> Who {
         match *self {
-            Who::Line(k) => Who::Line(LineKey { sub: k.sub * 64 + comp.min(63), ..k }),
+            Who::Line(k) => Who::Line(LineKey {
+                sub: k.sub * 64 + comp.min(63),
+                ..k
+            }),
             s => s,
         }
     }
@@ -235,11 +238,27 @@ fn domain_pieces(fg: &FaceGeom, pts: &[DVec2]) -> (Vec<Piece>, Vec<(f64, u8)>) {
         }
         match seam {
             Some((dir, _)) => {
-                let p = if dir == 0 { DVec2::new(per.x, 0.0) } else { DVec2::new(0.0, per.y) };
-                pieces.push(Piece { pts: pp.clone(), s: ss.clone(), seam: Some((dir, 0)) });
-                pieces.push(Piece { pts: pp.iter().map(|q| *q + p).collect(), s: ss, seam: Some((dir, 1)) });
+                let p = if dir == 0 {
+                    DVec2::new(per.x, 0.0)
+                } else {
+                    DVec2::new(0.0, per.y)
+                };
+                pieces.push(Piece {
+                    pts: pp.clone(),
+                    s: ss.clone(),
+                    seam: Some((dir, 0)),
+                });
+                pieces.push(Piece {
+                    pts: pp.iter().map(|q| *q + p).collect(),
+                    s: ss,
+                    seam: Some((dir, 1)),
+                });
             }
-            None => pieces.push(Piece { pts: pp, s: ss, seam: None }),
+            None => pieces.push(Piece {
+                pts: pp,
+                s: ss,
+                seam: None,
+            }),
         }
     }
     (pieces, cuts)
@@ -253,7 +272,10 @@ pub fn clip(
     stoppers: &[ACurve],
     locate: &mut dyn FnMut(DVec2) -> Option<usize>,
 ) -> ClipOut {
-    let mut out = ClipOut { curves: vec![], events: vec![] };
+    let mut out = ClipOut {
+        curves: vec![],
+        events: vec![],
+    };
     if input.pts.len() < 2 {
         return out;
     }
@@ -262,10 +284,11 @@ pub fn clip(
     // For closed lines, start at a seam crossing if there is one.
     if closed {
         let (_, cuts) = domain_pieces(fg, &pts);
-        if let Some(&(s, _)) = cuts.first() {
-            if s > 1e-12 && s < (pts.len() - 1) as f64 - 1e-12 {
-                pts = rotate_closed(&pts, s);
-            }
+        if let Some(&(s, _)) = cuts.first()
+            && s > 1e-12
+            && s < (pts.len() - 1) as f64 - 1e-12
+        {
+            pts = rotate_closed(&pts, s);
         }
     }
     let n = (pts.len() - 1) as f64;
@@ -277,7 +300,10 @@ pub fn clip(
         // On a closed line the end is the start.
         let s = if closed && s >= n - 1e-9 { 0.0 } else { s };
         if let Some(e) = evs.iter_mut().find(|e| (e.s - s).abs() < 1e-9) {
-            if !e.incs.iter().any(|i| (i.uv - inc.uv).length() <= 1e-12 * (1.0 + i.uv.length()) && i.stop.map(|x| x.0) == inc.stop.map(|x| x.0)) {
+            if !e.incs.iter().any(|i| {
+                (i.uv - inc.uv).length() <= 1e-12 * (1.0 + i.uv.length())
+                    && i.stop.map(|x| x.0) == inc.stop.map(|x| x.0)
+            }) {
                 e.incs.push(inc);
             }
         } else {
@@ -289,9 +315,27 @@ pub fn clip(
     for &(s, dir) in &cuts {
         let p = poly_at(&pts, s);
         let w = fg.wrap(p);
-        let (a, b) = if dir == 0 { (DVec2::new(fg.lo.x, w.y), DVec2::new(fg.lo.x + per.x, w.y)) } else { (DVec2::new(w.x, fg.lo.y), DVec2::new(w.x, fg.lo.y + per.y)) };
-        add(s, Inc { uv: a, stop: None, seam: Some(dir) });
-        add(s, Inc { uv: b, stop: None, seam: Some(dir) });
+        let (a, b) = if dir == 0 {
+            (DVec2::new(fg.lo.x, w.y), DVec2::new(fg.lo.x + per.x, w.y))
+        } else {
+            (DVec2::new(w.x, fg.lo.y), DVec2::new(w.x, fg.lo.y + per.y))
+        };
+        add(
+            s,
+            Inc {
+                uv: a,
+                stop: None,
+                seam: Some(dir),
+            },
+        );
+        add(
+            s,
+            Inc {
+                uv: b,
+                stop: None,
+                seam: Some(dir),
+            },
+        );
     }
     // Stopper hits per piece.
     for pc in &pieces {
@@ -307,7 +351,11 @@ pub fn clip(
             }
             for j in 0..st.pts.len() - 1 {
                 let (c, d) = (st.pts[j], st.pts[j + 1]);
-                if c.x.max(d.x) < lo.x - eps_uv || c.x.min(d.x) > hi.x + eps_uv || c.y.max(d.y) < lo.y - eps_uv || c.y.min(d.y) > hi.y + eps_uv {
+                if c.x.max(d.x) < lo.x - eps_uv
+                    || c.x.min(d.x) > hi.x + eps_uv
+                    || c.y.max(d.y) < lo.y - eps_uv
+                    || c.y.min(d.y) > hi.y + eps_uv
+                {
                     continue;
                 }
                 for i in 0..pc.pts.len() - 1 {
@@ -315,7 +363,14 @@ pub fn clip(
                         let s = pc.s[i] + (pc.s[i + 1] - pc.s[i]) * fa;
                         let tp = st.par[j] + (st.par[j + 1] - st.par[j]) * fb;
                         let uv = c + (d - c) * fb;
-                        add(s, Inc { uv, stop: Some((si, tp)), seam: None });
+                        add(
+                            s,
+                            Inc {
+                                uv,
+                                stop: Some((si, tp)),
+                                seam: None,
+                            },
+                        );
                     }
                 }
             }
@@ -336,7 +391,12 @@ pub fn clip(
     let mut keep = vec![false; ni];
     for k in 0..ni {
         let sm = 0.5 * (bnds[k] + bnds[k + 1]);
-        let Some(pc) = pieces.iter().find(|p| p.s[0] <= sm + 1e-12 && sm <= p.s[p.s.len() - 1] + 1e-12) else { continue };
+        let Some(pc) = pieces
+            .iter()
+            .find(|p| p.s[0] <= sm + 1e-12 && sm <= p.s[p.s.len() - 1] + 1e-12)
+        else {
+            continue;
+        };
         let mut q = poly_at(&pc.pts, s_of_par(&pc.s, sm));
         if let Some((dir, _)) = pc.seam {
             // Nudge off the seam into the domain.
@@ -410,7 +470,8 @@ pub fn clip(
                         continue;
                     }
                     for cand in [seed, fg.lift_near(seed, pc.pts[i])] {
-                        let (d, _) = dist_point_seg(fg.m(cand), fg.m(pc.pts[i]), fg.m(pc.pts[i + 1]));
+                        let (d, _) =
+                            dist_point_seg(fg.m(cand), fg.m(pc.pts[i]), fg.m(pc.pts[i + 1]));
                         if d < best.0 {
                             best = (d, ci);
                         }
@@ -454,8 +515,18 @@ pub fn clip(
                     }
                 }
                 par.push(c1);
-                let (sp, par) = if sp.len() == par.len() { (sp, par) } else { resample(&pc.pts, &pc.s, c0, c1) };
-                out.curves.push(ACurve { owner, seam: pc.seam, pts: sp, par, closed: false });
+                let (sp, par) = if sp.len() == par.len() {
+                    (sp, par)
+                } else {
+                    resample(&pc.pts, &pc.s, c0, c1)
+                };
+                out.curves.push(ACurve {
+                    owner,
+                    seam: pc.seam,
+                    pts: sp,
+                    par,
+                    closed: false,
+                });
             }
         }
         let curves_here: Vec<usize> = (curve_base..out.curves.len()).collect();
@@ -463,7 +534,11 @@ pub fn clip(
         let incs_at = |out: &ClipOut, s: f64, uv: DVec2| -> Vec<(usize, f64)> {
             let mut v = Vec::new();
             // On a closed line the start parameter is also the end.
-            let cands: Vec<f64> = if closed && s.abs() < 1e-9 { vec![s, n] } else { vec![s] };
+            let cands: Vec<f64> = if closed && s.abs() < 1e-9 {
+                vec![s, n]
+            } else {
+                vec![s]
+            };
             for &c in &curves_here {
                 let cv = &out.curves[c];
                 for &s in &cands {
@@ -480,7 +555,9 @@ pub fn clip(
         // Events of this component in order.
         let mut comp_evs: Vec<&LEv> = Vec::new();
         for e in &evs {
-            let inside = ranges.iter().any(|&(r0, r1)| e.s >= r0 - 1e-9 && e.s <= r1 + 1e-9);
+            let inside = ranges
+                .iter()
+                .any(|&(r0, r1)| e.s >= r0 - 1e-9 && e.s <= r1 + 1e-9);
             if inside {
                 comp_evs.push(e);
             }
@@ -495,7 +572,11 @@ pub fn clip(
             });
         }
         let s_start = ranges[ranges.len() - 1].0.min(ranges[0].0);
-        let s_first = if wrap_merge && ci == 0 { ranges[1].0 } else { s_start };
+        let s_first = if wrap_merge && ci == 0 {
+            ranges[1].0
+        } else {
+            s_start
+        };
         let s_last = ranges[0].1;
         let mut counter = 2u32;
         let mut any_event = false;
@@ -517,7 +598,11 @@ pub fn clip(
                 .incs
                 .iter()
                 .find_map(|i| i.stop.map(|(si, _)| on_ref(fg, stoppers[si].owner)))
-                .or_else(|| e.incs.iter().find_map(|i| i.seam.map(|d| EdgeOrSplit::Seam(fg.id, d))))
+                .or_else(|| {
+                    e.incs
+                        .iter()
+                        .find_map(|i| i.seam.map(|d| EdgeOrSplit::Seam(fg.id, d)))
+                })
                 .unwrap_or(who.self_ref());
             let key = who.key(on, end);
             let seam_rel = e.incs.iter().all(|i| i.seam.is_some());
@@ -530,7 +615,13 @@ pub fn clip(
                     v.push((STOP + si, tp));
                 }
                 any_event = true;
-                out.events.push(AEvent { uv: inc.uv, key: key.clone(), inc: v, artificial: false, seam_rel });
+                out.events.push(AEvent {
+                    uv: inc.uv,
+                    key: key.clone(),
+                    inc: v,
+                    artificial: false,
+                    seam_rel,
+                });
             }
         }
         // Free ends.
@@ -554,13 +645,20 @@ pub fn clip(
                     })
                     .unwrap_or_else(|| fg.wrap(poly_at(&pts, s)));
                 let key = if (which == 0 && s < 1e-9) || (which == 1 && s > n - 1e-9) {
-                    input.end_keys[which].clone().unwrap_or_else(|| who.key(who.self_ref(), which as u32))
+                    input.end_keys[which]
+                        .clone()
+                        .unwrap_or_else(|| who.key(who.self_ref(), which as u32))
                 } else {
                     who.key(who.self_ref(), which as u32)
                 };
                 let v = incs_at(&out, s, uv);
-                out.events.push(AEvent { uv, key, inc: v, artificial: false, seam_rel: false });
-                any_event = true;
+                out.events.push(AEvent {
+                    uv,
+                    key,
+                    inc: v,
+                    artificial: false,
+                    seam_rel: false,
+                });
             }
         } else if !any_event {
             // Closed loop with no events at all: artificial anchor.
@@ -569,7 +667,13 @@ pub fn clip(
                 cv.closed = true;
                 let uv = cv.pts[0];
                 let p0 = cv.par[0];
-                out.events.push(AEvent { uv, key: who.key(who.self_ref(), 0), inc: vec![(c, p0)], artificial: true, seam_rel: true });
+                out.events.push(AEvent {
+                    uv,
+                    key: who.key(who.self_ref(), 0),
+                    inc: vec![(c, p0)],
+                    artificial: true,
+                    seam_rel: true,
+                });
             }
         }
     }

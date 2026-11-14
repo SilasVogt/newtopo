@@ -4,7 +4,9 @@
 
 use super::clip::Who;
 use super::ctx::{BodyCtx, FaceGeom};
-use crate::doc::{CutPoint, Document, IsoDir, PatchBound, PatchId, Plane, Rule, SliceOrient, SliceScope, Spacing};
+use crate::doc::{
+    CutPoint, Document, IsoDir, PatchBound, PatchId, Plane, Rule, SliceOrient, SliceScope, Spacing,
+};
 use crate::keys::{LineKey, RuleId, VertexKey};
 use glam::{DVec2, DVec3};
 use newtopo_kernel::{BodyId, CurveKind, EdgeId, FaceId, SurfaceKind};
@@ -143,7 +145,14 @@ pub fn default_phase_dir(axis: DVec3) -> DVec3 {
 
 /// Canonical start of the periodic direction `dir` on a face: where the
 /// face's phase reference direction meets the surface.
-pub fn canonical(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, dir: usize, other: f64) -> f64 {
+pub fn canonical(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    fg: &FaceGeom,
+    dir: usize,
+    other: f64,
+) -> f64 {
     let axis = fg.info.axis_dir.unwrap_or(DVec3::Z).normalize_or_zero();
     let origin = fg.info.axis_origin.unwrap_or(DVec3::ZERO);
     let rf = doc
@@ -153,13 +162,27 @@ pub fn canonical(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, dir
         .map(|d| (d - axis * axis.dot(d)).normalize_or_zero())
         .filter(|d| d.length() > 0.5)
         .unwrap_or_else(|| default_phase_dir(axis));
-    let per = if dir == 0 { fg.uper.or(fg.info.u_period) } else { fg.vper.or(fg.info.v_period) }.unwrap_or(2.0 * PI);
+    let per = if dir == 0 {
+        fg.uper.or(fg.info.u_period)
+    } else {
+        fg.vper.or(fg.info.v_period)
+    }
+    .unwrap_or(2.0 * PI);
     let base = if dir == 0 { fg.lo.x } else { fg.lo.y };
     let side = axis.cross(rf);
     // Signed angle of the surface's radial (u) or normal (v) direction from
     // the reference, around the axis; its zero is the canonical angle.
     let ang = |ts: &[f64]| -> Vec<f64> {
-        let uvs: Vec<DVec2> = ts.iter().map(|&t| if dir == 0 { DVec2::new(t, other) } else { DVec2::new(other, t) }).collect();
+        let uvs: Vec<DVec2> = ts
+            .iter()
+            .map(|&t| {
+                if dir == 0 {
+                    DVec2::new(t, other)
+                } else {
+                    DVec2::new(other, t)
+                }
+            })
+            .collect();
         let ev = ctx.face_eval(fg.id, &uvs);
         ev.iter()
             .map(|e| {
@@ -179,7 +202,9 @@ pub fn canonical(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, dir
     if a.len() != n {
         return base;
     }
-    let i = (0..n).min_by(|&x, &y| a[x].abs().total_cmp(&a[y].abs())).unwrap();
+    let i = (0..n)
+        .min_by(|&x, &y| a[x].abs().total_cmp(&a[y].abs()))
+        .unwrap();
     let step = per / n as f64;
     // Secant / bisection on the angle near the best sample.
     let (mut lo, mut hi) = (ts[i] - step, ts[i] + step);
@@ -205,27 +230,55 @@ pub fn canonical(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, dir
     }
     // Snap onto the seam when within a hair of it.
     let rel = ((t - base) / per).rem_euclid(1.0);
-    if rel < 1e-7 || rel > 1.0 - 1e-7 { base } else { base + rel * per }
+    if !(1e-7..=1.0 - 1e-7).contains(&rel) {
+        base
+    } else {
+        base + rel * per
+    }
 }
 
 /// Positions of `count` iso lines along `dir` across a patch (SPEC §6.2,
 /// §6.3). Periodic (patch wraps): N lines → N segments from `phase`.
 /// Open: N lines → N + 1 segments.
 #[allow(clippy::too_many_arguments)]
-pub fn spread(ctx: &BodyCtx, fg: &FaceGeom, p: &Patch, dir: usize, count: u32, phase: Option<f64>, spacing: Spacing) -> Vec<f64> {
+pub fn spread(
+    ctx: &BodyCtx,
+    fg: &FaceGeom,
+    p: &Patch,
+    dir: usize,
+    count: u32,
+    phase: Option<f64>,
+    spacing: Spacing,
+) -> Vec<f64> {
     if count == 0 {
         return vec![];
     }
     let n = count as usize;
-    let (a, b) = if dir == 0 { (p.lo.x, p.hi.x) } else { (p.lo.y, p.hi.y) };
-    let (oa, ob) = if dir == 0 { (p.lo.y, p.hi.y) } else { (p.lo.x, p.hi.x) };
+    let (a, b) = if dir == 0 {
+        (p.lo.x, p.hi.x)
+    } else {
+        (p.lo.y, p.hi.y)
+    };
+    let (oa, ob) = if dir == 0 {
+        (p.lo.y, p.hi.y)
+    } else {
+        (p.lo.x, p.hi.x)
+    };
     let wraps = p.wraps[dir];
     let per = if dir == 0 { fg.uper } else { fg.vper };
     let (start, len, fracs): (f64, f64, Vec<f64>) = if wraps {
         let per = per.unwrap_or(b - a);
-        (phase.unwrap_or(a), per, (0..n).map(|i| i as f64 / n as f64).collect())
+        (
+            phase.unwrap_or(a),
+            per,
+            (0..n).map(|i| i as f64 / n as f64).collect(),
+        )
     } else {
-        (a, b - a, (0..n).map(|i| (i + 1) as f64 / (n + 1) as f64).collect())
+        (
+            a,
+            b - a,
+            (0..n).map(|i| (i + 1) as f64 / (n + 1) as f64).collect(),
+        )
     };
     if spacing == Spacing::Parametric || len <= 0.0 {
         return fracs.iter().map(|f| start + len * f).collect();
@@ -238,7 +291,11 @@ pub fn spread(ctx: &BodyCtx, fg: &FaceGeom, p: &Patch, dir: usize, count: u32, p
         let pts: Vec<DVec2> = (0..=m)
             .map(|i| {
                 let t = start + len * i as f64 / m as f64;
-                if dir == 0 { DVec2::new(t, other) } else { DVec2::new(other, t) }
+                if dir == 0 {
+                    DVec2::new(t, other)
+                } else {
+                    DVec2::new(other, t)
+                }
             })
             .collect();
         let ev = ctx.face_eval(fg.id, &pts);
@@ -271,22 +328,47 @@ pub fn spread(ctx: &BodyCtx, fg: &FaceGeom, p: &Patch, dir: usize, count: u32, p
 }
 
 /// An iso line across the face at `value` (cover coordinates).
-pub fn iso_line(fg: &FaceGeom, dir: usize, value: f64, along: Option<(f64, f64)>) -> (Vec<DVec2>, bool) {
+pub fn iso_line(
+    fg: &FaceGeom,
+    dir: usize,
+    value: f64,
+    along: Option<(f64, f64)>,
+) -> (Vec<DVec2>, bool) {
     // dir 0: constant u (runs along v).
-    let (closed_along, lo, hi) = if dir == 0 { (fg.vper, fg.lo.y, fg.hi.y) } else { (fg.uper, fg.lo.x, fg.hi.x) };
+    let (closed_along, lo, hi) = if dir == 0 {
+        (fg.vper, fg.lo.y, fg.hi.y)
+    } else {
+        (fg.uper, fg.lo.x, fg.hi.x)
+    };
     if let Some(p) = closed_along {
         let a = lo;
-        let pts = if dir == 0 { vec![DVec2::new(value, a), DVec2::new(value, a + p)] } else { vec![DVec2::new(a, value), DVec2::new(a + p, value)] };
+        let pts = if dir == 0 {
+            vec![DVec2::new(value, a), DVec2::new(value, a + p)]
+        } else {
+            vec![DVec2::new(a, value), DVec2::new(a + p, value)]
+        };
         return (pts, true);
     }
     let (a, b) = along.unwrap_or((lo, hi));
     let m = 0.05 * (b - a).abs().max(fg.size_uv() * 0.01);
     let (a, b) = (a.min(lo) - m, b.max(hi) + m);
-    let pts = if dir == 0 { vec![DVec2::new(value, a), DVec2::new(value, b)] } else { vec![DVec2::new(a, value), DVec2::new(b, value)] };
+    let pts = if dir == 0 {
+        vec![DVec2::new(value, a), DVec2::new(value, b)]
+    } else {
+        vec![DVec2::new(a, value), DVec2::new(b, value)]
+    };
     (pts, false)
 }
 
-fn phase_for(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Patch, dir: usize, start_on_seam: bool) -> Option<f64> {
+fn phase_for(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    fg: &FaceGeom,
+    p: &Patch,
+    dir: usize,
+    start_on_seam: bool,
+) -> Option<f64> {
     if !p.wraps[dir] {
         return None;
     }
@@ -294,7 +376,11 @@ fn phase_for(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Pat
     if start_on_seam {
         return Some(base);
     }
-    let other = if dir == 0 { 0.5 * (p.lo.y + p.hi.y) } else { 0.5 * (p.lo.x + p.hi.x) };
+    let other = if dir == 0 {
+        0.5 * (p.lo.y + p.hi.y)
+    } else {
+        0.5 * (p.lo.x + p.hi.x)
+    };
     Some(canonical(ctx, doc, body, fg, dir, other))
 }
 
@@ -321,11 +407,19 @@ fn family(
     }
     let phase = phase_for(ctx, doc, body, fg, p, dir, start_on_seam);
     let vals = spread(ctx, fg, p, dir, count, phase, spacing);
-    let along = if dir == 0 { (p.lo.y, p.hi.y) } else { (p.lo.x, p.hi.x) };
+    let along = if dir == 0 {
+        (p.lo.y, p.hi.y)
+    } else {
+        (p.lo.x, p.hi.x)
+    };
     for (i, v) in vals.into_iter().enumerate() {
         let (pts, closed) = iso_line(fg, dir, v, Some(along));
         out.push(GLine {
-            who: Who::Line(LineKey { rule, index: index_base + i as u32, sub }),
+            who: Who::Line(LineKey {
+                rule,
+                index: index_base + i as u32,
+                sub,
+            }),
             face: fg.id,
             pts,
             closed,
@@ -340,7 +434,17 @@ fn family(
 
 /// Radial lines on a planar ring patch.
 #[allow(clippy::too_many_arguments)]
-fn radial(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Patch, count: u32, rule: RuleId, sub: u32, out: &mut Vec<GLine>) {
+fn radial(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    fg: &FaceGeom,
+    p: &Patch,
+    count: u32,
+    rule: RuleId,
+    sub: u32,
+    out: &mut Vec<GLine>,
+) {
     let Some(c) = fg.ring else { return };
     let ev = ctx.face_eval(fg.id, &[c, c + DVec2::X, c + DVec2::Y]);
     if ev.len() != 3 {
@@ -356,7 +460,10 @@ fn radial(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Patch,
     let rf = (rf - axis * axis.dot(rf)).normalize_or_zero();
     let side = axis.cross(rf);
     // 3D direction → UV direction (plane param is affine).
-    let m = glam::DMat2::from_cols(DVec2::new(eu.dot(eu), eu.dot(evv)), DVec2::new(evv.dot(eu), evv.dot(evv)));
+    let m = glam::DMat2::from_cols(
+        DVec2::new(eu.dot(eu), eu.dot(evv)),
+        DVec2::new(evv.dot(eu), evv.dot(evv)),
+    );
     let big = (fg.hi - fg.lo).length() * 2.0 + 1.0;
     let _ = o;
     for i in 0..count {
@@ -366,7 +473,11 @@ fn radial(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Patch,
         let duv = m.inverse() * rhs;
         let duv = duv.normalize_or_zero();
         out.push(GLine {
-            who: Who::Line(LineKey { rule, index: i, sub }),
+            who: Who::Line(LineKey {
+                rule,
+                index: i,
+                sub,
+            }),
             face: fg.id,
             pts: vec![c, c + duv * big],
             closed: false,
@@ -394,15 +505,55 @@ pub fn rule_lines(
 ) {
     let find = |pid: &PatchId| patches.iter().find(|p| p.id == *pid);
     match r {
-        Rule::Grid { patch, count_u, count_v, start_on_seam, spacing } => {
+        Rule::Grid {
+            patch,
+            count_u,
+            count_v,
+            start_on_seam,
+            spacing,
+        } => {
             if patch.body != body || patch.face != fg.id {
                 return;
             }
             let Some(p) = find(patch) else { return };
-            family(ctx, doc, body, fg, p, 0, *count_u, *start_on_seam, *spacing, rule, 0, 0, out);
-            family(ctx, doc, body, fg, p, 1, *count_v, *start_on_seam, *spacing, rule, B_FAMILY, 0, out);
+            family(
+                ctx,
+                doc,
+                body,
+                fg,
+                p,
+                0,
+                *count_u,
+                *start_on_seam,
+                *spacing,
+                rule,
+                0,
+                0,
+                out,
+            );
+            family(
+                ctx,
+                doc,
+                body,
+                fg,
+                p,
+                1,
+                *count_v,
+                *start_on_seam,
+                *spacing,
+                rule,
+                B_FAMILY,
+                0,
+                out,
+            );
         }
-        Rule::Connect { patches: list, count_a, count_b, start_on_seam, flipped } => {
+        Rule::Connect {
+            patches: list,
+            count_a,
+            count_b,
+            start_on_seam,
+            flipped,
+        } => {
             let bend = bend_class(ctx, fg);
             for (sub, pid) in list.iter().enumerate() {
                 if pid.body != body || pid.face != fg.id {
@@ -416,12 +567,54 @@ pub fn rule_lines(
                     Bend::Radial => radial(ctx, doc, body, fg, p, *count_a, rule, sub, out),
                     Bend::OneU | Bend::OneV => {
                         let d = if (bend == Bend::OneU) != flip { 0 } else { 1 };
-                        family(ctx, doc, body, fg, p, d, *count_a, *start_on_seam, Spacing::ArcLength, rule, 0, sub, out);
+                        family(
+                            ctx,
+                            doc,
+                            body,
+                            fg,
+                            p,
+                            d,
+                            *count_a,
+                            *start_on_seam,
+                            Spacing::ArcLength,
+                            rule,
+                            0,
+                            sub,
+                            out,
+                        );
                     }
                     Bend::Two => {
                         let (da, db) = if flip { (1, 0) } else { (0, 1) };
-                        family(ctx, doc, body, fg, p, da, *count_a, *start_on_seam, Spacing::ArcLength, rule, 0, sub, out);
-                        family(ctx, doc, body, fg, p, db, *count_b, *start_on_seam, Spacing::ArcLength, rule, B_FAMILY, sub, out);
+                        family(
+                            ctx,
+                            doc,
+                            body,
+                            fg,
+                            p,
+                            da,
+                            *count_a,
+                            *start_on_seam,
+                            Spacing::ArcLength,
+                            rule,
+                            0,
+                            sub,
+                            out,
+                        );
+                        family(
+                            ctx,
+                            doc,
+                            body,
+                            fg,
+                            p,
+                            db,
+                            *count_b,
+                            *start_on_seam,
+                            Spacing::ArcLength,
+                            rule,
+                            B_FAMILY,
+                            sub,
+                            out,
+                        );
                     }
                 }
             }
@@ -435,20 +628,30 @@ pub fn rule_lines(
                     None
                 }
                 SliceScope::Patches(list) => {
-                    let v: Vec<usize> = list.iter().filter(|p| p.body == body && p.face == fg.id).filter_map(|pid| find(pid).map(|p| p.index)).collect();
+                    let v: Vec<usize> = list
+                        .iter()
+                        .filter(|p| p.body == body && p.face == fg.id)
+                        .filter_map(|pid| find(pid).map(|p| p.index))
+                        .collect();
                     if v.is_empty() {
                         return;
                     }
                     Some(v)
                 }
             };
-            let Some(planes) = plans.slice_planes.get(&rule) else { return };
+            let Some(planes) = plans.slice_planes.get(&rule) else {
+                return;
+            };
             for (k, pl) in planes.iter().enumerate() {
                 let polys = section(ctx, fg, pl.origin, pl.normal);
                 for (ci, (pts, closed)) in polys.into_iter().enumerate() {
                     out.push(GLine {
                         // Unique per face so keys never collide across faces.
-                        who: Who::Line(LineKey { rule, index: k as u32, sub: fg.id.0 * 64 + ci.min(63) as u32 }),
+                        who: Who::Line(LineKey {
+                            rule,
+                            index: k as u32,
+                            sub: fg.id.0 * 64 + ci.min(63) as u32,
+                        }),
                         face: fg.id,
                         pts,
                         closed,
@@ -474,11 +677,19 @@ pub fn rule_lines(
                 } else {
                     pc.seed.map(|s| {
                         let t = iso_abs(fg, 1 - dir, s);
-                        if dir == 0 { DVec2::new(value, t) } else { DVec2::new(t, value) }
+                        if dir == 0 {
+                            DVec2::new(value, t)
+                        } else {
+                            DVec2::new(t, value)
+                        }
                     })
                 };
                 out.push(GLine {
-                    who: Who::Line(LineKey { rule, index: i as u32, sub: 0 }),
+                    who: Who::Line(LineKey {
+                        rule,
+                        index: i as u32,
+                        sub: 0,
+                    }),
                     face: fg.id,
                     pts,
                     closed,
@@ -494,7 +705,11 @@ pub fn rule_lines(
             if let Some(segs) = plans.cut_segments.get(&rule) {
                 for s in segs.iter().filter(|s| s.face == fg.id) {
                     out.push(GLine {
-                        who: Who::Line(LineKey { rule, index: s.index, sub: s.sub }),
+                        who: Who::Line(LineKey {
+                            rule,
+                            index: s.index,
+                            sub: s.sub,
+                        }),
                         face: fg.id,
                         pts: vec![s.a, s.b],
                         closed: false,
@@ -512,25 +727,76 @@ pub fn rule_lines(
 
 /// Normalised iso value (0..1 of the face's UV range) → absolute.
 pub fn iso_abs(fg: &FaceGeom, dir: usize, value: f64) -> f64 {
-    let (a, b) = if dir == 0 { (fg.info.u_range.0, fg.info.u_range.1) } else { (fg.info.v_range.0, fg.info.v_range.1) };
+    let (a, b) = if dir == 0 {
+        (fg.info.u_range.0, fg.info.u_range.1)
+    } else {
+        (fg.info.v_range.0, fg.info.v_range.1)
+    };
     a + (b - a) * value
 }
 
 /// Inverse of [`iso_abs`].
 pub fn iso_norm(fg: &FaceGeom, dir: usize, abs: f64) -> f64 {
-    let (a, b) = if dir == 0 { (fg.info.u_range.0, fg.info.u_range.1) } else { (fg.info.v_range.0, fg.info.v_range.1) };
-    if (b - a).abs() < 1e-300 { 0.0 } else { (abs - a) / (b - a) }
+    let (a, b) = if dir == 0 {
+        (fg.info.u_range.0, fg.info.u_range.1)
+    } else {
+        (fg.info.v_range.0, fg.info.v_range.1)
+    };
+    if (b - a).abs() < 1e-300 {
+        0.0
+    } else {
+        (abs - a) / (b - a)
+    }
 }
 
 /// Implicit grid lines for patches with no spread rule and no outer
 /// boundary (SPEC §4.1).
-pub fn implicit_lines(ctx: &BodyCtx, doc: &Document, body: BodyId, fg: &FaceGeom, p: &Patch, out: &mut Vec<GLine>) {
+pub fn implicit_lines(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    fg: &FaceGeom,
+    p: &Patch,
+    out: &mut Vec<GLine>,
+) {
     let n = doc.settings.min_closed_segments.max(3);
     let rule = implicit_rule(fg.id);
     let sub = p.index as u32;
-    let (nu, nv) = if fg.info.kind == SurfaceKind::Sphere { (n, (n / 2).max(1)) } else { (n, n) };
-    family(ctx, doc, body, fg, p, 0, nu, false, Spacing::ArcLength, rule, 0, sub, out);
-    family(ctx, doc, body, fg, p, 1, nv, false, Spacing::ArcLength, rule, B_FAMILY, sub, out);
+    let (nu, nv) = if fg.info.kind == SurfaceKind::Sphere {
+        (n, (n / 2).max(1))
+    } else {
+        (n, n)
+    };
+    family(
+        ctx,
+        doc,
+        body,
+        fg,
+        p,
+        0,
+        nu,
+        false,
+        Spacing::ArcLength,
+        rule,
+        0,
+        sub,
+        out,
+    );
+    family(
+        ctx,
+        doc,
+        body,
+        fg,
+        p,
+        1,
+        nv,
+        false,
+        Spacing::ArcLength,
+        rule,
+        B_FAMILY,
+        sub,
+        out,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -547,7 +813,10 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
     let mut uvs = Vec::with_capacity((nu + 1) * (nv + 1));
     for i in 0..=nu {
         for j in 0..=nv {
-            uvs.push(DVec2::new(fg.lo.x + ext.x * i as f64 / nu as f64, fg.lo.y + ext.y * j as f64 / nv as f64));
+            uvs.push(DVec2::new(
+                fg.lo.x + ext.x * i as f64 / nu as f64,
+                fg.lo.y + ext.y * j as f64 / nv as f64,
+            ));
         }
     }
     let ev = ctx.face_eval(fg.id, &uvs);
@@ -572,16 +841,22 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
     type EKey = (u8, usize, usize);
     let mut point: HashMap<EKey, DVec2> = HashMap::new();
     let mut adj: HashMap<EKey, Vec<EKey>> = HashMap::new();
-    let mut cross = |k: EKey, a: DVec2, b: DVec2, fa: f64, fb: f64, point: &mut HashMap<EKey, DVec2>| {
-        let t = fa / (fa - fb);
-        point.entry(k).or_insert(a + (b - a) * t);
-    };
+    let cross =
+        |k: EKey, a: DVec2, b: DVec2, fa: f64, fb: f64, point: &mut HashMap<EKey, DVec2>| {
+            let t = fa / (fa - fb);
+            point.entry(k).or_insert(a + (b - a) * t);
+        };
     for i in 0..nu {
         for j in 0..nv {
             let c = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
             let p = [uv(i, j), uv(i + 1, j), uv(i + 1, j + 1), uv(i, j + 1)];
             // Edges: 0 bottom (i,j)-(i+1,j), 1 right, 2 top, 3 left.
-            let keys: [EKey; 4] = [(0, norm_i(i), norm_j(j)), (1, norm_i(i + 1), norm_j(j)), (0, norm_i(i), norm_j(j + 1)), (1, norm_i(i), norm_j(j))];
+            let keys: [EKey; 4] = [
+                (0, norm_i(i), norm_j(j)),
+                (1, norm_i(i + 1), norm_j(j)),
+                (0, norm_i(i), norm_j(j + 1)),
+                (1, norm_i(i), norm_j(j)),
+            ];
             let mut hits = Vec::new();
             for e in 0..4 {
                 let (a, b) = (e, (e + 1) % 4);
@@ -626,7 +901,10 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
         let mut cur = s;
         let mut closed = false;
         loop {
-            let nxt = adj[&cur].iter().copied().find(|&x| !used.contains(&(cur, x)) && !used.contains(&(x, cur)));
+            let nxt = adj[&cur]
+                .iter()
+                .copied()
+                .find(|&x| !used.contains(&(cur, x)) && !used.contains(&(x, cur)));
             let Some(x) = nxt else { break };
             used.insert((cur, x));
             if x == s {
@@ -682,8 +960,8 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
             let k = pts.len() - 1;
             let shift = pts[k] - pts[0];
             let snapped = DVec2::new(
-                if fg.uper.is_some() { (shift.x / fg.uper.unwrap()).round() * fg.uper.unwrap() } else { 0.0 },
-                if fg.vper.is_some() { (shift.y / fg.vper.unwrap()).round() * fg.vper.unwrap() } else { 0.0 },
+                fg.uper.map(|p| (shift.x / p).round() * p).unwrap_or(0.0),
+                fg.vper.map(|p| (shift.y / p).round() * p).unwrap_or(0.0),
             );
             pts[k] = pts[0] + snapped;
         }
@@ -691,8 +969,12 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
     }
     // Deterministic order.
     out.sort_by(|a, b| {
-        let ka = a.0.iter().fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
-        let kb = b.0.iter().fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
+        let ka =
+            a.0.iter()
+                .fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
+        let kb =
+            b.0.iter()
+                .fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
         ka.x.total_cmp(&kb.x).then(ka.y.total_cmp(&kb.y))
     });
     out
@@ -730,7 +1012,11 @@ pub fn slice_faces(ctx: &BodyCtx, body: BodyId, scope: &SliceScope) -> Vec<FaceI
             }
         }
         SliceScope::Patches(list) => {
-            let mut v: Vec<FaceId> = list.iter().filter(|p| p.body == body).map(|p| p.face).collect();
+            let mut v: Vec<FaceId> = list
+                .iter()
+                .filter(|p| p.body == body)
+                .map(|p| p.face)
+                .collect();
             v.sort();
             v.dedup();
             v
@@ -739,7 +1025,12 @@ pub fn slice_faces(ctx: &BodyCtx, body: BodyId, scope: &SliceScope) -> Vec<FaceI
 }
 
 /// Planes for a slice rule (SPEC §6.4).
-pub fn compute_slice_planes(ctx: &BodyCtx, faces: &[FaceId], count: u32, orient: &SliceOrient) -> Vec<Plane> {
+pub fn compute_slice_planes(
+    ctx: &BodyCtx,
+    faces: &[FaceId],
+    count: u32,
+    orient: &SliceOrient,
+) -> Vec<Plane> {
     if count == 0 || faces.is_empty() {
         return vec![];
     }
@@ -756,7 +1047,10 @@ pub fn compute_slice_planes(ctx: &BodyCtx, faces: &[FaceId], count: u32, orient:
             .map(|k| {
                 let a = (k as f64 + 0.5) * PI / count as f64;
                 let d = rf * a.cos() + side * a.sin();
-                Plane { origin, normal: axis.cross(d).normalize() }
+                Plane {
+                    origin,
+                    normal: axis.cross(d).normalize(),
+                }
             })
             .collect()
     };
@@ -771,7 +1065,10 @@ pub fn compute_slice_planes(ctx: &BodyCtx, faces: &[FaceId], count: u32, orient:
         (0..count)
             .map(|k| {
                 let d = lo + (hi - lo) * (k + 1) as f64 / (count + 1) as f64;
-                Plane { origin: n * d, normal: n }
+                Plane {
+                    origin: n * d,
+                    normal: n,
+                }
             })
             .collect()
     };
@@ -797,12 +1094,14 @@ pub fn compute_slice_planes(ctx: &BodyCtx, faces: &[FaceId], count: u32, orient:
                 let fg = ctx.face(*f);
                 match fg.info.kind {
                     SurfaceKind::Plane => {}
-                    SurfaceKind::Cylinder | SurfaceKind::Cone | SurfaceKind::Sphere | SurfaceKind::Torus | SurfaceKind::Revolution => {
-                        match (fg.info.axis_origin, fg.info.axis_dir) {
-                            (Some(o), Some(d)) => axes.push((o, d.normalize())),
-                            _ => ok = false,
-                        }
-                    }
+                    SurfaceKind::Cylinder
+                    | SurfaceKind::Cone
+                    | SurfaceKind::Sphere
+                    | SurfaceKind::Torus
+                    | SurfaceKind::Revolution => match (fg.info.axis_origin, fg.info.axis_dir) {
+                        (Some(o), Some(d)) => axes.push((o, d.normalize())),
+                        _ => ok = false,
+                    },
                     _ => ok = false,
                 }
             }
@@ -823,7 +1122,10 @@ pub fn compute_slice_planes(ctx: &BodyCtx, faces: &[FaceId], count: u32, orient:
                 for w in &ctx.topo.face(*f).wires {
                     for c in &w.coedges {
                         let et = ctx.topo.edge(c.edge);
-                        if et.curve == CurveKind::Line && !et.seam && best.is_none_or(|(l, _)| et.length > l) {
+                        if et.curve == CurveKind::Line
+                            && !et.seam
+                            && best.is_none_or(|(l, _)| et.length > l)
+                        {
                             best = Some((et.length, c.edge));
                         }
                     }
@@ -859,7 +1161,11 @@ fn circumcentre(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
 }
 
 /// Resolved location of a cut point: candidate (face, uv) pairs.
-pub fn cut_point_locations(ctx: &BodyCtx, cp: &CutPoint, known: &HashMap<VertexKey, Vec<(FaceId, DVec2)>>) -> Vec<(FaceId, DVec2)> {
+pub fn cut_point_locations(
+    ctx: &BodyCtx,
+    cp: &CutPoint,
+    known: &HashMap<VertexKey, Vec<(FaceId, DVec2)>>,
+) -> Vec<(FaceId, DVec2)> {
     match cp {
         CutPoint::Face { face, uv, .. } => vec![(*face, *uv)],
         CutPoint::CadEdge { edge, t, .. } => {
@@ -867,7 +1173,10 @@ pub fn cut_point_locations(ctx: &BodyCtx, cp: &CutPoint, known: &HashMap<VertexK
             et.faces
                 .iter()
                 .filter_map(|f| {
-                    ctx.kernel.edge_pcurve_eval(ctx.kbody, *edge, *f, false, &[*t]).ok().and_then(|v| v.first().map(|uv| (*f, *uv)))
+                    ctx.kernel
+                        .edge_pcurve_eval(ctx.kbody, *edge, *f, false, &[*t])
+                        .ok()
+                        .and_then(|v| v.first().map(|uv| (*f, *uv)))
                 })
                 .collect()
         }
@@ -878,7 +1187,11 @@ pub fn cut_point_locations(ctx: &BodyCtx, cp: &CutPoint, known: &HashMap<VertexK
                     for c in &ctx.face(f).curves {
                         for (k, end) in c.ends.iter().enumerate() {
                             if *end == Some(*v) {
-                                let uv = if k == 0 { c.pts[0] } else { c.pts[c.pts.len() - 1] };
+                                let uv = if k == 0 {
+                                    c.pts[0]
+                                } else {
+                                    c.pts[c.pts.len() - 1]
+                                };
                                 if !out.iter().any(|(ff, _)| *ff == f) {
                                     out.push((f, uv));
                                 }
@@ -894,8 +1207,17 @@ pub fn cut_point_locations(ctx: &BodyCtx, cp: &CutPoint, known: &HashMap<VertexK
 }
 
 /// Plan cut / join segments of a rule. Returns None when unresolvable.
-pub fn plan_cut(ctx: &BodyCtx, rule: RuleId, points: &[CutPoint], closed: bool, known: &HashMap<VertexKey, Vec<(FaceId, DVec2)>>) -> Option<Vec<CutSeg>> {
-    let locs: Vec<Vec<(FaceId, DVec2)>> = points.iter().map(|p| cut_point_locations(ctx, p, known)).collect();
+pub fn plan_cut(
+    ctx: &BodyCtx,
+    rule: RuleId,
+    points: &[CutPoint],
+    closed: bool,
+    known: &HashMap<VertexKey, Vec<(FaceId, DVec2)>>,
+) -> Option<Vec<CutSeg>> {
+    let locs: Vec<Vec<(FaceId, DVec2)>> = points
+        .iter()
+        .map(|p| cut_point_locations(ctx, p, known))
+        .collect();
     if locs.iter().any(|l| l.is_empty()) {
         return None;
     }
@@ -918,7 +1240,14 @@ pub fn plan_cut(ctx: &BodyCtx, rule: RuleId, points: &[CutPoint], closed: bool, 
             if let Some((_, ub)) = lb.iter().find(|(fb, _)| fb == fa) {
                 let fg = ctx.face(*fa);
                 let ub = fg.lift_near(*ub, *ua);
-                segs.push(CutSeg { face: *fa, index: i as u32, sub: 0, a: *ua, b: ub, keys: [key_of(i), key_of(j)] });
+                segs.push(CutSeg {
+                    face: *fa,
+                    index: i as u32,
+                    sub: 0,
+                    a: *ua,
+                    b: ub,
+                    keys: [key_of(i), key_of(j)],
+                });
                 done = true;
                 break;
             }
@@ -932,12 +1261,15 @@ pub fn plan_cut(ctx: &BodyCtx, rule: RuleId, points: &[CutPoint], closed: bool, 
             for (fb, ub) in lb {
                 for e in ctx.topo.edge_ids() {
                     let et = ctx.topo.edge(e);
-                    if et.seam || et.degenerate || !(et.faces.contains(fa) && et.faces.contains(fb)) {
+                    if et.seam || et.degenerate || !(et.faces.contains(fa) && et.faces.contains(fb))
+                    {
                         continue;
                     }
                     let pa = ctx.point(*fa, *ua);
                     let pb = ctx.point(*fb, *ub);
-                    let cost = |t: f64| (ctx.edge_point(e, t) - pa).length() + (ctx.edge_point(e, t) - pb).length();
+                    let cost = |t: f64| {
+                        (ctx.edge_point(e, t) - pa).length() + (ctx.edge_point(e, t) - pb).length()
+                    };
                     let (t0, t1) = et.t_range;
                     let m = 32;
                     let mut bt = (f64::INFINITY, t0);
@@ -949,7 +1281,8 @@ pub fn plan_cut(ctx: &BodyCtx, rule: RuleId, points: &[CutPoint], closed: bool, 
                         }
                     }
                     let st = (t1 - t0) / m as f64;
-                    let (mut lo, mut hi) = ((bt.1 - st).max(t0.min(t1)), (bt.1 + st).min(t0.max(t1)));
+                    let (mut lo, mut hi) =
+                        ((bt.1 - st).max(t0.min(t1)), (bt.1 + st).min(t0.max(t1)));
                     for _ in 0..50 {
                         let m1 = lo + (hi - lo) / 3.0;
                         let m2 = hi - (hi - lo) / 3.0;
@@ -968,13 +1301,33 @@ pub fn plan_cut(ctx: &BodyCtx, rule: RuleId, points: &[CutPoint], closed: bool, 
             }
         }
         let (_, fa, ua, fb, ub, e, t) = best?;
-        let ea = ctx.kernel.edge_pcurve_eval(ctx.kbody, e, fa, false, &[t]).ok()?[0];
-        let eb = ctx.kernel.edge_pcurve_eval(ctx.kbody, e, fb, false, &[t]).ok()?[0];
+        let ea = ctx
+            .kernel
+            .edge_pcurve_eval(ctx.kbody, e, fa, false, &[t])
+            .ok()?[0];
+        let eb = ctx
+            .kernel
+            .edge_pcurve_eval(ctx.kbody, e, fb, false, &[t])
+            .ok()?[0];
         let fga = ctx.face(fa);
         let fgb = ctx.face(fb);
-        segs.push(CutSeg { face: fa, index: i as u32, sub: 0, a: ua, b: fga.lift_near(ea, ua), keys: [key_of(i), None] });
+        segs.push(CutSeg {
+            face: fa,
+            index: i as u32,
+            sub: 0,
+            a: ua,
+            b: fga.lift_near(ea, ua),
+            keys: [key_of(i), None],
+        });
         let eb2 = fgb.lift_near(eb, ub);
-        segs.push(CutSeg { face: fb, index: i as u32, sub: 1, a: eb2, b: ub, keys: [None, key_of(j)] });
+        segs.push(CutSeg {
+            face: fb,
+            index: i as u32,
+            sub: 1,
+            a: eb2,
+            b: ub,
+            keys: [None, key_of(j)],
+        });
     }
     Some(segs)
 }

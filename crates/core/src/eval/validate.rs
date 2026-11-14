@@ -33,7 +33,12 @@ pub struct Issue {
 
 impl Issue {
     fn new(kind: IssueKind, message: impl Into<String>) -> Self {
-        Issue { kind, message: message.into(), polygon: None, vertices: vec![] }
+        Issue {
+            kind,
+            message: message.into(),
+            polygon: None,
+            vertices: vec![],
+        }
     }
 }
 
@@ -60,20 +65,36 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
     for (pi, p) in mesh.polygons.iter().enumerate() {
         let pi = pi as u32;
         if p.verts.len() < 3 {
-            issues.push(Issue { polygon: Some(pi), ..Issue::new(IssueKind::TooFewVertices, "polygon with fewer than 3 vertices") });
+            issues.push(Issue {
+                polygon: Some(pi),
+                ..Issue::new(
+                    IssueKind::TooFewVertices,
+                    "polygon with fewer than 3 vertices",
+                )
+            });
             continue;
         }
         let mut sorted = p.verts.clone();
         sorted.sort();
         if sorted.windows(2).any(|w| w[0] == w[1]) {
-            issues.push(Issue { polygon: Some(pi), vertices: p.verts.clone(), ..Issue::new(IssueKind::RepeatedVertex, "polygon repeats a vertex") });
+            issues.push(Issue {
+                polygon: Some(pi),
+                vertices: p.verts.clone(),
+                ..Issue::new(IssueKind::RepeatedVertex, "polygon repeats a vertex")
+            });
         }
         if p.verts.iter().any(|&v| v >= nv) {
-            issues.push(Issue { polygon: Some(pi), ..Issue::new(IssueKind::Degenerate, "vertex index out of range") });
+            issues.push(Issue {
+                polygon: Some(pi),
+                ..Issue::new(IssueKind::Degenerate, "vertex index out of range")
+            });
             continue;
         }
         if p.fan_fallback {
-            issues.push(Issue { polygon: Some(pi), ..Issue::new(IssueKind::FanFallback, "filled by the fan fallback") });
+            issues.push(Issue {
+                polygon: Some(pi),
+                ..Issue::new(IssueKind::FanFallback, "filled by the fan fallback")
+            });
         }
         let n = p.verts.len();
         for k in 0..n {
@@ -82,11 +103,23 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             *undirected.entry((a.min(b), a.max(b))).or_default() += 1;
         }
         // Geometry.
-        let pts: Vec<DVec3> = p.verts.iter().map(|&v| mesh.vertices[v as usize].position).collect();
+        let pts: Vec<DVec3> = p
+            .verts
+            .iter()
+            .map(|&v| mesh.vertices[v as usize].position)
+            .collect();
         let nn = newell(&pts);
-        let scale: f64 = pts.windows(2).map(|w| (w[1] - w[0]).length()).fold(0.0, f64::max).max(tol);
+        let scale: f64 = pts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .fold(0.0, f64::max)
+            .max(tol);
         if nn.length() <= tol * scale * 1e-3 {
-            issues.push(Issue { polygon: Some(pi), vertices: p.verts.clone(), ..Issue::new(IssueKind::Degenerate, "polygon has no area") });
+            issues.push(Issue {
+                polygon: Some(pi),
+                vertices: p.verts.clone(),
+                ..Issue::new(IssueKind::Degenerate, "polygon has no area")
+            });
             continue;
         }
         let avg: DVec3 = p.normals.iter().copied().sum();
@@ -96,13 +129,23 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             // lot of curvature; the evaluator checks UV orientation itself.
             let flat = p.normals.iter().all(|m| m.dot(avg) > 0.8);
             if flat && nn.normalize().dot(avg) < 0.0 {
-                issues.push(Issue { polygon: Some(pi), vertices: p.verts.clone(), ..Issue::new(IssueKind::Flipped, "polygon faces against the CAD normal") });
+                issues.push(Issue {
+                    polygon: Some(pi),
+                    vertices: p.verts.clone(),
+                    ..Issue::new(IssueKind::Flipped, "polygon faces against the CAD normal")
+                });
             }
         }
     }
     for (&(a, b), &c) in &directed {
         if c > 1 {
-            issues.push(Issue { vertices: vec![a, b], ..Issue::new(IssueKind::NonManifold, "directed edge used twice (inconsistent orientation)") });
+            issues.push(Issue {
+                vertices: vec![a, b],
+                ..Issue::new(
+                    IssueKind::NonManifold,
+                    "directed edge used twice (inconsistent orientation)",
+                )
+            });
         }
     }
     let mut edge_kind: HashMap<(u32, u32), Vec<OutEdgeKind>> = HashMap::new();
@@ -111,15 +154,27 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
         let pa = mesh.vertices[e.a as usize].position;
         let pb = mesh.vertices[e.b as usize].position;
         if (pa - pb).length() <= tol {
-            issues.push(Issue { vertices: vec![e.a, e.b], ..Issue::new(IssueKind::ZeroLengthEdge, "zero-length edge") });
+            issues.push(Issue {
+                vertices: vec![e.a, e.b],
+                ..Issue::new(IssueKind::ZeroLengthEdge, "zero-length edge")
+            });
         }
     }
     for (&(a, b), &c) in &undirected {
         if c > 2 {
-            issues.push(Issue { vertices: vec![a, b], ..Issue::new(IssueKind::NonManifold, "edge shared by more than two polygons") });
+            issues.push(Issue {
+                vertices: vec![a, b],
+                ..Issue::new(
+                    IssueKind::NonManifold,
+                    "edge shared by more than two polygons",
+                )
+            });
         }
         let Some(kinds) = edge_kind.get(&(a, b)) else {
-            issues.push(Issue { vertices: vec![a, b], ..Issue::new(IssueKind::MissingEdge, "polygon side without an edge") });
+            issues.push(Issue {
+                vertices: vec![a, b],
+                ..Issue::new(IssueKind::MissingEdge, "polygon side without an edge")
+            });
             continue;
         };
         if c == 1 {
@@ -128,7 +183,13 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
                 _ => false,
             });
             if !open_ok {
-                issues.push(Issue { vertices: vec![a, b], ..Issue::new(IssueKind::OpenBoundary, "hole in the mesh where the B-rep is closed") });
+                issues.push(Issue {
+                    vertices: vec![a, b],
+                    ..Issue::new(
+                        IssueKind::OpenBoundary,
+                        "hole in the mesh where the B-rep is closed",
+                    )
+                });
             }
         }
     }
@@ -138,7 +199,10 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
         let n = p.verts.len();
         for k in 0..n {
             let v = p.verts[k];
-            around.entry(v).or_default().push((p.verts[(k + n - 1) % n], p.verts[(k + 1) % n]));
+            around
+                .entry(v)
+                .or_default()
+                .push((p.verts[(k + n - 1) % n], p.verts[(k + 1) % n]));
         }
     }
     for (v, links) in &around {
@@ -148,7 +212,10 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             nxt.entry(next).or_default().push(prev);
         }
         if nxt.values().any(|l| l.len() > 1) {
-            issues.push(Issue { vertices: vec![*v], ..Issue::new(IssueKind::NonManifold, "non-manifold vertex") });
+            issues.push(Issue {
+                vertices: vec![*v],
+                ..Issue::new(IssueKind::NonManifold, "non-manifold vertex")
+            });
             continue;
         }
         // Count chains: starts are nodes with no predecessor.
@@ -156,7 +223,11 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
         let starts = nxt.keys().filter(|k| !preds.contains(k)).count();
         // Walk from any start (or any node if cyclic) and count visited links.
         let mut visited = 0usize;
-        let start = nxt.keys().find(|k| !preds.contains(k)).copied().or_else(|| nxt.keys().next().copied());
+        let start = nxt
+            .keys()
+            .find(|k| !preds.contains(k))
+            .copied()
+            .or_else(|| nxt.keys().next().copied());
         if let Some(mut cur) = start {
             let mut guard = 0;
             while let Some(l) = nxt.get(&cur) {
@@ -169,7 +240,10 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             }
         }
         if starts > 1 || visited < links.len() {
-            issues.push(Issue { vertices: vec![*v], ..Issue::new(IssueKind::NonManifold, "vertex fan is not a single disk") });
+            issues.push(Issue {
+                vertices: vec![*v],
+                ..Issue::new(IssueKind::NonManifold, "vertex fan is not a single disk")
+            });
         }
     }
     issues
@@ -187,13 +261,19 @@ pub fn validate_anchors(mesh: &OutputMesh, ctx: &BodyCtx, tol: f64) -> Vec<Issue
                 if let Ok(c) = ctx.kernel.face_classify_uv(ctx.kbody, face, &[uv])
                     && c[0] == UvClass::Out
                 {
-                    issues.push(Issue { vertices: vec![i as u32], ..Issue::new(IssueKind::AnchorOff, "face anchor outside its face") });
+                    issues.push(Issue {
+                        vertices: vec![i as u32],
+                        ..Issue::new(IssueKind::AnchorOff, "face anchor outside its face")
+                    });
                 }
                 ctx.point(face, uv)
             }
         };
         if (p - v.position).length() > tol {
-            issues.push(Issue { vertices: vec![i as u32], ..Issue::new(IssueKind::AnchorOff, "vertex is off its anchor") });
+            issues.push(Issue {
+                vertices: vec![i as u32],
+                ..Issue::new(IssueKind::AnchorOff, "vertex is off its anchor")
+            });
         }
     }
     issues
@@ -201,5 +281,8 @@ pub fn validate_anchors(mesh: &OutputMesh, ctx: &BodyCtx, tol: f64) -> Vec<Issue
 
 /// Issues that block (everything except the informational fan fallback).
 pub fn blocking(issues: &[Issue]) -> Vec<&Issue> {
-    issues.iter().filter(|i| i.kind != IssueKind::FanFallback).collect()
+    issues
+        .iter()
+        .filter(|i| i.kind != IssueKind::FanFallback)
+        .collect()
 }

@@ -99,13 +99,25 @@ fn interp_pars(pts: &[DVec2], pars: &[f64], p: f64) -> DVec2 {
     let inc = pars[n - 1] >= pars[0];
     for i in 0..n - 1 {
         let (a, b) = (pars[i], pars[i + 1]);
-        let inside = if inc { p >= a && p <= b } else { p <= a && p >= b };
+        let inside = if inc {
+            p >= a && p <= b
+        } else {
+            p <= a && p >= b
+        };
         if inside {
-            let f = if (b - a).abs() > 0.0 { (p - a) / (b - a) } else { 0.0 };
+            let f = if (b - a).abs() > 0.0 {
+                (p - a) / (b - a)
+            } else {
+                0.0
+            };
             return pts[i] + (pts[i + 1] - pts[i]) * f;
         }
     }
-    if (p - pars[0]).abs() < (p - pars[n - 1]).abs() { pts[0] } else { pts[n - 1] }
+    if (p - pars[0]).abs() < (p - pars[n - 1]).abs() {
+        pts[0]
+    } else {
+        pts[n - 1]
+    }
 }
 
 fn sub_path(pts: &[DVec2], pars: &[f64], p0: f64, p1: f64) -> Vec<DVec2> {
@@ -154,7 +166,8 @@ fn placeholder_positions(total: f64, existing: &[f64], start: f64, n: u32) -> Ve
 fn phase_start(pts: &[DVec3], cum: &[f64], rf: Option<DVec3>) -> f64 {
     let c = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
     let nrm = newell(pts).normalize_or_zero();
-    let rf = rf.unwrap_or_else(|| default_phase_dir(if nrm.length() > 0.5 { nrm } else { DVec3::Z }));
+    let rf =
+        rf.unwrap_or_else(|| default_phase_dir(if nrm.length() > 0.5 { nrm } else { DVec3::Z }));
     let rf = (rf - nrm * nrm.dot(rf)).normalize_or_zero();
     let mut best = (f64::NEG_INFINITY, 0usize);
     for (i, p) in pts.iter().enumerate() {
@@ -167,7 +180,11 @@ fn phase_start(pts: &[DVec3], cum: &[f64], rf: Option<DVec3>) -> f64 {
     let i = best.1;
     let n = pts.len();
     if n >= 3 {
-        let f = |k: usize| (pts[k] - c - nrm * nrm.dot(pts[k] - c)).normalize_or_zero().dot(rf);
+        let f = |k: usize| {
+            (pts[k] - c - nrm * nrm.dot(pts[k] - c))
+                .normalize_or_zero()
+                .dot(rf)
+        };
         let (im, ip) = ((i + n - 1) % n, (i + 1) % n);
         let (ym, y0, yp) = (f(im), f(i), f(ip));
         let den = ym - 2.0 * y0 + yp;
@@ -269,10 +286,10 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
         if anchor.is_none() {
             let mut best: Option<(EdgeId, f64)> = None;
             for (e, list) in &reg {
-                if let Some((t, _)) = list.iter().find(|(_, it)| mem.contains(it)) {
-                    if best.is_none_or(|(be, _)| *e < be) {
-                        best = Some((*e, *t));
-                    }
+                if let Some((t, _)) = list.iter().find(|(_, it)| mem.contains(it))
+                    && best.is_none_or(|(be, _)| *e < be)
+                {
+                    best = Some((*e, *t));
                 }
             }
             if let Some((e, t)) = best {
@@ -288,10 +305,20 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
         let anchor = anchor.unwrap_or_else(|| {
             let (fi, g) = item_face(mem[0]);
             let fg = ctx.face(faces[fi].face);
-            Anchor::Face { face: faces[fi].face, uv: fg.wrap(faces[fi].glued.gnodes[g].uv) }
+            Anchor::Face {
+                face: faces[fi].face,
+                uv: fg.wrap(faces[fi].glued.gnodes[g].uv),
+            }
         });
         let key = VertexKey::canonical(&keys).cloned().unwrap();
-        verts.push(GVert { key, keys, anchor, pole, pos: DVec3::ZERO, alive: true });
+        verts.push(GVert {
+            key,
+            keys,
+            anchor,
+            pole,
+            pos: DVec3::ZERO,
+            alive: true,
+        });
     }
     // 3. Seam-only drops.
     let mut seam_rel = vec![false; verts.len()];
@@ -316,7 +343,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             }
         }
     }
-    let dropped: Vec<bool> = (0..verts.len()).map(|v| seam_rel[v] && shape_ok[v]).collect();
+    let dropped: Vec<bool> = (0..verts.len())
+        .map(|v| seam_rel[v] && shape_ok[v])
+        .collect();
     // Edge registry in global ids (dedup), sorted by t.
     let mut ereg: BTreeMap<EdgeId, Vec<(f64, usize)>> = BTreeMap::new();
     for (e, list) in &reg {
@@ -349,9 +378,11 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
         let mut order: Vec<(EdgeId, bool)> = vec![(lp[0], false)];
         let mut cur_end = ctx.topo.edge(lp[0]).v1;
         while order.len() < lp.len() {
-            let Some(&e) = lp.iter().find(|e| !order.iter().any(|(o, _)| o == *e) && {
-                let et = ctx.topo.edge(**e);
-                et.v0 == cur_end || et.v1 == cur_end
+            let Some(&e) = lp.iter().find(|e| {
+                !order.iter().any(|(o, _)| o == *e) && {
+                    let et = ctx.topo.edge(**e);
+                    et.v0 == cur_end || et.v1 == cur_end
+                }
             }) else {
                 break;
             };
@@ -411,7 +442,13 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
         let start = match ex_arcs.first() {
             Some((_, s)) => *s,
             None => {
-                let rf = if lp.len() == 1 { doc.phase_overrides.get(&PhaseTarget::Edge(body, lp[0])).copied() } else { None };
+                let rf = if lp.len() == 1 {
+                    doc.phase_overrides
+                        .get(&PhaseTarget::Edge(body, lp[0]))
+                        .copied()
+                } else {
+                    None
+                };
                 phase_start(&pts, &cum, rf)
             }
         };
@@ -428,15 +465,38 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 (map[i].0, map[i].1 + (map[i + 1].1 - map[i].1) * f)
             } else {
                 let et = ctx.topo.edge(map[i].0);
-                let end_t = if order.iter().find(|o| o.0 == map[i].0).is_some_and(|o| o.1) { et.t_range.0 } else { et.t_range.1 };
-                let next_cum = if i + 1 < cum.len() { cum[i + 1] } else { total_len };
+                let end_t = if order.iter().find(|o| o.0 == map[i].0).is_some_and(|o| o.1) {
+                    et.t_range.0
+                } else {
+                    et.t_range.1
+                };
+                let next_cum = if i + 1 < cum.len() {
+                    cum[i + 1]
+                } else {
+                    total_len
+                };
                 let f = (s - cum[i]) / (next_cum - cum[i]).max(1e-300);
                 (map[i].0, map[i].1 + (end_t - map[i].1) * f)
             };
-            let t = ctx.kernel.project_to_edge(ctx.kbody, e, &[ctx.edge_point(e, t)]).ok().and_then(|v| v[0]).unwrap_or(t);
-            let key = VertexKey::Placeholder { lp: lid.clone(), i: k };
+            let t = ctx
+                .kernel
+                .project_to_edge(ctx.kbody, e, &[ctx.edge_point(e, t)])
+                .ok()
+                .and_then(|v| v[0])
+                .unwrap_or(t);
+            let key = VertexKey::Placeholder {
+                lp: lid.clone(),
+                i: k,
+            };
             let v = verts.len();
-            verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::CadEdge { edge: e, t }, pole: None, pos: DVec3::ZERO, alive: true });
+            verts.push(GVert {
+                key: key.clone(),
+                keys: vec![key],
+                anchor: Anchor::CadEdge { edge: e, t },
+                pole: None,
+                pos: DVec3::ZERO,
+                alive: true,
+            });
             let l = ereg.entry(e).or_default();
             l.push((t, v));
             l.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -453,7 +513,10 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             let v = item_v[offset[fi] + g];
             for &(c, p) in &gn.incs {
                 let o = fr.arr.curves[c].owner;
-                if matches!(o, Owner::Line(_) | Owner::Split(_) | Owner::Seam(_) | Owner::Pole(_)) {
+                if matches!(
+                    o,
+                    Owner::Line(_) | Owner::Split(_) | Owner::Seam(_) | Owner::Pole(_)
+                ) {
                     let l = lreg.entry((fi, o)).or_default();
                     if !l.iter().any(|x| x.1 == v && (x.0 - p).abs() < 1e-12) {
                         l.push((p, v));
@@ -467,7 +530,10 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             if gl.dissolved[e] {
                 continue;
             }
-            if matches!(ge.owner, Owner::Line(_) | Owner::Split(_) | Owner::Seam(_) | Owner::Pole(_)) {
+            if matches!(
+                ge.owner,
+                Owner::Line(_) | Owner::Split(_) | Owner::Seam(_) | Owner::Pole(_)
+            ) {
                 by_owner.entry(ge.owner).or_default().push(e);
             }
         }
@@ -490,7 +556,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             let start_node = gl.gedges[es[0]].a;
             let mut ok = true;
             while cur != start_node || seq.len() < es.len() {
-                let Some(k) = (0..es.len()).find(|&k| !used[k] && (gl.gedges[es[k]].a == cur || gl.gedges[es[k]].b == cur)) else {
+                let Some(k) = (0..es.len()).find(|&k| {
+                    !used[k] && (gl.gedges[es[k]].a == cur || gl.gedges[es[k]].b == cur)
+                }) else {
                     ok = cur == start_node;
                     break;
                 };
@@ -503,8 +571,15 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             if !ok || used.iter().any(|u| !u) {
                 continue;
             }
-            let nodes: Vec<usize> = seq.iter().map(|&(e, f)| if f { gl.gedges[e].a } else { gl.gedges[e].b }).collect();
-            let existing: Vec<usize> = nodes.iter().map(|&g| item_v[offset[fi] + g]).filter(|v| !dropped[*v]).collect();
+            let nodes: Vec<usize> = seq
+                .iter()
+                .map(|&(e, f)| if f { gl.gedges[e].a } else { gl.gedges[e].b })
+                .collect();
+            let existing: Vec<usize> = nodes
+                .iter()
+                .map(|&g| item_v[offset[fi] + g])
+                .filter(|v| !dropped[*v])
+                .collect();
             let mut ex_unique = existing.clone();
             ex_unique.sort();
             ex_unique.dedup();
@@ -560,7 +635,11 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             let pts3: Vec<DVec3> = ev.iter().map(|e| e.p).collect();
             let mut cum = vec![0.0];
             for i in 1..d_uv.len() {
-                let d = if is_pole { (fg.m(d_uv[i]) - fg.m(d_uv[i - 1])).length() } else { (pts3[i] - pts3[i - 1]).length() };
+                let d = if is_pole {
+                    (fg.m(d_uv[i]) - fg.m(d_uv[i - 1])).length()
+                } else {
+                    (pts3[i] - pts3[i - 1]).length()
+                };
                 cum.push(cum[i - 1] + d);
             }
             let total_len = cum[cum.len() - 1];
@@ -579,7 +658,10 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 Some((_, s)) => *s,
                 None if is_pole => 0.0,
                 None => {
-                    let rf = doc.phase_overrides.get(&PhaseTarget::Face(body, fr.face)).copied();
+                    let rf = doc
+                        .phase_overrides
+                        .get(&PhaseTarget::Face(body, fr.face))
+                        .copied();
                     let rf = rf.or_else(|| fg.info.axis_dir.map(default_phase_dir));
                     phase_start(&pts3[..pts3.len() - 1], &cum[..cum.len() - 1], rf)
                 }
@@ -614,13 +696,23 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         best = (d, ge.pars[j] + (ge.pars[j + 1] - ge.pars[j]) * t);
                     }
                 }
-                let key = VertexKey::Placeholder { lp: lid.clone(), i: k };
+                let key = VertexKey::Placeholder {
+                    lp: lid.clone(),
+                    i: k,
+                };
                 let v = verts.len();
                 let (anchor, pole) = match owner {
                     Owner::Pole(e) => (Anchor::CadEdge { edge: e, t: best.1 }, Some(e)),
                     _ => (Anchor::Face { face: fr.face, uv }, None),
                 };
-                verts.push(GVert { key: key.clone(), keys: vec![key], anchor, pole, pos: DVec3::ZERO, alive: true });
+                verts.push(GVert {
+                    key: key.clone(),
+                    keys: vec![key],
+                    anchor,
+                    pole,
+                    pos: DVec3::ZERO,
+                    alive: true,
+                });
                 dropped.push(false);
                 lreg.entry((fi, owner)).or_default().push((best.1, v));
             }
@@ -639,12 +731,22 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 }
                 let (va, vb) = (item_v[offset[fi] + ge.a], item_v[offset[fi] + ge.b]);
                 let interior = match ge.owner {
-                    Owner::Line(_) | Owner::Split(_) => lreg
-                        .get(&(fi, ge.owner))
-                        .is_some_and(|l| l.iter().any(|&(t, v)| t > ge.pa + 1e-12 && t < ge.pb - 1e-12 && v != va && v != vb)),
-                    Owner::Cad(ce) => ereg
-                        .get(&ce)
-                        .is_some_and(|l| l.iter().any(|&(t, v)| t > ge.pa.min(ge.pb) + 1e-12 && t < ge.pa.max(ge.pb) - 1e-12 && v != va && v != vb && !dropped[v])),
+                    Owner::Line(_) | Owner::Split(_) => {
+                        lreg.get(&(fi, ge.owner)).is_some_and(|l| {
+                            l.iter().any(|&(t, v)| {
+                                t > ge.pa + 1e-12 && t < ge.pb - 1e-12 && v != va && v != vb
+                            })
+                        })
+                    }
+                    Owner::Cad(ce) => ereg.get(&ce).is_some_and(|l| {
+                        l.iter().any(|&(t, v)| {
+                            t > ge.pa.min(ge.pb) + 1e-12
+                                && t < ge.pa.max(ge.pb) - 1e-12
+                                && v != va
+                                && v != vb
+                                && !dropped[v]
+                        })
+                    }),
                     _ => true,
                 };
                 if va == vb || interior {
@@ -654,7 +756,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 let list = pairs.entry(k).or_default();
                 // CAD edges shared by two faces count once.
                 if let Owner::Cad(ce) = ge.owner
-                    && list.iter().any(|&(f2, e2)| faces[f2].glued.gedges[e2].owner == Owner::Cad(ce))
+                    && list
+                        .iter()
+                        .any(|&(f2, e2)| faces[f2].glued.gedges[e2].owner == Owner::Cad(ce))
                 {
                     continue;
                 }
@@ -686,7 +790,14 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         let uv = ctx.face(fr.face).wrap(uvm);
                         let key = VertexKey::Placeholder { lp: lid, i: 0 };
                         let v = verts.len();
-                        verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::Face { face: fr.face, uv }, pole: None, pos: DVec3::ZERO, alive: true });
+                        verts.push(GVert {
+                            key: key.clone(),
+                            keys: vec![key],
+                            anchor: Anchor::Face { face: fr.face, uv },
+                            pole: None,
+                            pos: DVec3::ZERO,
+                            alive: true,
+                        });
                         dropped.push(false);
                         lreg.entry((fi, ge.owner)).or_default().push((mid, v));
                     }
@@ -694,9 +805,19 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                         let et = ctx.topo.edge(ce);
                         let span = (et.t_range.1 - et.t_range.0).abs().max(1e-300);
                         let i = 10_000 + ((mid - et.t_range.0) / span * 1000.0).round() as u32;
-                        let key = VertexKey::Placeholder { lp: LoopId::Cad(vec![ce]), i };
+                        let key = VertexKey::Placeholder {
+                            lp: LoopId::Cad(vec![ce]),
+                            i,
+                        };
                         let v = verts.len();
-                        verts.push(GVert { key: key.clone(), keys: vec![key], anchor: Anchor::CadEdge { edge: ce, t: mid }, pole: None, pos: DVec3::ZERO, alive: true });
+                        verts.push(GVert {
+                            key: key.clone(),
+                            keys: vec![key],
+                            anchor: Anchor::CadEdge { edge: ce, t: mid },
+                            pole: None,
+                            pos: DVec3::ZERO,
+                            alive: true,
+                        });
                         dropped.push(false);
                         let l = ereg.entry(ce).or_default();
                         l.push((mid, v));
@@ -713,13 +834,23 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
     // 5. Walks → half-edges.
     compute_positions(ctx, &mut verts);
     let periods = ctx.faces.iter().map(|f| f.periods()).collect();
-    let mut mesh = HMesh { verts, he: vec![], regions: vec![], key_index: HashMap::new(), periods };
+    let mut mesh = HMesh {
+        verts,
+        he: vec![],
+        regions: vec![],
+        key_index: HashMap::new(),
+        periods,
+    };
     for (fi, fr) in faces.iter().enumerate() {
         let gl = &fr.glued;
         let fg = ctx.face(fr.face);
         for walks in &gl.regions {
             let rid = mesh.regions.len();
-            mesh.regions.push(Region { face: fr.face, alive: true, multi: false });
+            mesh.regions.push(Region {
+                face: fr.face,
+                alive: true,
+                multi: false,
+            });
             for w in walks {
                 // Items: (vertex, uv) and segments between them.
                 let mut segs: Vec<(usize, usize, Owner, Vec<DVec2>, Vec<usize>)> = Vec::new();
@@ -747,10 +878,16 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                             if let Some(l) = lreg.get(&(fi, o)) {
                                 let curve = &fr.arr.curves[ge.curve];
                                 let total = curve.par[curve.par.len() - 1] - curve.par[0];
-                                let shifts: &[f64] = if curve.closed { &[0.0, 1.0] } else { &[0.0] };
+                                let shifts: &[f64] =
+                                    if curve.closed { &[0.0, 1.0] } else { &[0.0] };
                                 for &(t, v) in l {
                                     for tt in shifts.iter().map(|k| t + k * total) {
-                                        if tt > plo + margin && tt < phi - margin && v != va && v != vb && !inner.iter().any(|x| x.1 == v) {
+                                        if tt > plo + margin
+                                            && tt < phi - margin
+                                            && v != va
+                                            && v != vb
+                                            && !inner.iter().any(|x| x.1 == v)
+                                        {
                                             inner.push((tt, v));
                                         }
                                     }
@@ -765,11 +902,17 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                     let period = match ge.owner {
                         Owner::Cad(e) => {
                             let et = ctx.topo.edge(e);
-                            if et.closed { Some(et.t_range.1 - et.t_range.0) } else { None }
+                            if et.closed {
+                                Some(et.t_range.1 - et.t_range.0)
+                            } else {
+                                None
+                            }
                         }
                         _ => {
                             let curve = &fr.arr.curves[ge.curve];
-                            curve.closed.then(|| curve.par[curve.par.len() - 1] - curve.par[0])
+                            curve
+                                .closed
+                                .then(|| curve.par[curve.par.len() - 1] - curve.par[0])
                         }
                     };
                     let reg_list: Option<&Vec<(f64, usize)>> = match ge.owner {
@@ -850,7 +993,12 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                     merged.push((a, b, o, path, src));
                 }
                 // Drop zero-length self segments.
-                merged.retain(|s| !(s.0 == s.1 && super::geom2::poly_len(&s.3.iter().map(|p| fg.m(*p)).collect::<Vec<_>>()) <= fg.eps));
+                merged.retain(|s| {
+                    !(s.0 == s.1
+                        && super::geom2::poly_len(
+                            &s.3.iter().map(|p| fg.m(*p)).collect::<Vec<_>>(),
+                        ) <= fg.eps)
+                });
                 if merged.is_empty() {
                     continue;
                 }
@@ -898,8 +1046,14 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             continue;
         }
         let he = &mesh.he[h];
-        let Some(c) = map.get(&(he.to, he.from, he.owner)) else { continue };
-        let cands: Vec<usize> = c.iter().copied().filter(|&x| mesh.he[x].twin.is_none() && x != h).collect();
+        let Some(c) = map.get(&(he.to, he.from, he.owner)) else {
+            continue;
+        };
+        let cands: Vec<usize> = c
+            .iter()
+            .copied()
+            .filter(|&x| mesh.he[x].twin.is_none() && x != h)
+            .collect();
         if cands.is_empty() {
             continue;
         }
@@ -911,7 +1065,10 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 ctx.point(e.face, e.uv[e.uv.len() / 2])
             };
             let m = mid(h);
-            *cands.iter().min_by(|&&a, &&b| (mid(a) - m).length().total_cmp(&(mid(b) - m).length())).unwrap()
+            *cands
+                .iter()
+                .min_by(|&&a, &&b| (mid(a) - m).length().total_cmp(&(mid(b) - m).length()))
+                .unwrap()
         };
         mesh.he[h].twin = Some(pick);
         mesh.he[pick].twin = Some(h);
@@ -938,7 +1095,16 @@ pub fn compute_positions(ctx: &BodyCtx, verts: &mut [GVert]) {
         }
     }
     for (e, list) in by_edge {
-        let ts: Vec<f64> = list.iter().map(|&i| if let Anchor::CadEdge { t, .. } = verts[i].anchor { t } else { 0.0 }).collect();
+        let ts: Vec<f64> = list
+            .iter()
+            .map(|&i| {
+                if let Anchor::CadEdge { t, .. } = verts[i].anchor {
+                    t
+                } else {
+                    0.0
+                }
+            })
+            .collect();
         if let Ok(ps) = ctx.kernel.edge_eval(ctx.kbody, e, &ts) {
             for (k, &i) in list.iter().enumerate() {
                 verts[i].pos = ps[k];
@@ -946,7 +1112,16 @@ pub fn compute_positions(ctx: &BodyCtx, verts: &mut [GVert]) {
         }
     }
     for (f, list) in by_face {
-        let uvs: Vec<DVec2> = list.iter().map(|&i| if let Anchor::Face { uv, .. } = verts[i].anchor { uv } else { DVec2::ZERO }).collect();
+        let uvs: Vec<DVec2> = list
+            .iter()
+            .map(|&i| {
+                if let Anchor::Face { uv, .. } = verts[i].anchor {
+                    uv
+                } else {
+                    DVec2::ZERO
+                }
+            })
+            .collect();
         let ev = ctx.face_eval(f, &uvs);
         for (k, &i) in list.iter().enumerate() {
             if let Some(e) = ev.get(k) {

@@ -32,12 +32,23 @@ impl Chart<'_> {
         match self {
             Chart::Face { fg, sign } => {
                 let p = fg.periods();
-                let ku: Vec<i32> = if p.x > 0.0 { vec![-2, -1, 0, 1, 2] } else { vec![0] };
-                let kv: Vec<i32> = if p.y > 0.0 { vec![-2, -1, 0, 1, 2] } else { vec![0] };
+                let ku: Vec<i32> = if p.x > 0.0 {
+                    vec![-2, -1, 0, 1, 2]
+                } else {
+                    vec![0]
+                };
+                let kv: Vec<i32> = if p.y > 0.0 {
+                    vec![-2, -1, 0, 1, 2]
+                } else {
+                    vec![0]
+                };
                 let mut out = Vec::new();
                 for &a in &ku {
                     for &b in &kv {
-                        out.push(DVec2::new(sign * a as f64 * p.x * fg.metric.x, b as f64 * p.y * fg.metric.y));
+                        out.push(DVec2::new(
+                            sign * a as f64 * p.x * fg.metric.x,
+                            b as f64 * p.y * fg.metric.y,
+                        ));
                     }
                 }
                 out
@@ -109,10 +120,17 @@ fn first_dir(path: &[DVec2]) -> DVec2 {
 
 pub fn chart_for<'a>(ctx: &'a BodyCtx, mesh: &HMesh, r: usize, walks: &[Vec<usize>]) -> Chart<'a> {
     let reg = &mesh.regions[r];
-    let single = !reg.multi && walks.iter().flatten().all(|&h| mesh.he[h].face == reg.face && (!mesh.he[h].uv.is_empty() || mesh.he[h].owner == Owner::Fill));
+    let single = !reg.multi
+        && walks.iter().flatten().all(|&h| {
+            mesh.he[h].face == reg.face
+                && (!mesh.he[h].uv.is_empty() || mesh.he[h].owner == Owner::Fill)
+        });
     if single {
         let fg = ctx.face(reg.face);
-        return Chart::Face { fg, sign: if fg.reversed { -1.0 } else { 1.0 } };
+        return Chart::Face {
+            fg,
+            sign: if fg.reversed { -1.0 } else { 1.0 },
+        };
     }
     // Best-fit plane through all vertex positions; normal from CAD normals.
     let mut pts = Vec::new();
@@ -120,20 +138,30 @@ pub fn chart_for<'a>(ctx: &'a BodyCtx, mesh: &HMesh, r: usize, walks: &[Vec<usiz
     for &h in walks.iter().flatten() {
         let he = &mesh.he[h];
         pts.push(mesh.verts[he.from].pos);
-        if let Some(uv) = he.uv.first() {
-            if let Some(e) = ctx.face_eval(he.face, &[*uv]).first() {
-                nrm += e.n;
-            }
+        if let Some(uv) = he.uv.first()
+            && let Some(e) = ctx.face_eval(he.face, &[*uv]).first()
+        {
+            nrm += e.n;
         }
     }
     let o = pts.iter().copied().sum::<DVec3>() / pts.len().max(1) as f64;
-    let n = if nrm.length() > 1e-9 { nrm.normalize() } else { DVec3::Z };
+    let n = if nrm.length() > 1e-9 {
+        nrm.normalize()
+    } else {
+        DVec3::Z
+    };
     let e1 = n.any_orthonormal_vector();
     let e2 = n.cross(e1);
     Chart::Plane { o, e1, e2 }
 }
 
-pub fn walk_geom(ctx: &BodyCtx, mesh: &HMesh, chart: &Chart, walk: &[usize], fid: &dyn Fn(usize) -> usize) -> WalkGeom {
+pub fn walk_geom(
+    ctx: &BodyCtx,
+    mesh: &HMesh,
+    chart: &Chart,
+    walk: &[usize],
+    fid: &dyn Fn(usize) -> usize,
+) -> WalkGeom {
     let mut occ = Vec::with_capacity(walk.len());
     let mut paths = Vec::with_capacity(walk.len());
     let mut raw_cur: Option<DVec2> = None;
@@ -145,7 +173,10 @@ pub fn walk_geom(ctx: &BodyCtx, mesh: &HMesh, chart: &Chart, walk: &[usize], fid
             Chart::Face { fg, .. } => {
                 let mut uv = he.uv.clone();
                 if uv.is_empty() {
-                    uv = vec![raw_cur.unwrap_or(DVec2::ZERO), raw_cur.unwrap_or(DVec2::ZERO)];
+                    uv = vec![
+                        raw_cur.unwrap_or(DVec2::ZERO),
+                        raw_cur.unwrap_or(DVec2::ZERO),
+                    ];
                 }
                 let s = match raw_cur {
                     Some(c) => fg.lift_near(uv[0], c) - uv[0],
@@ -153,11 +184,17 @@ pub fn walk_geom(ctx: &BodyCtx, mesh: &HMesh, chart: &Chart, walk: &[usize], fid
                 };
                 let lifted: Vec<DVec2> = uv.iter().map(|p| *p + s).collect();
                 raw_cur = Some(*lifted.last().unwrap());
-                (lifted[0], lifted.iter().map(|p| chart.d(*p)).collect::<Vec<_>>())
+                (
+                    lifted[0],
+                    lifted.iter().map(|p| chart.d(*p)).collect::<Vec<_>>(),
+                )
             }
             Chart::Plane { o, e1, e2 } => {
                 let p3 = he_path3(ctx, mesh, h);
-                let d: Vec<DVec2> = p3.iter().map(|p| DVec2::new((*p - *o).dot(*e1), (*p - *o).dot(*e2))).collect();
+                let d: Vec<DVec2> = p3
+                    .iter()
+                    .map(|p| DVec2::new((*p - *o).dot(*e1), (*p - *o).dot(*e2)))
+                    .collect();
                 (d[0], d)
             }
         };
@@ -165,7 +202,15 @@ pub fn walk_geom(ctx: &BodyCtx, mesh: &HMesh, chart: &Chart, walk: &[usize], fid
             start_d = dpath[0];
         }
         end_d = *dpath.last().unwrap();
-        occ.push(Occ { v: he.from, fid: fid(he.from), hout: h, raw: raw0, d: dpath[0], dout: first_dir(&dpath), din_rev: DVec2::ZERO });
+        occ.push(Occ {
+            v: he.from,
+            fid: fid(he.from),
+            hout: h,
+            raw: raw0,
+            d: dpath[0],
+            dout: first_dir(&dpath),
+            din_rev: DVec2::ZERO,
+        });
         paths.push(dpath);
     }
     let n = occ.len();
@@ -174,7 +219,11 @@ pub fn walk_geom(ctx: &BodyCtx, mesh: &HMesh, chart: &Chart, walk: &[usize], fid
         let rev: Vec<DVec2> = prev.iter().rev().copied().collect();
         occ[i].din_rev = first_dir(&rev);
     }
-    WalkGeom { occ, paths, winding: end_d - start_d }
+    WalkGeom {
+        occ,
+        paths,
+        winding: end_d - start_d,
+    }
 }
 
 /// Final vertices that occur in more than one separate run of a walk
@@ -192,7 +241,11 @@ fn repeated_fids(g: &WalkGeom) -> Vec<usize> {
         }
     }
     // A walk made of a single fid has no run starts.
-    let mut out: Vec<usize> = runs.into_iter().filter(|(_, c)| *c > 1).map(|(f, _)| f).collect();
+    let mut out: Vec<usize> = runs
+        .into_iter()
+        .filter(|(_, c)| *c > 1)
+        .map(|(f, _)| f)
+        .collect();
     out.sort();
     out
 }
@@ -211,7 +264,11 @@ fn chord_clear(geoms: &[WalkGeom], shifts: &[DVec2], a: DVec2, b: DVec2, eps: f6
             for s in shifts {
                 for w in path.windows(2) {
                     let (c, d) = (w[0] + *s, w[1] + *s);
-                    if c.x.max(d.x) < lo.x || c.x.min(d.x) > hi.x || c.y.max(d.y) < lo.y || c.y.min(d.y) > hi.y {
+                    if c.x.max(d.x) < lo.x
+                        || c.x.min(d.x) > hi.x
+                        || c.y.max(d.y) < lo.y
+                        || c.y.min(d.y) > hi.y
+                    {
                         continue;
                     }
                     for (sa, _) in seg_hits(a, b, c, d, eps) {
@@ -260,26 +317,49 @@ impl SegIndex {
         let cell = ext / n;
         let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         for (i, (a, b)) in segs.iter().enumerate() {
-            let (x0, y0) = (((a.x.min(b.x) - lo.x) / cell).floor() as i64, ((a.y.min(b.y) - lo.y) / cell).floor() as i64);
-            let (x1, y1) = (((a.x.max(b.x) - lo.x) / cell).floor() as i64, ((a.y.max(b.y) - lo.y) / cell).floor() as i64);
+            let (x0, y0) = (
+                ((a.x.min(b.x) - lo.x) / cell).floor() as i64,
+                ((a.y.min(b.y) - lo.y) / cell).floor() as i64,
+            );
+            let (x1, y1) = (
+                ((a.x.max(b.x) - lo.x) / cell).floor() as i64,
+                ((a.y.max(b.y) - lo.y) / cell).floor() as i64,
+            );
             for x in x0..=x1 {
                 for y in y0..=y1 {
                     grid.entry((x, y)).or_default().push(i);
                 }
             }
         }
-        SegIndex { segs, cell, lo, grid }
+        SegIndex {
+            segs,
+            cell,
+            lo,
+            grid,
+        }
     }
 
     fn clear(&self, a: DVec2, b: DVec2, eps: f64) -> bool {
-        let (x0, y0) = (((a.x.min(b.x) - eps - self.lo.x) / self.cell).floor() as i64, ((a.y.min(b.y) - eps - self.lo.y) / self.cell).floor() as i64);
-        let (x1, y1) = (((a.x.max(b.x) + eps - self.lo.x) / self.cell).floor() as i64, ((a.y.max(b.y) + eps - self.lo.y) / self.cell).floor() as i64);
+        let (x0, y0) = (
+            ((a.x.min(b.x) - eps - self.lo.x) / self.cell).floor() as i64,
+            ((a.y.min(b.y) - eps - self.lo.y) / self.cell).floor() as i64,
+        );
+        let (x1, y1) = (
+            ((a.x.max(b.x) + eps - self.lo.x) / self.cell).floor() as i64,
+            ((a.y.max(b.y) + eps - self.lo.y) / self.cell).floor() as i64,
+        );
         let mut seen = std::collections::HashSet::new();
         let cells = ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize;
         let cand: Box<dyn Iterator<Item = usize>> = if cells > self.segs.len() {
             Box::new(0..self.segs.len())
         } else {
-            Box::new((x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y))).filter_map(|k| self.grid.get(&k)).flatten().copied())
+            Box::new(
+                (x0..=x1)
+                    .flat_map(move |x| (y0..=y1).map(move |y| (x, y)))
+                    .filter_map(|k| self.grid.get(&k))
+                    .flatten()
+                    .copied(),
+            )
         };
         for i in cand {
             if !seen.insert(i) {
@@ -310,9 +390,15 @@ struct Cand {
 
 /// Bridge every region of the mesh. Returns regions that could not be made
 /// simple.
-pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId, usize>) -> Vec<usize> {
+pub fn bridge_all(
+    ctx: &BodyCtx,
+    mesh: &mut HMesh,
+    pole_target: &HashMap<EdgeId, usize>,
+) -> Vec<usize> {
     let mut failed = Vec::new();
-    let mut queue: Vec<usize> = (0..mesh.regions.len()).filter(|&r| mesh.regions[r].alive).collect();
+    let mut queue: Vec<usize> = (0..mesh.regions.len())
+        .filter(|&r| mesh.regions[r].alive)
+        .collect();
     let fid_of = |mesh: &HMesh, v: usize| mesh.final_v(v, pole_target);
     // Final-vertex adjacency and per-region half-edge lists, kept up to date
     // as chords are inserted.
@@ -357,7 +443,10 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
             }
             let chart = chart_for(ctx, mesh, r, &walks);
             let fidf = |v: usize| fid_of(mesh, v);
-            let geoms: Vec<WalkGeom> = walks.iter().map(|w| walk_geom(ctx, mesh, &chart, w, &fidf)).collect();
+            let geoms: Vec<WalkGeom> = walks
+                .iter()
+                .map(|w| walk_geom(ctx, mesh, &chart, w, &fidf))
+                .collect();
             let eps = ctx.size * 1e-9;
             tt[0] += t0.elapsed();
             let t1 = std::time::Instant::now();
@@ -370,26 +459,46 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                 }
             }
             // Existing edges between final vertices.
-            let joined_fn = |a: usize, b: usize| adj.get(&a).is_some_and(|l| l.contains(&b)) || adj.get(&b).is_some_and(|l| l.contains(&a));
+            let joined_fn = |a: usize, b: usize| {
+                adj.get(&a).is_some_and(|l| l.contains(&b))
+                    || adj.get(&b).is_some_and(|l| l.contains(&a))
+            };
             let is_pole = |v: usize| mesh.verts[v].pole.is_some();
             let shifts = chart.shifts();
             let mut cands: Vec<Cand> = Vec::new();
-            let push = |cands: &mut Vec<Cand>, wi: usize, i: usize, wj: usize, j: usize, shift: DVec2| {
-                let (oa, ob) = (&geoms[wi].occ[i], &geoms[wj].occ[j]);
-                if oa.fid == ob.fid || joined_fn(oa.fid, ob.fid) {
-                    return;
-                }
-                if is_pole(oa.v) && is_pole(ob.v) && mesh.verts[oa.v].pole == mesh.verts[ob.v].pole {
-                    return;
-                }
-                let (ka, kb) = (mesh.verts[oa.fid].key.clone(), mesh.verts[ob.fid].key.clone());
-                let keys = if ka <= kb { (ka, kb) } else { (kb, ka) };
-                cands.push(Cand { wi, i, wj, j, shift, len: 0.0, keys });
-            };
+            let push =
+                |cands: &mut Vec<Cand>, wi: usize, i: usize, wj: usize, j: usize, shift: DVec2| {
+                    let (oa, ob) = (&geoms[wi].occ[i], &geoms[wj].occ[j]);
+                    if oa.fid == ob.fid || joined_fn(oa.fid, ob.fid) {
+                        return;
+                    }
+                    if is_pole(oa.v)
+                        && is_pole(ob.v)
+                        && mesh.verts[oa.v].pole == mesh.verts[ob.v].pole
+                    {
+                        return;
+                    }
+                    let (ka, kb) = (
+                        mesh.verts[oa.fid].key.clone(),
+                        mesh.verts[ob.fid].key.clone(),
+                    );
+                    let keys = if ka <= kb { (ka, kb) } else { (kb, ka) };
+                    cands.push(Cand {
+                        wi,
+                        i,
+                        wj,
+                        j,
+                        shift,
+                        len: 0.0,
+                        keys,
+                    });
+                };
             // Candidate partners: the K nearest occurrences (domain distance,
             // with period shifts) of each occurrence.
             const K: usize = 12;
-            let occs: Vec<(usize, usize)> = (0..geoms.len()).flat_map(|w| (0..geoms[w].occ.len()).map(move |i| (w, i))).collect();
+            let occs: Vec<(usize, usize)> = (0..geoms.len())
+                .flat_map(|w| (0..geoms[w].occ.len()).map(move |i| (w, i)))
+                .collect();
             let single = walks.len() == 1;
             let (rep_pos, wind) = if single {
                 let g = &geoms[0];
@@ -411,7 +520,8 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                     inside && outside
                 })
             };
-            let mut seen_pairs: std::collections::HashSet<(usize, usize, usize, usize, i64, i64)> = Default::default();
+            let mut seen_pairs: std::collections::HashSet<(usize, usize, usize, usize, i64, i64)> =
+                Default::default();
             for &(wa, ia) in &occs {
                 let oa = &geoms[wa].occ[ia];
                 let mut near: Vec<(f64, usize, usize, DVec2)> = Vec::new();
@@ -444,8 +554,19 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                     }
                 }
                 for (_, wb, ib, sh) in near {
-                    let (wi, i, wj, j, shift) = if (wa, ia) <= (wb, ib) { (wa, ia, wb, ib, sh) } else { (wb, ib, wa, ia, -sh) };
-                    let key = (wi, i, wj, j, (shift.x * 1e6).round() as i64, (shift.y * 1e6).round() as i64);
+                    let (wi, i, wj, j, shift) = if (wa, ia) <= (wb, ib) {
+                        (wa, ia, wb, ib, sh)
+                    } else {
+                        (wb, ib, wa, ia, -sh)
+                    };
+                    let key = (
+                        wi,
+                        i,
+                        wj,
+                        j,
+                        (shift.x * 1e6).round() as i64,
+                        (shift.y * 1e6).round() as i64,
+                    );
                     if !seen_pairs.insert(key) {
                         continue;
                     }
@@ -463,7 +584,10 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                     for (wi, g) in geoms.iter().enumerate() {
                         eprintln!("  walk {wi} winding {:?}", g.winding);
                         for o in &g.occ {
-                            eprintln!("    v{} fid{} d {:?} key {:?}", o.v, o.fid, o.d, mesh.verts[o.v].key);
+                            eprintln!(
+                                "    v{} fid{} d {:?} key {:?}",
+                                o.v, o.fid, o.d, mesh.verts[o.v].key
+                            );
                         }
                     }
                 }
@@ -498,7 +622,9 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                         for (n, &ci) in chunk.iter().enumerate() {
                             let mut l = 0.0;
                             for t in 0..k {
-                                if let (Some(p), Some(q)) = (ev.get(n * (k + 1) + t), ev.get(n * (k + 1) + t + 1)) {
+                                if let (Some(p), Some(q)) =
+                                    (ev.get(n * (k + 1) + t), ev.get(n * (k + 1) + t + 1))
+                                {
                                     l += (q.p - p.p).length();
                                 }
                             }
@@ -509,13 +635,18 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                 Chart::Plane { .. } => {
                     for ci in 0..cands.len() {
                         let c = &cands[ci];
-                        cands[ci].len = (mesh.verts[geoms[c.wi].occ[c.i].v].pos - mesh.verts[geoms[c.wj].occ[c.j].v].pos).length();
+                        cands[ci].len = (mesh.verts[geoms[c.wi].occ[c.i].v].pos
+                            - mesh.verts[geoms[c.wj].occ[c.j].v].pos)
+                            .length();
                     }
                 }
             }
             cands.sort_by(|a, b| {
                 let (la, lb) = ((a.len / q).round(), (b.len / q).round());
-                la.total_cmp(&lb).then_with(|| a.keys.cmp(&b.keys)).then(a.i.cmp(&b.i)).then(a.j.cmp(&b.j))
+                la.total_cmp(&lb)
+                    .then_with(|| a.keys.cmp(&b.keys))
+                    .then(a.i.cmp(&b.i))
+                    .then(a.j.cmp(&b.j))
             });
             // Batch selection: shortest valid chords that join different
             // loops (Kruskal) or separate repeated vertices, never crossing
@@ -568,10 +699,12 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                 }
                 let crosses = acc_segs.iter().any(|&(c0, c1)| {
                     shifts.iter().any(|s| {
-                        seg_hits(a, b, c0 + *s, c1 + *s, eps * 10.0).iter().any(|&(sa, _)| {
-                            let p = a + (b - a) * sa;
-                            (p - a).length() > eps * 10.0 && (p - b).length() > eps * 10.0
-                        })
+                        seg_hits(a, b, c0 + *s, c1 + *s, eps * 10.0)
+                            .iter()
+                            .any(|&(sa, _)| {
+                                let p = a + (b - a) * sa;
+                                (p - a).length() > eps * 10.0 && (p - b).length() > eps * 10.0
+                            })
                     })
                 });
                 if crosses {
@@ -596,17 +729,32 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
             tt[2] += t2.elapsed();
             let Some(c) = chosen else {
                 if std::env::var("NT_DEBUG_BRIDGE").is_ok() {
-                    eprintln!("bridge fail region {r}: {} walks, {} cands", walks.len(), cands.len());
+                    eprintln!(
+                        "bridge fail region {r}: {} walks, {} cands",
+                        walks.len(),
+                        cands.len()
+                    );
                     for (wi, g) in geoms.iter().enumerate() {
                         eprintln!("  walk {wi} winding {:?}", g.winding);
                         for o in &g.occ {
-                            eprintln!("    v{} fid{} d {:?} dout {:?} din {:?} key {:?}", o.v, o.fid, o.d, o.dout, o.din_rev, mesh.verts[o.v].key);
+                            eprintln!(
+                                "    v{} fid{} d {:?} dout {:?} din {:?} key {:?}",
+                                o.v, o.fid, o.d, o.dout, o.din_rev, mesh.verts[o.v].key
+                            );
                         }
                     }
                     for c in cands.iter().take(6) {
                         let (oa, ob) = (&geoms[c.wi].occ[c.i], &geoms[c.wj].occ[c.j]);
                         let (a, b) = (oa.d, ob.d + c.shift);
-                        eprintln!("  cand v{}-v{} len {} sector {} {} clear {}", oa.v, ob.v, c.len, in_sector(oa, (b - a).normalize()), in_sector(ob, (a - b).normalize()), chord_clear(&geoms, &shifts, a, b, eps * 10.0));
+                        eprintln!(
+                            "  cand v{}-v{} len {} sector {} {} clear {}",
+                            oa.v,
+                            ob.v,
+                            c.len,
+                            in_sector(oa, (b - a).normalize()),
+                            in_sector(ob, (a - b).normalize()),
+                            chord_clear(&geoms, &shifts, a, b, eps * 10.0)
+                        );
                     }
                 }
                 failed.push(r);
@@ -619,7 +767,10 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
                 let (hx, hy) = (oa.hout, ob.hout);
                 let (uv, p3) = match &chart {
                     Chart::Face { .. } => (vec![oa.raw, ob.raw + chart.raw_shift(c.shift)], None),
-                    Chart::Plane { .. } => (vec![], Some(vec![mesh.verts[oa.v].pos, mesh.verts[ob.v].pos])),
+                    Chart::Plane { .. } => (
+                        vec![],
+                        Some(vec![mesh.verts[oa.v].pos, mesh.verts[ob.v].pos]),
+                    ),
                 };
                 let (fa, fb) = (oa.fid, ob.fid);
                 let ch = mesh.insert_chord(hx, hy, uv, p3);
@@ -657,16 +808,25 @@ pub fn bridge_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId,
         }
     }
     if timing {
-        eprintln!("  bridge: {iters} iterations; walks {:?} cands {:?} choose {:?}", tt[0], tt[1], tt[2]);
+        eprintln!(
+            "  bridge: {iters} iterations; walks {:?} cands {:?} choose {:?}",
+            tt[0], tt[1], tt[2]
+        );
     }
     failed
 }
 
 /// Auto-fill every polygon with more than four sides (SPEC §7). Returns
 /// regions filled only by the fan fallback.
-pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeId, usize>) -> HashSet<usize> {
+pub fn autofill_all(
+    ctx: &BodyCtx,
+    mesh: &mut HMesh,
+    pole_target: &HashMap<EdgeId, usize>,
+) -> HashSet<usize> {
     let mut fan = HashSet::new();
-    let regions: Vec<usize> = (0..mesh.regions.len()).filter(|&r| mesh.regions[r].alive).collect();
+    let regions: Vec<usize> = (0..mesh.regions.len())
+        .filter(|&r| mesh.regions[r].alive)
+        .collect();
     let all = mesh.all_region_walks();
     for r in regions {
         let Some(walks) = all.get(&r) else { continue };
@@ -680,7 +840,12 @@ pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeI
         let uv: Vec<DVec2> = g.occ.iter().map(|o| o.d).collect();
         let pos: Vec<DVec3> = g.occ.iter().map(|o| mesh.verts[o.v].pos).collect();
         let mut order: Vec<usize> = (0..g.occ.len()).collect();
-        order.sort_by(|&a, &b| mesh.verts[g.occ[a].fid].key.cmp(&mesh.verts[g.occ[b].fid].key).then(a.cmp(&b)));
+        order.sort_by(|&a, &b| {
+            mesh.verts[g.occ[a].fid]
+                .key
+                .cmp(&mesh.verts[g.occ[b].fid].key)
+                .then(a.cmp(&b))
+        });
         let mut rank = vec![0u32; order.len()];
         for (k, &i) in order.iter().enumerate() {
             rank[i] = k as u32;
@@ -689,14 +854,22 @@ pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeI
             Chart::Face { sign, .. } => [DVec2::new(*sign, 0.0), DVec2::new(0.0, 1.0)],
             Chart::Plane { .. } => [DVec2::X, DVec2::Y],
         };
-        let mut res = fill_polygon(&FillInput { uv: &uv, pos: &pos, rank: &rank, iso_dirs: iso });
+        let mut res = fill_polygon(&FillInput {
+            uv: &uv,
+            pos: &pos,
+            rank: &rank,
+            iso_dirs: iso,
+        });
         // Diagonals must not duplicate an edge that already joins the same
         // two vertices elsewhere (that would be non-manifold).
         let n = g.occ.len();
         let joined: HashSet<(usize, usize)> = mesh
             .alive_he()
             .map(|h| {
-                let (a, b) = (mesh.final_v(mesh.he[h].from, pole_target), mesh.final_v(mesh.he[h].to, pole_target));
+                let (a, b) = (
+                    mesh.final_v(mesh.he[h].from, pole_target),
+                    mesh.final_v(mesh.he[h].to, pole_target),
+                );
                 (a.min(b), a.max(b))
             })
             .collect();
@@ -715,7 +888,14 @@ pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeI
         if bad(&res.polys) {
             let forbid: HashSet<(usize, usize)> = (0..n)
                 .flat_map(|a| (0..n).map(move |b| (a, b)))
-                .filter(|&(a, b)| a < b && (g.occ[a].fid == g.occ[b].fid || joined.contains(&(g.occ[a].fid.min(g.occ[b].fid), g.occ[a].fid.max(g.occ[b].fid)))))
+                .filter(|&(a, b)| {
+                    a < b
+                        && (g.occ[a].fid == g.occ[b].fid
+                            || joined.contains(&(
+                                g.occ[a].fid.min(g.occ[b].fid),
+                                g.occ[a].fid.max(g.occ[b].fid),
+                            )))
+                })
                 .collect();
             match ear_fill(&uv, &forbid) {
                 Some(p) => {
@@ -737,7 +917,14 @@ pub fn autofill_all(ctx: &BodyCtx, mesh: &mut HMesh, pole_target: &HashMap<EdgeI
     fan
 }
 
-fn apply_fill(mesh: &mut HMesh, r: usize, walk: &[usize], g: &WalkGeom, chart: &Chart, polys: &[Vec<u32>]) {
+fn apply_fill(
+    mesh: &mut HMesh,
+    r: usize,
+    walk: &[usize],
+    g: &WalkGeom,
+    chart: &Chart,
+    polys: &[Vec<u32>],
+) {
     let n = walk.len();
     let mut diag: HashMap<(usize, usize), usize> = HashMap::new();
     let face = mesh.regions[r].face;
@@ -756,14 +943,43 @@ fn apply_fill(mesh: &mut HMesh, r: usize, walk: &[usize], g: &WalkGeom, chart: &
                 let (oa, ob) = (&g.occ[a], &g.occ[b]);
                 let (uv, p3) = match chart {
                     Chart::Face { .. } => (vec![oa.raw, ob.raw], None),
-                    Chart::Plane { .. } => (vec![], Some(vec![mesh.verts[oa.v].pos, mesh.verts[ob.v].pos])),
+                    Chart::Plane { .. } => (
+                        vec![],
+                        Some(vec![mesh.verts[oa.v].pos, mesh.verts[ob.v].pos]),
+                    ),
                 };
                 let mut ruv = uv.clone();
                 ruv.reverse();
-                let rp3 = p3.as_ref().map(|v: &Vec<DVec3>| v.iter().rev().copied().collect());
+                let rp3 = p3
+                    .as_ref()
+                    .map(|v: &Vec<DVec3>| v.iter().rev().copied().collect());
                 let h = mesh.he.len();
-                mesh.he.push(super::assemble::HE { from: oa.v, to: ob.v, twin: Some(h + 1), next: h, region, owner: Owner::Fill, face, uv, p3, alive: true, src: vec![] });
-                mesh.he.push(super::assemble::HE { from: ob.v, to: oa.v, twin: Some(h), next: h + 1, region, owner: Owner::Fill, face, uv: ruv, p3: rp3, alive: true, src: vec![] });
+                mesh.he.push(super::assemble::HE {
+                    from: oa.v,
+                    to: ob.v,
+                    twin: Some(h + 1),
+                    next: h,
+                    region,
+                    owner: Owner::Fill,
+                    face,
+                    uv,
+                    p3,
+                    alive: true,
+                    src: vec![],
+                });
+                mesh.he.push(super::assemble::HE {
+                    from: ob.v,
+                    to: oa.v,
+                    twin: Some(h),
+                    next: h + 1,
+                    region,
+                    owner: Owner::Fill,
+                    face,
+                    uv: ruv,
+                    p3: rp3,
+                    alive: true,
+                    src: vec![],
+                });
                 diag.insert((a, b), h);
                 diag.insert((b, a), h + 1);
                 h
@@ -796,7 +1012,12 @@ fn ear_fill(uv: &[DVec2], forbid: &HashSet<(usize, usize)>) -> Option<Vec<Vec<u3
             if orient(a, b, c) <= 0.0 || !ok(a, c) {
                 continue;
             }
-            let ear = idx.iter().all(|&q| q == a || q == b || q == c || !(orient(a, b, q) >= 0.0 && orient(b, c, q) >= 0.0 && orient(c, a, q) >= 0.0));
+            let ear = idx.iter().all(|&q| {
+                q == a
+                    || q == b
+                    || q == c
+                    || !(orient(a, b, q) >= 0.0 && orient(b, c, q) >= 0.0 && orient(c, a, q) >= 0.0)
+            });
             if !ear {
                 continue;
             }
@@ -806,7 +1027,11 @@ fn ear_fill(uv: &[DVec2], forbid: &HashSet<(usize, usize)>) -> Option<Vec<Vec<u3
                     continue;
                 }
             }
-            let q = orient(a, b, c) / ((uv[b] - uv[a]).length_squared() + (uv[c] - uv[b]).length_squared() + (uv[a] - uv[c]).length_squared()).max(1e-300);
+            let q = orient(a, b, c)
+                / ((uv[b] - uv[a]).length_squared()
+                    + (uv[c] - uv[b]).length_squared()
+                    + (uv[a] - uv[c]).length_squared())
+                .max(1e-300);
             if best.is_none_or(|(bq, _)| q > bq) {
                 best = Some((q, k));
             }

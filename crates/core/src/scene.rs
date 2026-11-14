@@ -20,7 +20,9 @@ use crate::mesh::{MeshStats, OutputMesh};
 use crate::ops::{Op, OpOutcome, Refusal};
 use anyhow::{Context, bail};
 use glam::DVec3;
-use newtopo_kernel::{BodyAttributes, BodyId, BodyTopology, CadKernel, FaceId, FaceMesh, HealReport};
+use newtopo_kernel::{
+    BodyAttributes, BodyId, BodyTopology, CadKernel, FaceId, FaceMesh, HealReport,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
@@ -102,14 +104,28 @@ impl Scene {
 
     /// Add a body from B-rep bytes (from the import helper or a `.ntopo`).
     /// One undo step.
-    pub fn add_body(&mut self, brep: &[u8], attrs: BodyAttributes, heal: HealReport) -> anyhow::Result<BodyId> {
-        let kbody = self.kernel.load_brep(brep).map_err(|e| anyhow::anyhow!("{e}"))?;
+    pub fn add_body(
+        &mut self,
+        brep: &[u8],
+        attrs: BodyAttributes,
+        heal: HealReport,
+    ) -> anyhow::Result<BodyId> {
+        let kbody = self
+            .kernel
+            .load_brep(brep)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         self.add_kernel_body(kbody, attrs, heal, None)
     }
 
     /// Add a body already loaded into the kernel (tests, import helper
     /// in-process). One undo step.
-    pub fn add_kernel_body(&mut self, kbody: BodyId, attrs: BodyAttributes, heal: HealReport, source_sha256: Option<String>) -> anyhow::Result<BodyId> {
+    pub fn add_kernel_body(
+        &mut self,
+        kbody: BodyId,
+        attrs: BodyAttributes,
+        heal: HealReport,
+        source_sha256: Option<String>,
+    ) -> anyhow::Result<BodyId> {
         let ctx = BodyCtx::build(self.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
         let mut doc = (*self.doc).clone();
         let id = BodyId(doc.fresh_id());
@@ -118,7 +134,12 @@ impl Scene {
                 Some(l) => l.id,
                 None => {
                     let lid = LayerId(doc.fresh_id());
-                    doc.layers.push(Layer { id: lid, name: name.clone(), visible: true, locked: false });
+                    doc.layers.push(Layer {
+                        id: lid,
+                        name: name.clone(),
+                        visible: true,
+                        locked: false,
+                    });
                     lid
                 }
             },
@@ -126,7 +147,11 @@ impl Scene {
         };
         doc.bodies.push(BodyEntry {
             id,
-            name: if attrs.name.is_empty() { format!("Body {}", id.0) } else { attrs.name.clone() },
+            name: if attrs.name.is_empty() {
+                format!("Body {}", id.0)
+            } else {
+                attrs.name.clone()
+            },
             layer,
             color: attrs.color,
             transform: attrs.transform,
@@ -136,7 +161,13 @@ impl Scene {
             source_sha256,
         });
         let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
-        self.bodies.insert(id, BodyCache { ctx, edge_polylines });
+        self.bodies.insert(
+            id,
+            BodyCache {
+                ctx,
+                edge_polylines,
+            },
+        );
         self.commit(doc);
         Ok(id)
     }
@@ -144,7 +175,12 @@ impl Scene {
     pub fn body_view(&self, body: BodyId) -> Option<BodyView<'_>> {
         let entry = self.doc.body(body)?;
         let c = self.bodies.get(&body)?;
-        Some(BodyView { entry, topology: &c.ctx.topo, face_meshes: &c.ctx.face_meshes, edge_polylines: &c.edge_polylines })
+        Some(BodyView {
+            entry,
+            topology: &c.ctx.topo,
+            face_meshes: &c.ctx.face_meshes,
+            edge_polylines: &c.edge_polylines,
+        })
     }
 
     /// Static evaluation context of a body.
@@ -178,7 +214,12 @@ impl Scene {
         if doc == *self.doc {
             return Ok(outcome);
         }
-        let ids: Vec<BodyId> = doc.bodies.iter().map(|b| b.id).filter(|b| self.bodies.contains_key(b)).collect();
+        let ids: Vec<BodyId> = doc
+            .bodies
+            .iter()
+            .map(|b| b.id)
+            .filter(|b| self.bodies.contains_key(b))
+            .collect();
         let mut fresh: Vec<(BodyId, u64, BodyEval)> = Vec::new();
         for b in ids {
             let fp_new = self.fingerprint_of(&doc, b);
@@ -186,17 +227,26 @@ impl Scene {
                 continue;
             }
             let before = self.blocking_count(b);
-            let ev = match self.stashed.take().filter(|(f, bb, _)| *f == fp_new && *bb == b) {
+            let ev = match self
+                .stashed
+                .take()
+                .filter(|(f, bb, _)| *f == fp_new && *bb == b)
+            {
                 Some((_, _, ev)) => ev,
                 None => match self.eval_doc(&doc, b) {
                     Some(e) => e,
                     None => continue,
                 },
             };
-            let issues: Vec<Issue> =
-                eval::validate_body(&self.bodies[&b].ctx, &ev).into_iter().filter(|i| i.kind != eval::IssueKind::FanFallback).collect();
+            let issues: Vec<Issue> = eval::validate_body(&self.bodies[&b].ctx, &ev)
+                .into_iter()
+                .filter(|i| i.kind != eval::IssueKind::FanFallback)
+                .collect();
             if issues.len() > before {
-                return Err(Refusal::new(format!("can't do that: {}", issue_reason(&issues[0]))));
+                return Err(Refusal::new(format!(
+                    "can't do that: {}",
+                    issue_reason(&issues[0])
+                )));
             }
             fresh.push((b, fp_new, ev));
         }
@@ -218,7 +268,10 @@ impl Scene {
     }
 
     fn blocking_count(&mut self, b: BodyId) -> usize {
-        self.validate(b).into_iter().filter(|i| i.kind != eval::IssueKind::FanFallback).count()
+        self.validate(b)
+            .into_iter()
+            .filter(|i| i.kind != eval::IssueKind::FanFallback)
+            .count()
     }
 
     /// Keep an evaluation computed for a candidate document (saves the
@@ -288,19 +341,35 @@ impl Scene {
     }
 
     fn fingerprint_of(&self, d: &Document, body: BodyId) -> u64 {
-        let Some(c) = self.bodies.get(&body) else { return 0 };
+        let Some(c) = self.bodies.get(&body) else {
+            return 0;
+        };
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        let rules: Vec<&crate::doc::RuleEntry> = d.rules.iter().filter(|r| !eval::rule_faces(&r.rule, body, &c.ctx).is_empty()).collect();
-        let splits: Vec<&crate::doc::SplitLine> = d.split_lines.iter().filter(|s| s.body == body).collect();
-        let edits: Vec<&crate::doc::EditEntry> = d.edits.iter().filter(|e| e.edit.body() == body).collect();
+        let rules: Vec<&crate::doc::RuleEntry> = d
+            .rules
+            .iter()
+            .filter(|r| !eval::rule_faces(&r.rule, body, &c.ctx).is_empty())
+            .collect();
+        let splits: Vec<&crate::doc::SplitLine> =
+            d.split_lines.iter().filter(|s| s.body == body).collect();
+        let edits: Vec<&crate::doc::EditEntry> =
+            d.edits.iter().filter(|e| e.edit.body() == body).collect();
         let phases: Vec<_> = d
             .phase_overrides
             .iter()
             .filter(|(k, _)| matches!(k, crate::doc::PhaseTarget::Face(b, _) | crate::doc::PhaseTarget::Edge(b, _) if *b == body))
             .collect();
-        serde_json::to_string(&(rules, splits, edits, phases, d.settings.autofill, d.settings.sharp_angle_deg, d.settings.min_closed_segments))
-            .unwrap_or_default()
-            .hash(&mut h);
+        serde_json::to_string(&(
+            rules,
+            splits,
+            edits,
+            phases,
+            d.settings.autofill,
+            d.settings.sharp_angle_deg,
+            d.settings.min_closed_segments,
+        ))
+        .unwrap_or_default()
+        .hash(&mut h);
         h.finish()
     }
 
@@ -375,7 +444,9 @@ impl Scene {
 
     /// Validation issues of a body's output (SPEC §4.6 step 8).
     pub fn validate(&mut self, body: BodyId) -> Vec<Issue> {
-        let Some(ev) = self.eval(body).cloned() else { return vec![] };
+        let Some(ev) = self.eval(body).cloned() else {
+            return vec![];
+        };
         let c = &self.bodies[&body];
         eval::validate_body(&c.ctx, &ev)
     }
@@ -396,7 +467,9 @@ impl Scene {
 
     /// Patches of a body with bend class and owning spread rule.
     pub fn patches(&mut self, body: BodyId) -> Vec<PatchInfo> {
-        let Some(ev) = self.eval(body).cloned() else { return vec![] };
+        let Some(ev) = self.eval(body).cloned() else {
+            return vec![];
+        };
         let c = &self.bodies[&body];
         ev.patches
             .iter()
@@ -414,12 +487,18 @@ impl Scene {
 
     /// Raw patch records (with UV extents) of a body.
     pub fn patch_records(&mut self, body: BodyId) -> Vec<Patch> {
-        self.eval(body).map(|e| e.patches.clone()).unwrap_or_default()
+        self.eval(body)
+            .map(|e| e.patches.clone())
+            .unwrap_or_default()
     }
 
     /// The spread rule that owns a patch (SPEC §4.3).
     pub fn rule_on_patch(&self, p: &PatchId) -> Option<RuleId> {
-        self.doc.rules.iter().find(|r| rule_owns(&r.rule, p)).map(|r| r.id)
+        self.doc
+            .rules
+            .iter()
+            .find(|r| rule_owns(&r.rule, p))
+            .map(|r| r.id)
     }
 
     /// Nearest output vertex of a body to a point (body coordinates).
@@ -428,19 +507,31 @@ impl Scene {
         m.vertices
             .iter()
             .enumerate()
-            .min_by(|a, b| (a.1.position - p).length().total_cmp(&(b.1.position - p).length()))
+            .min_by(|a, b| {
+                (a.1.position - p)
+                    .length()
+                    .total_cmp(&(b.1.position - p).length())
+            })
             .map(|(i, v)| (i as u32, v.key.clone()))
     }
 
     /// Nearest output edge (index into `OutputMesh::edges`, and its key).
-    pub fn nearest_output_edge(&mut self, body: BodyId, p: DVec3) -> Option<(usize, Option<EdgeKey>)> {
+    pub fn nearest_output_edge(
+        &mut self,
+        body: BodyId,
+        p: DVec3,
+    ) -> Option<(usize, Option<EdgeKey>)> {
         let m = self.output_of(body)?;
         let mut best: Option<(f64, usize)> = None;
         for (i, e) in m.edges.iter().enumerate() {
             for w in e.path.windows(2) {
                 let (a, b) = (w[0], w[1]);
                 let ab = b - a;
-                let t = if ab.length_squared() > 0.0 { ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+                let t = if ab.length_squared() > 0.0 {
+                    ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 let d = (a + ab * t - p).length();
                 if best.is_none_or(|(bd, _)| d < bd) {
                     best = Some((d, i));
@@ -453,15 +544,20 @@ impl Scene {
     /// Save as `.ntopo` (SPEC §8.2): zip with `scene.json`,
     /// `cad/<body>.bbrep` and `cad/source.sha256`.
     pub fn save(&mut self, path: &Path) -> anyhow::Result<()> {
-        let file = std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+        let file =
+            std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
         let mut zip = zip::ZipWriter::new(file);
-        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
         zip.start_file("scene.json", opts)?;
         zip.write_all(serde_json::to_string_pretty(&*self.doc)?.as_bytes())?;
         let mut shas = String::new();
         for b in &self.doc.bodies {
             let c = self.bodies.get(&b.id).context("body without kernel data")?;
-            let bytes = self.kernel.save_brep(c.ctx.kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let bytes = self
+                .kernel
+                .save_brep(c.ctx.kbody)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             zip.start_file(format!("cad/{}.bbrep", b.id.0), opts)?;
             zip.write_all(&bytes)?;
             if let Some(s) = &b.source_sha256 {
@@ -480,9 +576,14 @@ impl Scene {
         let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
         let mut zip = zip::ZipArchive::new(file).context("not a .ntopo archive")?;
         let mut json = String::new();
-        zip.by_name("scene.json").context("scene.json missing")?.read_to_string(&mut json)?;
+        zip.by_name("scene.json")
+            .context("scene.json missing")?
+            .read_to_string(&mut json)?;
         let raw: serde_json::Value = serde_json::from_str(&json)?;
-        let ver = raw.get("format_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let ver = raw
+            .get("format_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
         if ver > crate::doc::FORMAT_VERSION {
             bail!(
                 "this scene was saved by a newer version of newtopo (format {ver}, this build reads up to {}); please update the app",
@@ -493,11 +594,23 @@ impl Scene {
         let mut scene = Scene::new(kernel);
         for b in &doc.bodies {
             let mut bytes = Vec::new();
-            zip.by_name(&format!("cad/{}.bbrep", b.id.0)).with_context(|| format!("cad/{}.bbrep missing", b.id.0))?.read_to_end(&mut bytes)?;
-            let kbody = scene.kernel.load_brep(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
-            let ctx = BodyCtx::build(scene.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
+            zip.by_name(&format!("cad/{}.bbrep", b.id.0))
+                .with_context(|| format!("cad/{}.bbrep missing", b.id.0))?
+                .read_to_end(&mut bytes)?;
+            let kbody = scene
+                .kernel
+                .load_brep(&bytes)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let ctx =
+                BodyCtx::build(scene.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
             let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
-            scene.bodies.insert(b.id, BodyCache { ctx, edge_polylines });
+            scene.bodies.insert(
+                b.id,
+                BodyCache {
+                    ctx,
+                    edge_polylines,
+                },
+            );
         }
         scene.doc = Arc::new(doc);
         scene.saved = Some(scene.doc.clone());
@@ -517,7 +630,9 @@ impl Scene {
 
     /// Per-rule generated line counts of a body (pieces), for panels.
     pub fn lines_per_rule(&mut self, body: BodyId) -> HashMap<RuleId, u32> {
-        self.eval(body).map(|e| e.lines_per_rule.clone()).unwrap_or_default()
+        self.eval(body)
+            .map(|e| e.lines_per_rule.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -531,8 +646,14 @@ pub fn rule_owns(r: &Rule, p: &PatchId) -> bool {
     match r {
         Rule::Connect { patches, .. } => patches.contains(p),
         Rule::Grid { patch, .. } => patch == p,
-        Rule::Slice { scope: crate::doc::SliceScope::Body(b), .. } => *b == p.body,
-        Rule::Slice { scope: crate::doc::SliceScope::Patches(list), .. } => list.contains(p),
+        Rule::Slice {
+            scope: crate::doc::SliceScope::Body(b),
+            ..
+        } => *b == p.body,
+        Rule::Slice {
+            scope: crate::doc::SliceScope::Patches(list),
+            ..
+        } => list.contains(p),
         _ => false,
     }
 }

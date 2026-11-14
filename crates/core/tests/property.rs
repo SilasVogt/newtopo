@@ -71,38 +71,94 @@ fn resolve(s: &mut Scene, b: BodyId, a: &A) -> Option<Op> {
     let nf = ctx.topo.faces.len() as u32;
     let infos: Vec<_> = ctx.faces.iter().map(|f| f.info.clone()).collect();
     let face_info = |f: u32| infos[f as usize].clone();
-    let line_edges: Vec<usize> = m.edges.iter().enumerate().filter(|(_, e)| matches!(e.kind, OutEdgeKind::Line(_) | OutEdgeKind::Split(_))).map(|(i, _)| i).collect();
+    let line_edges: Vec<usize> = m
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e.kind, OutEdgeKind::Line(_) | OutEdgeKind::Split(_)))
+        .map(|(i, _)| i)
+        .collect();
     Some(match a {
-        A::Grid(f, u, v) => Op::Grid { patches: PatchSel { faces: vec![*f as u32 % nf], ..Default::default() }, u: *u as u32, v: *v as u32, start_on_seam: false, spacing: Spacing::ArcLength },
-        A::Connect(f, ca, cb) => Op::Connect { patches: PatchSel { faces: vec![*f as u32 % nf], ..Default::default() }, a: *ca as u32, b: *cb as u32, start_on_seam: false },
-        A::Iso(f, d, v, split, through) => {
-            Op::Iso { body: Some(b), face: *f as u32 % nf, dir: if *d { IsoDir::U } else { IsoDir::V }, value: *v, seed: None, split: *split, through: *through }
-        }
-        A::Slice(c) => Op::Slice { body: Some(b), patches: None, count: *c as u32, through: false, guide_edge: None },
+        A::Grid(f, u, v) => Op::Grid {
+            patches: PatchSel {
+                faces: vec![*f as u32 % nf],
+                ..Default::default()
+            },
+            u: *u as u32,
+            v: *v as u32,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        },
+        A::Connect(f, ca, cb) => Op::Connect {
+            patches: PatchSel {
+                faces: vec![*f as u32 % nf],
+                ..Default::default()
+            },
+            a: *ca as u32,
+            b: *cb as u32,
+            start_on_seam: false,
+        },
+        A::Iso(f, d, v, split, through) => Op::Iso {
+            body: Some(b),
+            face: *f as u32 % nf,
+            dir: if *d { IsoDir::U } else { IsoDir::V },
+            value: *v,
+            seed: None,
+            split: *split,
+            through: *through,
+        },
+        A::Slice(c) => Op::Slice {
+            body: Some(b),
+            patches: None,
+            count: *c as u32,
+            through: false,
+            guide_edge: None,
+        },
         A::Remove(p) => {
             let e = &m.edges[*line_edges.get(*p as usize % line_edges.len().max(1))?];
-            Op::RemoveEdge { body: Some(b), edge: e.key.clone()? }
+            Op::RemoveEdge {
+                body: Some(b),
+                edge: e.key.clone()?,
+            }
         }
         A::Collapse(p) => {
             let e = &m.edges[*line_edges.get(*p as usize % line_edges.len().max(1))?];
-            Op::Collapse { body: Some(b), edge: e.key.clone()?, confirmed: true }
+            Op::Collapse {
+                body: Some(b),
+                edge: e.key.clone()?,
+                confirmed: true,
+            }
         }
         A::Weld(p) => {
             let e = &m.edges[*line_edges.get(*p as usize % line_edges.len().max(1))?];
-            Op::Weld { body: Some(b), from: m.vertices[e.a as usize].key.clone(), to: m.vertices[e.b as usize].key.clone(), confirmed: true }
+            Op::Weld {
+                body: Some(b),
+                from: m.vertices[e.a as usize].key.clone(),
+                to: m.vertices[e.b as usize].key.clone(),
+                confirmed: true,
+            }
         }
-        A::Autofill => Op::SetAutofill { on: !s.doc().settings.autofill },
+        A::Autofill => Op::SetAutofill {
+            on: !s.doc().settings.autofill,
+        },
         A::DeleteRule(p) => {
             let rules = &s.doc().rules;
             if rules.is_empty() {
                 return None;
             }
-            Op::DeleteRule { rule: rules[*p as usize % rules.len()].id }
+            Op::DeleteRule {
+                rule: rules[*p as usize % rules.len()].id,
+            }
         }
         A::Cut(f, pa, pb) => {
             let f = *f as u32 % nf;
             let info = face_info(f);
-            let at = |p: (f64, f64)| DVec2::new(info.u_range.0 + (info.u_range.1 - info.u_range.0) * p.0, info.v_range.0 + (info.v_range.1 - info.v_range.0) * p.1);
+            let at = |p: (f64, f64)| {
+                DVec2::new(
+                    info.u_range.0 + (info.u_range.1 - info.u_range.0) * p.0,
+                    info.v_range.0 + (info.v_range.1 - info.v_range.0) * p.1,
+                )
+            };
             let (ua, ub) = (at(*pa), at(*pb));
             let k = s.ctx(b).unwrap().kernel.clone();
             let kb = s.ctx(b).unwrap().kbody;
@@ -110,15 +166,35 @@ fn resolve(s: &mut Scene, b: BodyId, a: &A) -> Option<Op> {
             if cls.iter().any(|c| *c != newtopo_kernel::UvClass::In) {
                 return None;
             }
-            Op::Cut { points: vec![CutPoint::Face { body: b, face: FaceId(f), uv: ua }, CutPoint::Face { body: b, face: FaceId(f), uv: ub }], closed: false }
+            Op::Cut {
+                points: vec![
+                    CutPoint::Face {
+                        body: b,
+                        face: FaceId(f),
+                        uv: ua,
+                    },
+                    CutPoint::Face {
+                        body: b,
+                        face: FaceId(f),
+                        uv: ub,
+                    },
+                ],
+                closed: false,
+            }
         }
     })
 }
 
 fn same_output(a: &OutputMesh, b: &OutputMesh) -> bool {
     a.vertices.len() == b.vertices.len()
-        && a.polygons.iter().map(|p| &p.verts).eq(b.polygons.iter().map(|p| &p.verts))
-        && a.vertices.iter().zip(&b.vertices).all(|(x, y)| x.key == y.key && (x.position - y.position).length() < 1e-9)
+        && a.polygons
+            .iter()
+            .map(|p| &p.verts)
+            .eq(b.polygons.iter().map(|p| &p.verts))
+        && a.vertices
+            .iter()
+            .zip(&b.vertices)
+            .all(|(x, y)| x.key == y.key && (x.position - y.position).length() < 1e-9)
 }
 
 fn run_case(model: usize, steps: &[A]) -> Result<(), TestCaseError> {
@@ -138,18 +214,34 @@ fn run_case(model: usize, steps: &[A]) -> Result<(), TestCaseError> {
     };
     let mut applied = 0usize;
     for a in steps {
-        let Some(op) = resolve(&mut s, b, a) else { continue };
+        let Some(op) = resolve(&mut s, b, a) else {
+            continue;
+        };
         match s.apply(op.clone()) {
             Ok(_) => {
                 ACCEPTED.fetch_add(1, Ordering::Relaxed);
                 applied += 1;
-                let issues: Vec<_> = s.validate(b).into_iter().filter(|i| i.kind != IssueKind::FanFallback).collect();
-                prop_assert!(issues.is_empty(), "model {model}: {:?} accepted but invalid: {:?}", op, issues.iter().map(|i| &i.message).collect::<Vec<_>>());
+                let issues: Vec<_> = s
+                    .validate(b)
+                    .into_iter()
+                    .filter(|i| i.kind != IssueKind::FanFallback)
+                    .collect();
+                prop_assert!(
+                    issues.is_empty(),
+                    "model {model}: {:?} accepted but invalid: {:?}",
+                    op,
+                    issues.iter().map(|i| &i.message).collect::<Vec<_>>()
+                );
             }
             Err(r) => {
                 REFUSED.fetch_add(1, Ordering::Relaxed);
                 prop_assert!(!r.reason.is_empty());
-                if r.reason.starts_with("can't do that: ") && !r.reason.contains("no longer") && !r.reason.contains("share a polygon") && !r.reason.contains("non-manifold") && !r.reason.contains("flip") {
+                if r.reason.starts_with("can't do that: ")
+                    && !r.reason.contains("no longer")
+                    && !r.reason.contains("share a polygon")
+                    && !r.reason.contains("non-manifold")
+                    && !r.reason.contains("flip")
+                {
                     GATE_REFUSALS.fetch_add(1, Ordering::Relaxed);
                     eprintln!("gate refusal on model {model}: {:?}: {}", op, r.reason);
                 }
@@ -164,12 +256,18 @@ fn run_case(model: usize, steps: &[A]) -> Result<(), TestCaseError> {
     prop_assert_eq!(s2.doc(), s.doc());
     let o1 = s.output_of(b).unwrap().clone();
     let o2 = s2.output_of(b).unwrap().clone();
-    prop_assert!(same_output(&o1, &o2), "model {model}: save/load changed the output");
+    prop_assert!(
+        same_output(&o1, &o2),
+        "model {model}: save/load changed the output"
+    );
     // Undo everything → initial document.
     let _ = (undo_base, applied);
     let mut guard = 0;
     while s.doc() != &initial && guard < 100 {
-        prop_assert!(s.undo(), "ran out of undo steps before reaching the initial document");
+        prop_assert!(
+            s.undo(),
+            "ran out of undo steps before reaching the initial document"
+        );
         guard += 1;
     }
     prop_assert_eq!(s.doc(), &initial);
@@ -183,8 +281,16 @@ fn run_case(model: usize, steps: &[A]) -> Result<(), TestCaseError> {
 
 #[test]
 fn random_op_sequences() {
-    let cases: u32 = std::env::var("NT_PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
-    let mut runner = proptest::test_runner::TestRunner::new(Config { cases, rng_seed: RngSeed::Fixed(0x6e74_6f70_6f31), failure_persistence: None, ..Config::default() });
+    let cases: u32 = std::env::var("NT_PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    let mut runner = proptest::test_runner::TestRunner::new(Config {
+        cases,
+        rng_seed: RngSeed::Fixed(0x6e74_6f70_6f31),
+        failure_persistence: None,
+        ..Config::default()
+    });
     let strat = (0usize..10, proptest::collection::vec(arb_a(), 1..7));
     let res = runner.run(&strat, |(model, steps)| run_case(model, &steps));
     eprintln!(

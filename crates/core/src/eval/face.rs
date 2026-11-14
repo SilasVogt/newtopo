@@ -86,21 +86,42 @@ fn boundary_curves_and_events(fg: &FaceGeom) -> (Vec<ACurve>, Vec<AEvent>) {
     let mut events = Vec::new();
     for b in &fg.curves {
         let ci = curves.len();
-        curves.push(ACurve { owner: b.owner, seam: b.seam, pts: b.pts.clone(), par: b.par.clone(), closed: false });
+        curves.push(ACurve {
+            owner: b.owner,
+            seam: b.seam,
+            pts: b.pts.clone(),
+            par: b.par.clone(),
+            closed: false,
+        });
         for (k, end) in b.ends.iter().enumerate() {
-            let (uv, p) = if k == 0 { (b.pts[0], b.par[0]) } else { (b.pts[b.pts.len() - 1], b.par[b.par.len() - 1]) };
+            let (uv, p) = if k == 0 {
+                (b.pts[0], b.par[0])
+            } else {
+                (b.pts[b.pts.len() - 1], b.par[b.par.len() - 1])
+            };
             let key = match end {
                 Some(v) => VertexKey::Cad(*v),
                 None => VertexKey::Pole(fg.id, k as u8),
             };
-            events.push(AEvent { uv, key, inc: vec![(ci, p)], artificial: false, seam_rel: false });
+            events.push(AEvent {
+                uv,
+                key,
+                inc: vec![(ci, p)],
+                artificial: false,
+                seam_rel: false,
+            });
         }
     }
     (curves, events)
 }
 
 /// Append clip output: local curves get offset, STOP refs map to `stop_base + i`.
-fn absorb(curves: &mut Vec<ACurve>, events: &mut Vec<AEvent>, out: super::clip::ClipOut, stop_base: usize) -> Vec<usize> {
+fn absorb(
+    curves: &mut Vec<ACurve>,
+    events: &mut Vec<AEvent>,
+    out: super::clip::ClipOut,
+    stop_base: usize,
+) -> Vec<usize> {
     let base = curves.len();
     let ids: Vec<usize> = (base..base + out.curves.len()).collect();
     curves.extend(out.curves);
@@ -119,7 +140,13 @@ fn absorb(curves: &mut Vec<ACurve>, events: &mut Vec<AEvent>, out: super::clip::
 
 /// Crossings among a set of curves (pairwise), keyed by `key_fn`.
 #[allow(clippy::type_complexity)]
-fn crossings(fg: &FaceGeom, curves: &[ACurve], set: &[usize], key_fn: &dyn Fn(Owner, Owner, u32) -> Option<VertexKey>, events: &mut Vec<AEvent>) {
+fn crossings(
+    fg: &FaceGeom,
+    curves: &[ACurve],
+    set: &[usize],
+    key_fn: &dyn Fn(Owner, Owner, u32) -> Option<VertexKey>,
+    events: &mut Vec<AEvent>,
+) {
     let eps_uv = fg.eps / fg.metric.max_element();
     // (owner a, owner b) -> hits (sa, sb, uv, ca, cb)
     let mut hits: HashMap<(Owner, Owner), Vec<(f64, f64, DVec2, usize, usize)>> = HashMap::new();
@@ -138,7 +165,11 @@ fn crossings(fg: &FaceGeom, curves: &[ACurve], set: &[usize], key_fn: &dyn Fn(Ow
             let (ia, ib) = (set[x], set[y]);
             let (la, ha) = boxes[x];
             let (lb, hb) = boxes[y];
-            if la.x > hb.x + eps_uv || lb.x > ha.x + eps_uv || la.y > hb.y + eps_uv || lb.y > ha.y + eps_uv {
+            if la.x > hb.x + eps_uv
+                || lb.x > ha.x + eps_uv
+                || la.y > hb.y + eps_uv
+                || lb.y > ha.y + eps_uv
+            {
                 continue;
             }
             let (ca, cb) = (&curves[ia], &curves[ib]);
@@ -146,14 +177,20 @@ fn crossings(fg: &FaceGeom, curves: &[ACurve], set: &[usize], key_fn: &dyn Fn(Ow
             let swap = cb.owner < ca.owner;
             for i in 0..ca.pts.len() - 1 {
                 for j in 0..cb.pts.len() - 1 {
-                    for (fa, fb) in seg_hits(ca.pts[i], ca.pts[i + 1], cb.pts[j], cb.pts[j + 1], eps_uv) {
+                    for (fa, fb) in
+                        seg_hits(ca.pts[i], ca.pts[i + 1], cb.pts[j], cb.pts[j + 1], eps_uv)
+                    {
                         let sa = ca.par[i] + (ca.par[i + 1] - ca.par[i]) * fa;
                         let sb = cb.par[j] + (cb.par[j + 1] - cb.par[j]) * fb;
                         let uv = ca.pts[i] + (ca.pts[i + 1] - ca.pts[i]) * fa;
                         if swap {
-                            hits.entry((cb.owner, ca.owner)).or_default().push((sb, sa, uv, ib, ia));
+                            hits.entry((cb.owner, ca.owner))
+                                .or_default()
+                                .push((sb, sa, uv, ib, ia));
                         } else {
-                            hits.entry((ca.owner, cb.owner)).or_default().push((sa, sb, uv, ia, ib));
+                            hits.entry((ca.owner, cb.owner))
+                                .or_default()
+                                .push((sa, sb, uv, ia, ib));
                         }
                     }
                 }
@@ -176,7 +213,13 @@ fn crossings(fg: &FaceGeom, curves: &[ACurve], set: &[usize], key_fn: &dyn Fn(Ow
             }
             last = Some((sa, sb));
             if let Some(key) = key_fn(k.0, k.1, occ) {
-                events.push(AEvent { uv, key, inc: vec![(ca, sa), (cb, sb)], artificial: false, seam_rel: false });
+                events.push(AEvent {
+                    uv,
+                    key,
+                    inc: vec![(ca, sa), (cb, sb)],
+                    artificial: false,
+                    seam_rel: false,
+                });
             }
         }
     }
@@ -191,7 +234,11 @@ pub fn split_pts(fg: &FaceGeom, s: &SplitLine) -> (Vec<DVec2>, bool, Option<DVec
             let (pts, closed) = super::lines::iso_line(fg, d, v, None);
             let seed = seed.map(|t| {
                 let t = super::lines::iso_abs(fg, 1 - d, t);
-                if d == 0 { DVec2::new(v, t) } else { DVec2::new(t, v) }
+                if d == 0 {
+                    DVec2::new(v, t)
+                } else {
+                    DVec2::new(t, v)
+                }
             });
             (pts, closed, seed)
         }
@@ -215,20 +262,32 @@ pub fn stage1(ctx: &BodyCtx, body: BodyId, fg: &FaceGeom, splits: &[&SplitLine])
             seed,
             end_keys: [None, None],
         };
-        let mut loc = |uv: DVec2| -> Option<usize> { if classify_inside(ctx, fg, &[uv])[0] { Some(0) } else { None } };
+        let mut loc = |uv: DVec2| -> Option<usize> {
+            if classify_inside(ctx, fg, &[uv])[0] {
+                Some(0)
+            } else {
+                None
+            }
+        };
         let out = clip(fg, &input, &boundary, &mut loc);
         split_curves.extend(absorb(&mut curves, &mut events, out, 0));
     }
     let key_fn = |a: Owner, b: Owner, occ: u32| -> Option<VertexKey> {
         match (a, b) {
-            (Owner::Split(x), Owner::Split(y)) if x != y => Some(VertexKey::SplitCross { a: x.min(y), b: x.max(y), occurrence: occ }),
+            (Owner::Split(x), Owner::Split(y)) if x != y => Some(VertexKey::SplitCross {
+                a: x.min(y),
+                b: x.max(y),
+                occurrence: occ,
+            }),
             _ => None,
         }
     };
     crossings(fg, &curves, &split_curves, &key_fn, &mut events);
     snap_events(fg, &curves, &mut events);
     let _ = nb;
-    let arr = Arr::build(curves.clone(), events.clone(), fg, &mut |p| classify_inside(ctx, fg, p));
+    let arr = Arr::build(curves.clone(), events.clone(), fg, &mut |p| {
+        classify_inside(ctx, fg, p)
+    });
     let glued = Glued::build(&arr, false);
     // Patches = regions.
     let nreg = glued.regions.len();
@@ -259,9 +318,13 @@ pub fn stage1(ctx: &BodyCtx, body: BodyId, fg: &FaceGeom, splits: &[&SplitLine])
                         sample = *p;
                     }
                 }
-                let Owner::Split(sid) = ge.owner else { continue };
+                let Owner::Split(sid) = ge.owner else {
+                    continue;
+                };
                 split_bounded = true;
-                let Some(sl) = splits.iter().find(|s| s.id == sid) else { continue };
+                let Some(sl) = splits.iter().find(|s| s.id == sid) else {
+                    continue;
+                };
                 let SplitKind::Iso { dir, .. } = sl.kind;
                 let d = pts[pts.len() - 1] - pts[0];
                 let val = if dir == IsoDir::U { pts[0].x } else { pts[0].y };
@@ -293,8 +356,19 @@ pub fn stage1(ctx: &BodyCtx, body: BodyId, fg: &FaceGeom, splits: &[&SplitLine])
                 }
             }
         }
-        let b = |x: Option<(f64, SplitId)>| x.map(|(_, s)| PatchBound::Split(s)).unwrap_or(PatchBound::FaceBoundary);
-        let id = PatchId { body, face: fg.id, u_lo: b(lo_u), u_hi: b(hi_u), v_lo: b(lo_v), v_hi: b(hi_v), region: 0 };
+        let b = |x: Option<(f64, SplitId)>| {
+            x.map(|(_, s)| PatchBound::Split(s))
+                .unwrap_or(PatchBound::FaceBoundary)
+        };
+        let id = PatchId {
+            body,
+            face: fg.id,
+            u_lo: b(lo_u),
+            u_hi: b(hi_u),
+            v_lo: b(lo_v),
+            v_hi: b(hi_v),
+            region: 0,
+        };
         // Lift cells across dissolved seams.
         let cells = cells_of[r].clone();
         let mut off: HashMap<usize, DVec2> = HashMap::new();
@@ -317,8 +391,14 @@ pub fn stage1(ctx: &BodyCtx, body: BodyId, fg: &FaceGeom, splits: &[&SplitLine])
                         let cell = arr.left_cell(ch * 2).or(arr.left_cell(ch * 2 + 1));
                         if copy == 0 { c_lo = cell } else { c_hi = cell }
                     }
-                    let (Some(a), Some(bc)) = (c_lo, c_hi) else { continue };
-                    let shift = if dir == 0 { DVec2::new(per.x, 0.0) } else { DVec2::new(0.0, per.y) };
+                    let (Some(a), Some(bc)) = (c_lo, c_hi) else {
+                        continue;
+                    };
+                    let shift = if dir == 0 {
+                        DVec2::new(per.x, 0.0)
+                    } else {
+                        DVec2::new(0.0, per.y)
+                    };
                     match (off.get(&a).copied(), off.get(&bc).copied()) {
                         (Some(oa), Some(ob)) => {
                             if (oa - (ob + shift)).length() > 1e-9 {
@@ -396,7 +476,14 @@ pub fn stage1(ctx: &BodyCtx, body: BodyId, fg: &FaceGeom, splits: &[&SplitLine])
         prev = Some(id);
         patches[i].id.region = cnt;
     }
-    Stage1 { curves, events, arr, glued, patches, cell_patch }
+    Stage1 {
+        curves,
+        events,
+        arr,
+        glued,
+        patches,
+        cell_patch,
+    }
 }
 
 /// Stage 2+3: clip lines, compute crossings, build and glue the final
@@ -423,7 +510,11 @@ pub fn stage3(ctx: &BodyCtx, fg: &FaceGeom, s1: &Stage1, lines: &[GLine]) -> (Ar
     }
     let key_fn = |a: Owner, b: Owner, occ: u32| -> Option<VertexKey> {
         match (a, b) {
-            (Owner::Line(x), Owner::Line(y)) => Some(VertexKey::Crossing { a: x.min(y), b: x.max(y), occurrence: occ }),
+            (Owner::Line(x), Owner::Line(y)) => Some(VertexKey::Crossing {
+                a: x.min(y),
+                b: x.max(y),
+                occurrence: occ,
+            }),
             _ => None,
         }
     };
@@ -436,14 +527,25 @@ pub fn stage3(ctx: &BodyCtx, fg: &FaceGeom, s1: &Stage1, lines: &[GLine]) -> (Ar
 
 /// Refine where a line meets a CAD edge so the event sits exactly on the
 /// edge (and on the line: iso value, straight segment, or slice plane).
-fn refine_boundary_hits(ctx: &BodyCtx, fg: &FaceGeom, gl: &GLine, stoppers: &[ACurve], out: &mut super::clip::ClipOut) {
+fn refine_boundary_hits(
+    ctx: &BodyCtx,
+    fg: &FaceGeom,
+    gl: &GLine,
+    stoppers: &[ACurve],
+    out: &mut super::clip::ClipOut,
+) {
     for e in &mut out.events {
-        let Some(&(si, t0)) = e.inc.iter().find(|(c, _)| *c >= STOP) else { continue };
+        let Some(&(si, t0)) = e.inc.iter().find(|(c, _)| *c >= STOP) else {
+            continue;
+        };
         let st = &stoppers[si - STOP];
         let Owner::Cad(edge) = st.owner else { continue };
         let (a, b) = (gl.pts[0], gl.pts[gl.pts.len() - 1]);
         let residual = |t: f64| -> Option<(f64, DVec2)> {
-            let uv = ctx.kernel.edge_pcurve_eval(ctx.kbody, edge, fg.id, false, &[t]).ok()?[0];
+            let uv = ctx
+                .kernel
+                .edge_pcurve_eval(ctx.kbody, edge, fg.id, false, &[t])
+                .ok()?[0];
             if let Some((o, n)) = gl.plane {
                 let p = ctx.edge_point(edge, t);
                 return Some(((p - o).dot(n), uv));
@@ -456,11 +558,18 @@ fn refine_boundary_hits(ctx: &BodyCtx, fg: &FaceGeom, gl: &GLine, stoppers: &[AC
             None
         };
         let span = (st.par[st.par.len() - 1] - st.par[0]).abs().max(1e-12);
-        let Some((mut f0, _)) = residual(t0) else { continue };
+        let Some((mut f0, _)) = residual(t0) else {
+            continue;
+        };
         let mut x0 = t0;
         let mut x1 = t0 + span * 1e-4;
-        let Some((mut f1, _)) = residual(x1) else { continue };
-        let (lo, hi) = (st.par[0].min(st.par[st.par.len() - 1]), st.par[0].max(st.par[st.par.len() - 1]));
+        let Some((mut f1, _)) = residual(x1) else {
+            continue;
+        };
+        let (lo, hi) = (
+            st.par[0].min(st.par[st.par.len() - 1]),
+            st.par[0].max(st.par[st.par.len() - 1]),
+        );
         for _ in 0..30 {
             if f1.abs() < 1e-15 || (f1 - f0).abs() < 1e-300 {
                 break;
@@ -480,12 +589,20 @@ fn refine_boundary_hits(ctx: &BodyCtx, fg: &FaceGeom, gl: &GLine, stoppers: &[AC
         if (x1 - t0).abs() > span * 0.05 {
             continue;
         }
-        let Some((fr, uv)) = residual(x1) else { continue };
-        let Some((f_orig, _)) = residual(t0) else { continue };
+        let Some((fr, uv)) = residual(x1) else {
+            continue;
+        };
+        let Some((f_orig, _)) = residual(t0) else {
+            continue;
+        };
         if fr.abs() > f_orig.abs() {
             continue;
         }
-        let uvw = if (uv - e.uv).length() > (fg.wrap(uv) - e.uv).length() { fg.wrap(uv) } else { uv };
+        let uvw = if (uv - e.uv).length() > (fg.wrap(uv) - e.uv).length() {
+            fg.wrap(uv)
+        } else {
+            uv
+        };
         if (fg.m(uvw) - fg.m(e.uv)).length() > fg.eps * 1e4 {
             continue;
         }

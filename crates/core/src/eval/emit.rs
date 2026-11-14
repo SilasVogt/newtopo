@@ -22,7 +22,11 @@ pub fn emit(
 ) -> OutputMesh {
     let fv = |v: usize| mesh.final_v(v, pole_target);
     let walks = mesh.all_region_walks();
-    let mut regions: Vec<usize> = walks.keys().copied().filter(|r| mesh.regions[*r].alive).collect();
+    let mut regions: Vec<usize> = walks
+        .keys()
+        .copied()
+        .filter(|r| mesh.regions[*r].alive)
+        .collect();
     regions.sort();
     // Polygons as (final vertex, corner half-edge).
     let mut polys: Vec<(Vec<(usize, usize)>, usize)> = Vec::new();
@@ -32,11 +36,19 @@ pub fn emit(
                 for k in 0..w.len() {
                     let (h, n) = (w[k], w[(k + 1) % w.len()]);
                     if mesh.he[h].to != mesh.he[n].from {
-                        eprintln!("emit: broken walk in region {r}: he {h} {:?}->{:?} owner {:?} then he {n} from {:?} owner {:?}", mesh.he[h].from, mesh.he[h].to, mesh.he[h].owner, mesh.he[n].from, mesh.he[n].owner);
+                        eprintln!(
+                            "emit: broken walk in region {r}: he {h} {:?}->{:?} owner {:?} then he {n} from {:?} owner {:?}",
+                            mesh.he[h].from,
+                            mesh.he[h].to,
+                            mesh.he[h].owner,
+                            mesh.he[n].from,
+                            mesh.he[n].owner
+                        );
                     }
                 }
             }
-            let mut corners: Vec<(usize, usize)> = w.iter().map(|&h| (fv(mesh.he[h].from), h)).collect();
+            let mut corners: Vec<(usize, usize)> =
+                w.iter().map(|&h| (fv(mesh.he[h].from), h)).collect();
             // Remove consecutive duplicates (cyclic).
             let mut out: Vec<(usize, usize)> = Vec::new();
             for c in corners.drain(..) {
@@ -61,11 +73,18 @@ pub fn emit(
     used.dedup();
     used.sort_by(|&a, &b| mesh.verts[a].key.cmp(&mesh.verts[b].key).then(a.cmp(&b)));
     let mut idx: HashMap<usize, u32> = HashMap::new();
-    let mut out = OutputMesh { body, ..Default::default() };
+    let mut out = OutputMesh {
+        body,
+        ..Default::default()
+    };
     for (i, &v) in used.iter().enumerate() {
         idx.insert(v, i as u32);
         let gv = &mesh.verts[v];
-        out.vertices.push(OutVertex { key: gv.key.clone(), anchor: gv.anchor, position: gv.pos });
+        out.vertices.push(OutVertex {
+            key: gv.key.clone(),
+            anchor: gv.anchor,
+            position: gv.pos,
+        });
     }
     // Polygons, rotated to start at the smallest index, sorted.
     let mut opolys: Vec<OutPolygon> = Vec::new();
@@ -80,7 +99,12 @@ pub fn emit(
             normals.push(corner_normal(ctx, mesh, h));
         }
         let face = mesh.he[corners[0].1].face;
-        opolys.push(OutPolygon { verts, face, normals, fan_fallback: fan.contains(r) });
+        opolys.push(OutPolygon {
+            verts,
+            face,
+            normals,
+            fan_fallback: fan.contains(r),
+        });
     }
     opolys.sort_by(|a, b| a.verts.cmp(&b.verts).then(a.face.cmp(&b.face)));
     out.polygons = opolys;
@@ -96,7 +120,9 @@ pub fn emit(
         if a == b {
             continue;
         }
-        let (Some(&ia), Some(&ib)) = (idx.get(&a), idx.get(&b)) else { continue };
+        let (Some(&ia), Some(&ib)) = (idx.get(&a), idx.get(&b)) else {
+            continue;
+        };
         let kind = match he.owner {
             Owner::Cad(e) => OutEdgeKind::Cad(e),
             Owner::Split(s) => OutEdgeKind::Split(s),
@@ -128,9 +154,20 @@ pub fn emit(
             *l = out.vertices[k.1 as usize].position;
         }
         seen.insert(k, edges.len());
-        edges.push(OutEdge { a: k.0, b: k.1, kind, key, hard: is_hard, path });
+        edges.push(OutEdge {
+            a: k.0,
+            b: k.1,
+            kind,
+            key,
+            hard: is_hard,
+            path,
+        });
     }
-    edges.sort_by(|x, y| (x.a, x.b).cmp(&(y.a, y.b)).then_with(|| format!("{:?}", x.kind).cmp(&format!("{:?}", y.kind))));
+    edges.sort_by(|x, y| {
+        (x.a, x.b)
+            .cmp(&(y.a, y.b))
+            .then_with(|| format!("{:?}", x.kind).cmp(&format!("{:?}", y.kind)))
+    });
     out.edges = edges;
     out
 }

@@ -36,7 +36,12 @@ impl<'a> Adjacency<'a> {
                 }
             }
         }
-        Adjacency { mesh, edge_of, polys_of, vert_edges }
+        Adjacency {
+            mesh,
+            edge_of,
+            polys_of,
+            vert_edges,
+        }
     }
 
     fn ends(&self, e: usize) -> (u32, u32) {
@@ -142,8 +147,7 @@ impl<'a> Adjacency<'a> {
         for &p0 in &polys {
             let mut half = Vec::new();
             let (mut p, mut cur) = (p0, e);
-            loop {
-                let Some(o) = self.opposite_in_quad(p, cur) else { break };
+            while let Some(o) = self.opposite_in_quad(p, cur) {
                 if o == e {
                     return out.into_iter().chain(half).collect();
                 }
@@ -151,13 +155,21 @@ impl<'a> Adjacency<'a> {
                     break;
                 }
                 half.push(o);
-                let Some(&np) = self.polys_of[o].iter().find(|&&q| q != p) else { break };
+                let Some(&np) = self.polys_of[o].iter().find(|&&q| q != p) else {
+                    break;
+                };
                 p = np;
                 cur = o;
             }
             halves.push(half);
         }
-        let mut res: Vec<usize> = halves.get(1).cloned().unwrap_or_default().into_iter().rev().collect();
+        let mut res: Vec<usize> = halves
+            .get(1)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .collect();
         res.append(&mut out);
         if let Some(h) = halves.first() {
             res.extend(h.iter().copied());
@@ -168,26 +180,32 @@ impl<'a> Adjacency<'a> {
     /// Face loop/strip through polygon `p`, crossing through side `e`
     /// (an edge of `p`) and its opposite.
     pub fn face_loop(&self, p: usize, e: usize) -> Vec<usize> {
-        let mut out = vec![p];
+        let out = vec![p];
         if self.mesh.polygons[p].verts.len() != 4 {
             return out;
         }
-        let Some(o) = self.opposite_in_quad(p, e) else { return out };
+        let Some(o) = self.opposite_in_quad(p, e) else {
+            return out;
+        };
         let mut halves = Vec::new();
         for start in [e, o] {
             let mut half = Vec::new();
             let (mut cur_p, mut cur_e) = (p, start);
-            loop {
-                let Some(&np) = self.polys_of[cur_e].iter().find(|&&q| q != cur_p) else { break };
+            while let Some(&np) = self.polys_of[cur_e].iter().find(|&&q| q != cur_p) {
                 if np == p {
                     // Closed loop.
                     return out.into_iter().chain(half).collect();
                 }
-                if out.contains(&np) || half.contains(&np) || self.mesh.polygons[np].verts.len() != 4 {
+                if out.contains(&np)
+                    || half.contains(&np)
+                    || self.mesh.polygons[np].verts.len() != 4
+                {
                     break;
                 }
                 half.push(np);
-                let Some(next_e) = self.opposite_in_quad(np, cur_e) else { break };
+                let Some(next_e) = self.opposite_in_quad(np, cur_e) else {
+                    break;
+                };
                 cur_p = np;
                 cur_e = next_e;
             }
@@ -208,5 +226,9 @@ pub fn every_other(items: &[usize]) -> Vec<usize> {
 /// Keep only edges that can be edited (generated, split or CAD edges), as
 /// loops and rings walk through fill edges but don't select them (§6.7).
 pub fn editable_only(mesh: &OutputMesh, edges: &[usize]) -> Vec<usize> {
-    edges.iter().copied().filter(|&e| mesh.edges[e].kind != OutEdgeKind::Fill).collect()
+    edges
+        .iter()
+        .copied()
+        .filter(|&e| mesh.edges[e].kind != OutEdgeKind::Fill)
+        .collect()
 }

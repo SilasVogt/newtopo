@@ -156,15 +156,19 @@ pub fn curve_slice(c: &ACurve, pa: f64, pb: f64) -> (Vec<DVec2>, Vec<f64>) {
 impl Arr {
     pub fn he_origin(&self, h: usize) -> usize {
         let c = &self.chains[h / 2];
-        if h % 2 == 0 { c.a } else { c.b }
+        if h.is_multiple_of(2) { c.a } else { c.b }
     }
     pub fn he_dest(&self, h: usize) -> usize {
         let c = &self.chains[h / 2];
-        if h % 2 == 0 { c.b } else { c.a }
+        if h.is_multiple_of(2) { c.b } else { c.a }
     }
     pub fn he_pts(&self, h: usize) -> Vec<DVec2> {
         let c = &self.chains[h / 2];
-        if h % 2 == 0 { c.pts.clone() } else { c.pts.iter().rev().copied().collect() }
+        if h.is_multiple_of(2) {
+            c.pts.clone()
+        } else {
+            c.pts.iter().rev().copied().collect()
+        }
     }
     pub fn orbit_poly(&self, o: usize) -> Vec<DVec2> {
         let mut out = Vec::new();
@@ -175,7 +179,12 @@ impl Arr {
         out
     }
 
-    pub fn build(curves: Vec<ACurve>, events: Vec<AEvent>, fg: &FaceGeom, classify: &mut dyn FnMut(&[DVec2]) -> Vec<bool>) -> Arr {
+    pub fn build(
+        curves: Vec<ACurve>,
+        events: Vec<AEvent>,
+        fg: &FaceGeom,
+        classify: &mut dyn FnMut(&[DVec2]) -> Vec<bool>,
+    ) -> Arr {
         let eps = fg.eps;
         // 1. Cluster events.
         let n = events.len();
@@ -210,7 +219,11 @@ impl Arr {
             members[id].push(i);
         }
         for mem in &members {
-            let real: Vec<usize> = mem.iter().copied().filter(|&i| !events[i].artificial).collect();
+            let real: Vec<usize> = mem
+                .iter()
+                .copied()
+                .filter(|&i| !events[i].artificial)
+                .collect();
             let pool = if real.is_empty() { mem.clone() } else { real };
             let mut keys: Vec<VertexKey> = pool.iter().map(|&i| events[i].key.clone()).collect();
             keys.sort();
@@ -246,14 +259,19 @@ impl Arr {
             let mut l: Vec<(f64, usize)> = Vec::new();
             let span = (c.par[c.par.len() - 1] - c.par[0]).abs().max(1e-300);
             for &x in list.iter() {
-                if l.last().is_some_and(|y: &(f64, usize)| y.1 == x.1 && (x.0 - y.0).abs() <= 1e-9 * span) {
+                if l.last()
+                    .is_some_and(|y: &(f64, usize)| y.1 == x.1 && (x.0 - y.0).abs() <= 1e-9 * span)
+                {
                     continue;
                 }
                 l.push(x);
             }
             if c.closed {
                 let total = c.par[c.par.len() - 1] - c.par[0];
-                if l.len() > 1 && l[0].1 == l[l.len() - 1].1 && (l[l.len() - 1].0 - l[0].0 - total).abs() <= 1e-9 * span {
+                if l.len() > 1
+                    && l[0].1 == l[l.len() - 1].1
+                    && (l[l.len() - 1].0 - l[0].0 - total).abs() <= 1e-9 * span
+                {
                     l.pop();
                 }
                 if l.is_empty() {
@@ -266,7 +284,16 @@ impl Arr {
                         pb += total;
                     }
                     let (pts, pars) = curve_slice(c, pa, pb);
-                    chains.push(Chain { curve: ci, a, b, pa, pb, pts, pars, seam: c.seam });
+                    chains.push(Chain {
+                        curve: ci,
+                        a,
+                        b,
+                        pa,
+                        pb,
+                        pts,
+                        pars,
+                        seam: c.seam,
+                    });
                 }
             } else {
                 for w in l.windows(2) {
@@ -275,7 +302,16 @@ impl Arr {
                         continue;
                     }
                     let (pts, pars) = curve_slice(c, pa, pb);
-                    chains.push(Chain { curve: ci, a, b, pa, pb, pts, pars, seam: c.seam });
+                    chains.push(Chain {
+                        curve: ci,
+                        a,
+                        b,
+                        pa,
+                        pb,
+                        pts,
+                        pars,
+                        seam: c.seam,
+                    });
                 }
             }
         }
@@ -286,10 +322,15 @@ impl Arr {
             ch.pts[last] = ub;
         }
         // Drop degenerate chains (a == b, no length) and duplicates.
-        chains.retain(|ch| !(ch.a == ch.b && poly_len(&ch.pts.iter().map(|p| fg.m(*p)).collect::<Vec<_>>()) <= eps));
+        chains.retain(|ch| {
+            !(ch.a == ch.b && poly_len(&ch.pts.iter().map(|p| fg.m(*p)).collect::<Vec<_>>()) <= eps)
+        });
         let mut by_pair: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for (i, ch) in chains.iter().enumerate() {
-            by_pair.entry((ch.a.min(ch.b), ch.a.max(ch.b))).or_default().push(i);
+            by_pair
+                .entry((ch.a.min(ch.b), ch.a.max(ch.b)))
+                .or_default()
+                .push(i);
         }
         let mut dead = vec![false; chains.len()];
         let mut inherit: Vec<(usize, Option<(u8, u8)>)> = Vec::new();
@@ -304,18 +345,24 @@ impl Arr {
                     }
                     let (ci, cj) = (&chains[i], &chains[j]);
                     let mi = poly_at(&ci.pts, (ci.pts.len() - 1) as f64 * 0.5);
-                    let mj = if ci.a == cj.a { poly_at(&cj.pts, (cj.pts.len() - 1) as f64 * 0.5) } else {
+                    let mj = if ci.a == cj.a {
+                        poly_at(&cj.pts, (cj.pts.len() - 1) as f64 * 0.5)
+                    } else {
                         let r: Vec<DVec2> = cj.pts.iter().rev().copied().collect();
                         poly_at(&r, (r.len() - 1) as f64 * 0.5)
                     };
                     // Compare midpoints by arc length rather than index.
                     let li = poly_len(&ci.pts);
                     let lj = poly_len(&cj.pts);
-                    let close = (fg.m(mi) - fg.m(mj)).length() <= eps * 100.0 + 1e-6 * fg.m(DVec2::splat(li.max(lj))).length()
+                    let close = (fg.m(mi) - fg.m(mj)).length()
+                        <= eps * 100.0 + 1e-6 * fg.m(DVec2::splat(li.max(lj))).length()
                         && (li - lj).abs() <= 1e-3 * li.max(lj) + eps;
                     let _ = (mi, mj);
                     if close && same_geometry(fg, &ci.pts, &cj.pts, ci.a == cj.a, eps) {
-                        let (ri, rj) = (owner_rank(&curves[ci.curve].owner), owner_rank(&curves[cj.curve].owner));
+                        let (ri, rj) = (
+                            owner_rank(&curves[ci.curve].owner),
+                            owner_rank(&curves[cj.curve].owner),
+                        );
                         let (kill, keep) = if rj < ri { (i, j) } else { (j, i) };
                         dead[kill] = true;
                         if chains[keep].seam.is_none() {
@@ -330,7 +377,12 @@ impl Arr {
                 chains[k].seam = sm;
             }
         }
-        let chains: Vec<Chain> = chains.into_iter().zip(dead).filter(|(_, d)| !d).map(|(c, _)| c).collect();
+        let chains: Vec<Chain> = chains
+            .into_iter()
+            .zip(dead)
+            .filter(|(_, d)| !d)
+            .map(|(c, _)| c)
+            .collect();
         // 3. Half-edges and angles.
         let nh = chains.len() * 2;
         let mut angle = vec![0.0; nh];
@@ -338,7 +390,11 @@ impl Arr {
         for (ci, ch) in chains.iter().enumerate() {
             for d in 0..2 {
                 let h = ci * 2 + d;
-                let pts: Vec<DVec2> = if d == 0 { ch.pts.clone() } else { ch.pts.iter().rev().copied().collect() };
+                let pts: Vec<DVec2> = if d == 0 {
+                    ch.pts.clone()
+                } else {
+                    ch.pts.iter().rev().copied().collect()
+                };
                 let o = fg.m(pts[0]);
                 let mut dir = fg.m(pts[pts.len() - 1]) - o;
                 for p in &pts[1..] {
@@ -354,7 +410,8 @@ impl Arr {
             }
         }
         for nd in &mut nodes {
-            nd.out.sort_by(|&a, &b| angle[a].total_cmp(&angle[b]).then(a.cmp(&b)));
+            nd.out
+                .sort_by(|&a, &b| angle[a].total_cmp(&angle[b]).then(a.cmp(&b)));
         }
         let mut pos = vec![0usize; nh];
         for nd in &nodes {
@@ -390,8 +447,21 @@ impl Arr {
             }
             orbits.push(cyc);
         }
-        let mut arr = Arr { curves, nodes, chains, angle, next, orbit, orbits, area: vec![], cell_of_orbit: vec![], cells: vec![] };
-        arr.area = (0..arr.orbits.len()).map(|o| signed_area(&arr.orbit_poly(o))).collect();
+        let mut arr = Arr {
+            curves,
+            nodes,
+            chains,
+            angle,
+            next,
+            orbit,
+            orbits,
+            area: vec![],
+            cell_of_orbit: vec![],
+            cells: vec![],
+        };
+        arr.area = (0..arr.orbits.len())
+            .map(|o| signed_area(&arr.orbit_poly(o)))
+            .collect();
         // 5. Cells and holes.
         let mut cell_of_orbit = vec![None; arr.orbits.len()];
         let mut cells: Vec<Cell> = Vec::new();
@@ -399,14 +469,21 @@ impl Arr {
         for o in 0..arr.orbits.len() {
             if arr.area[o] > 0.0 {
                 cell_of_orbit[o] = Some(cells.len());
-                cells.push(Cell { outer: o, holes: vec![], inside: false, sample: DVec2::ZERO });
+                cells.push(Cell {
+                    outer: o,
+                    holes: vec![],
+                    inside: false,
+                    sample: DVec2::ZERO,
+                });
             }
         }
         for o in 0..arr.orbits.len() {
             if arr.area[o] > 0.0 {
                 continue;
             }
-            let Some(p) = left_sample(&polys[o], fg, None) else { continue };
+            let Some(p) = left_sample(&polys[o], fg, None) else {
+                continue;
+            };
             let mut best: Option<(f64, usize)> = None;
             for (ci, c) in cells.iter().enumerate() {
                 if point_in_poly(p, &polys[c.outer]) {
@@ -427,7 +504,11 @@ impl Arr {
             let s = left_sample(&polys[c.outer], fg, Some(&holes)).unwrap_or(polys[c.outer][0]);
             samples.push(s);
         }
-        let ins = if samples.is_empty() { vec![] } else { classify(&samples) };
+        let ins = if samples.is_empty() {
+            vec![]
+        } else {
+            classify(&samples)
+        };
         for (i, c) in cells.iter_mut().enumerate() {
             c.sample = samples[i];
             c.inside = ins[i];
@@ -450,7 +531,10 @@ impl Arr {
             if !point_in_poly(p, &poly) {
                 continue;
             }
-            if c.holes.iter().any(|&h| point_in_poly(p, &self.orbit_poly(h)) && self.area[h].abs() > 0.0) {
+            if c.holes
+                .iter()
+                .any(|&h| point_in_poly(p, &self.orbit_poly(h)) && self.area[h].abs() > 0.0)
+            {
                 continue;
             }
             let a = self.area[c.outer];
@@ -463,7 +547,11 @@ impl Arr {
 }
 
 fn same_geometry(fg: &FaceGeom, a: &[DVec2], b: &[DVec2], same_dir: bool, eps: f64) -> bool {
-    let bb: Vec<DVec2> = if same_dir { b.to_vec() } else { b.iter().rev().copied().collect() };
+    let bb: Vec<DVec2> = if same_dir {
+        b.to_vec()
+    } else {
+        b.iter().rev().copied().collect()
+    };
     let la = poly_len(a);
     let lb = poly_len(&bb);
     if la <= 0.0 || lb <= 0.0 {
@@ -510,9 +598,17 @@ fn left_sample(poly: &[DVec2], fg: &FaceGeom, holes: Option<&[&Vec<DVec2>]>) -> 
         hi = hi.max(*p);
     }
     let diag = (hi - lo).length().max(fg.eps * 10.0);
-    let mut segs: Vec<(f64, usize)> = (0..n).map(|i| ((mp[(i + 1) % n] - mp[i]).length(), i)).collect();
+    let mut segs: Vec<(f64, usize)> = (0..n)
+        .map(|i| ((mp[(i + 1) % n] - mp[i]).length(), i))
+        .collect();
     segs.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    let hole_m: Vec<Vec<DVec2>> = holes.map(|hs| hs.iter().map(|h| h.iter().map(|p| fg.m(*p)).collect()).collect()).unwrap_or_default();
+    let hole_m: Vec<Vec<DVec2>> = holes
+        .map(|hs| {
+            hs.iter()
+                .map(|h| h.iter().map(|p| fg.m(*p)).collect())
+                .collect()
+        })
+        .unwrap_or_default();
     let clearance = |q: DVec2| -> f64 {
         let mut d = f64::INFINITY;
         for ring in std::iter::once(&mp).chain(hole_m.iter()) {
@@ -600,15 +696,19 @@ pub struct Glued {
 impl Glued {
     pub fn g_origin(&self, gh: usize) -> usize {
         let e = &self.gedges[gh / 2];
-        if gh % 2 == 0 { e.a } else { e.b }
+        if gh.is_multiple_of(2) { e.a } else { e.b }
     }
     pub fn g_dest(&self, gh: usize) -> usize {
         let e = &self.gedges[gh / 2];
-        if gh % 2 == 0 { e.b } else { e.a }
+        if gh.is_multiple_of(2) { e.b } else { e.a }
     }
     pub fn g_pts(&self, gh: usize) -> Vec<DVec2> {
         let e = &self.gedges[gh / 2];
-        if gh % 2 == 0 { e.pts.clone() } else { e.pts.iter().rev().copied().collect() }
+        if gh.is_multiple_of(2) {
+            e.pts.clone()
+        } else {
+            e.pts.iter().rev().copied().collect()
+        }
     }
 
     fn next(&self, h: usize, dissolved: &[bool]) -> usize {
@@ -675,7 +775,15 @@ impl Glued {
         for (i, nd) in arr.nodes.iter().enumerate() {
             let r = uf.find(i);
             let g = *root_g.entry(r).or_insert_with(|| {
-                gnodes.push(GNode { key: nd.key.clone(), keys: vec![], uv: nd.uv, incs: vec![], seam_rel: false, artificial: true, nodes: vec![] });
+                gnodes.push(GNode {
+                    key: nd.key.clone(),
+                    keys: vec![],
+                    uv: nd.uv,
+                    incs: vec![],
+                    seam_rel: false,
+                    artificial: true,
+                    nodes: vec![],
+                });
                 gnodes.len() - 1
             });
             node_g[i] = g;
@@ -792,7 +900,11 @@ impl Glued {
         let cand = |gl: &Glued, dir: Option<u8>| -> Vec<usize> {
             (0..ne)
                 .filter(|&e| match gl.gedges[e].owner {
-                    Owner::Seam(d) => dir.is_none_or(|x| x == d) && gl.left[e * 2].is_some() && gl.left[e * 2 + 1].is_some(),
+                    Owner::Seam(d) => {
+                        dir.is_none_or(|x| x == d)
+                            && gl.left[e * 2].is_some()
+                            && gl.left[e * 2 + 1].is_some()
+                    }
                     _ => false,
                 })
                 .collect()
@@ -853,10 +965,11 @@ impl Glued {
                 }
                 for (g, r) in gl.rot.iter().enumerate() {
                     let _ = g;
-                    if !r.is_empty() && r.iter().all(|&h| tent[h / 2]) {
-                        if let Some(c) = r.iter().find_map(|&h| gl.left[h]) {
-                            *chi.entry(uf.find(c)).or_default() += 1;
-                        }
+                    if !r.is_empty()
+                        && r.iter().all(|&h| tent[h / 2])
+                        && let Some(c) = r.iter().find_map(|&h| gl.left[h])
+                    {
+                        *chi.entry(uf.find(c)).or_default() += 1;
                     }
                 }
                 for w in &walks {
@@ -868,7 +981,11 @@ impl Glued {
                     let mut roots: Vec<_> = chi.keys().copied().collect();
                     roots.sort();
                     for r in roots {
-                        eprintln!("guard dir {dir}: comp {r} chi {} b {}", chi[&r], b.get(&r).copied().unwrap_or(0));
+                        eprintln!(
+                            "guard dir {dir}: comp {r} chi {} b {}",
+                            chi[&r],
+                            b.get(&r).copied().unwrap_or(0)
+                        );
                     }
                 }
                 for &e in &c {
@@ -892,7 +1009,8 @@ impl Glued {
                 if dissolved[e] {
                     continue;
                 }
-                if let (Owner::Seam(d), Some(a), Some(b)) = (gl.gedges[e].owner, gl.left[e * 2], gl.left[e * 2 + 1])
+                if let (Owner::Seam(d), Some(a), Some(b)) =
+                    (gl.gedges[e].owner, gl.left[e * 2], gl.left[e * 2 + 1])
                     && uf.find(a) == uf.find(b)
                 {
                     wrap_dirs.entry(uf.find(a)).or_default().push(d);
@@ -903,7 +1021,9 @@ impl Glued {
                     continue;
                 }
                 if let (Owner::Seam(d), Some(a)) = (gl.gedges[e].owner, gl.left[e * 2])
-                    && wrap_dirs.get(&uf.find(a)).is_some_and(|ds| ds.iter().any(|x| *x != d))
+                    && wrap_dirs
+                        .get(&uf.find(a))
+                        .is_some_and(|ds| ds.iter().any(|x| *x != d))
                 {
                     dissolved[e] = false;
                 }
@@ -934,6 +1054,10 @@ impl Glued {
 
     /// Non-dissolved incident glued edges of a node (self-loops twice).
     pub fn degree_edges(&self, g: usize) -> Vec<usize> {
-        self.rot[g].iter().filter(|&&h| !self.dissolved[h / 2]).map(|&h| h / 2).collect()
+        self.rot[g]
+            .iter()
+            .filter(|&&h| !self.dissolved[h / 2])
+            .map(|&h| h / 2)
+            .collect()
     }
 }

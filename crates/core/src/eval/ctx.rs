@@ -5,7 +5,8 @@
 use super::Owner;
 use glam::{DVec2, DVec3};
 use newtopo_kernel::{
-    Aabb, BodyId, BodyTopology, CadKernel, CurveKind, EdgeId, FaceId, FaceMesh, KResult, SurfaceInfo, SurfaceKind, VertexId,
+    Aabb, BodyId, BodyTopology, CadKernel, CurveKind, EdgeId, FaceId, FaceMesh, KResult,
+    SurfaceInfo, SurfaceKind, VertexId,
 };
 use std::sync::Arc;
 
@@ -96,7 +97,16 @@ pub struct BodyCtx {
     pub bbox: Aabb,
 }
 
-fn sample_pcurve(k: &dyn CadKernel, body: BodyId, e: EdgeId, f: FaceId, rev: bool, t0: f64, t1: f64, tol: f64) -> KResult<(Vec<f64>, Vec<DVec2>)> {
+fn sample_pcurve(
+    k: &dyn CadKernel,
+    body: BodyId,
+    e: EdgeId,
+    f: FaceId,
+    rev: bool,
+    t0: f64,
+    t1: f64,
+    tol: f64,
+) -> KResult<(Vec<f64>, Vec<DVec2>)> {
     let mut ts: Vec<f64> = (0..=8).map(|i| t0 + (t1 - t0) * i as f64 / 8.0).collect();
     let mut pts = k.edge_pcurve_eval(body, e, f, rev, &ts)?;
     for _round in 0..7 {
@@ -148,15 +158,15 @@ impl BodyCtx {
         let mut edge_polys = Vec::with_capacity(topo.edges.len());
         for e in topo.edge_ids() {
             let et = topo.edge(e);
-            let n = if et.degenerate {
-                1
-            } else if et.curve == CurveKind::Line {
+            let n = if et.degenerate || et.curve == CurveKind::Line {
                 1
             } else {
                 96
             };
             let (t0, t1) = et.t_range;
-            let ts: Vec<f64> = (0..=n).map(|i| t0 + (t1 - t0) * i as f64 / n as f64).collect();
+            let ts: Vec<f64> = (0..=n)
+                .map(|i| t0 + (t1 - t0) * i as f64 / n as f64)
+                .collect();
             let ps = k.edge_eval(kbody, e, &ts)?;
             for p in &ps {
                 bbox.add(*p);
@@ -168,7 +178,13 @@ impl BodyCtx {
         for f in topo.face_ids() {
             let ft = topo.face(f);
             let info = ft.surface.clone();
-            let span = DVec2::new(info.u_range.1 - info.u_range.0, info.v_range.1 - info.v_range.0).abs().max_element().max(1e-12);
+            let span = DVec2::new(
+                info.u_range.1 - info.u_range.0,
+                info.v_range.1 - info.v_range.0,
+            )
+            .abs()
+            .max_element()
+            .max(1e-12);
             let tol = 2e-4 * span;
             let mut curves = Vec::new();
             let mut has_outer = false;
@@ -186,20 +202,44 @@ impl BodyCtx {
                     seen.push((c.edge, sel));
                     let (t0, t1) = et.t_range;
                     let (par, pts) = sample_pcurve(k, kbody, c.edge, f, sel, t0, t1, tol)?;
-                    let owner = if et.degenerate { Owner::Pole(c.edge) } else if et.seam { Owner::Seam(0) } else { Owner::Cad(c.edge) };
+                    let owner = if et.degenerate {
+                        Owner::Pole(c.edge)
+                    } else if et.seam {
+                        Owner::Seam(0)
+                    } else {
+                        Owner::Cad(c.edge)
+                    };
                     let mut seam = None;
                     let mut owner = owner;
                     if et.seam {
                         let du = (pts[pts.len() - 1].x - pts[0].x).abs();
                         let dir: u8 = if du < 1e-9 * span { 0 } else { 1 };
                         let coord = if dir == 0 { pts[0].x } else { pts[0].y };
-                        let lo = if dir == 0 { info.u_range.0 } else { info.v_range.0 };
-                        let hi = if dir == 0 { info.u_range.1 } else { info.v_range.1 };
-                        let copy: u8 = if (coord - lo).abs() <= (coord - hi).abs() { 0 } else { 1 };
+                        let lo = if dir == 0 {
+                            info.u_range.0
+                        } else {
+                            info.v_range.0
+                        };
+                        let hi = if dir == 0 {
+                            info.u_range.1
+                        } else {
+                            info.v_range.1
+                        };
+                        let copy: u8 = if (coord - lo).abs() <= (coord - hi).abs() {
+                            0
+                        } else {
+                            1
+                        };
                         seam = Some((dir, copy));
                         owner = Owner::Seam(dir);
                     }
-                    curves.push(BCurve { owner, seam, pts, par, ends: [et.v0, et.v1] });
+                    curves.push(BCurve {
+                        owner,
+                        seam,
+                        pts,
+                        par,
+                        ends: [et.v0, et.v1],
+                    });
                 }
             }
             let mut lo = DVec2::splat(f64::INFINITY);
@@ -218,7 +258,10 @@ impl BodyCtx {
             let mut samples = Vec::new();
             for i in 0..5 {
                 for j in 0..5 {
-                    samples.push(DVec2::new(lo.x + (hi.x - lo.x) * (i as f64 + 0.5) / 5.0, lo.y + (hi.y - lo.y) * (j as f64 + 0.5) / 5.0));
+                    samples.push(DVec2::new(
+                        lo.x + (hi.x - lo.x) * (i as f64 + 0.5) / 5.0,
+                        lo.y + (hi.y - lo.y) * (j as f64 + 0.5) / 5.0,
+                    ));
                 }
             }
             let ev = k.face_eval(kbody, f, &samples)?;
@@ -228,13 +271,28 @@ impl BodyCtx {
                 mu += e.du.length();
                 mv += e.dv.length();
             }
-            let metric = DVec2::new((mu / ev.len() as f64).max(1e-9), (mv / ev.len() as f64).max(1e-9));
-            let uper = if info.u_closed { info.u_period.or(Some(hi.x - lo.x)) } else { None };
-            let vper = if info.v_closed { info.v_period.or(Some(hi.y - lo.y)) } else { None };
+            let metric = DVec2::new(
+                (mu / ev.len() as f64).max(1e-9),
+                (mv / ev.len() as f64).max(1e-9),
+            );
+            let uper = if info.u_closed {
+                info.u_period.or(Some(hi.x - lo.x))
+            } else {
+                None
+            };
+            let vper = if info.v_closed {
+                info.v_period.or(Some(hi.y - lo.y))
+            } else {
+                None
+            };
             // Planar ring detection.
             let mut ring = None;
             if info.kind == SurfaceKind::Plane && ft.wires.len() == 2 {
-                let circ = ft.wires.iter().all(|w| w.coedges.iter().all(|c| topo.edge(c.edge).curve == CurveKind::Circle));
+                let circ = ft.wires.iter().all(|w| {
+                    w.coedges
+                        .iter()
+                        .all(|c| topo.edge(c.edge).curve == CurveKind::Circle)
+                });
                 if circ {
                     let centre = |wi: usize| {
                         let mut lo = DVec2::splat(f64::INFINITY);
@@ -281,7 +339,10 @@ impl BodyCtx {
                     !et.seam && !et.degenerate
                 };
                 // Start right after a non-real coedge (or at 0 if all real).
-                let start = (0..n).find(|&i| !real(&w.coedges[i])).map(|i| (i + 1) % n).unwrap_or(0);
+                let start = (0..n)
+                    .find(|&i| !real(&w.coedges[i]))
+                    .map(|i| (i + 1) % n)
+                    .unwrap_or(0);
                 let mut run: Vec<newtopo_kernel::CoEdge> = Vec::new();
                 let mut runs: Vec<Vec<newtopo_kernel::CoEdge>> = Vec::new();
                 for k in 0..n {
@@ -299,7 +360,11 @@ impl BodyCtx {
                     let first = topo.edge(r[0].edge);
                     let last = topo.edge(r[r.len() - 1].edge);
                     let s = if r[0].reversed { first.v1 } else { first.v0 };
-                    let e = if r[r.len() - 1].reversed { last.v0 } else { last.v1 };
+                    let e = if r[r.len() - 1].reversed {
+                        last.v0
+                    } else {
+                        last.v1
+                    };
                     if s.is_some() && s == e {
                         let mut ids: Vec<EdgeId> = r.iter().map(|c| c.edge).collect();
                         ids.sort();
@@ -312,8 +377,21 @@ impl BodyCtx {
             }
         }
         let tol = 1e-3 * size;
-        let face_meshes = topo.face_ids().map(|f| k.tessellate(kbody, f, tol)).collect::<KResult<Vec<_>>>()?;
-        Ok(BodyCtx { kernel, kbody, topo, faces, size, edge_polys, cad_loops, face_meshes, bbox })
+        let face_meshes = topo
+            .face_ids()
+            .map(|f| k.tessellate(kbody, f, tol))
+            .collect::<KResult<Vec<_>>>()?;
+        Ok(BodyCtx {
+            kernel,
+            kbody,
+            topo,
+            faces,
+            size,
+            edge_polys,
+            cad_loops,
+            face_meshes,
+            bbox,
+        })
     }
 
     pub fn face(&self, f: FaceId) -> &FaceGeom {
@@ -330,10 +408,17 @@ impl BodyCtx {
     }
 
     pub fn point(&self, f: FaceId, uv: DVec2) -> DVec3 {
-        self.face_eval(f, &[uv]).first().map(|e| e.p).unwrap_or(DVec3::ZERO)
+        self.face_eval(f, &[uv])
+            .first()
+            .map(|e| e.p)
+            .unwrap_or(DVec3::ZERO)
     }
 
     pub fn edge_point(&self, e: EdgeId, t: f64) -> DVec3 {
-        self.kernel.edge_eval(self.kbody, e, &[t]).ok().and_then(|v| v.first().copied()).unwrap_or(DVec3::ZERO)
+        self.kernel
+            .edge_eval(self.kbody, e, &[t])
+            .ok()
+            .and_then(|v| v.first().copied())
+            .unwrap_or(DVec3::ZERO)
     }
 }

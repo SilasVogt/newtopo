@@ -29,7 +29,10 @@ pub struct FillResult {
 pub fn fill_polygon(input: &FillInput) -> FillResult {
     let n = input.uv.len();
     if n <= 4 {
-        return FillResult { polys: vec![(0..n as u32).collect()], method: "dp" };
+        return FillResult {
+            polys: vec![(0..n as u32).collect()],
+            method: "dp",
+        };
     }
     let p = input.uv;
     let orient = |a: usize, b: usize, c: usize| (p[b] - p[a]).perp_dot(p[c] - p[a]);
@@ -47,7 +50,10 @@ pub fn fill_polygon(input: &FillInput) -> FillResult {
                 continue;
             }
             let ear = idx.iter().all(|&q| {
-                q == a || q == b || q == c || !(orient(a, b, q) >= 0.0 && orient(b, c, q) >= 0.0 && orient(c, a, q) >= 0.0)
+                q == a
+                    || q == b
+                    || q == c
+                    || !(orient(a, b, q) >= 0.0 && orient(b, c, q) >= 0.0 && orient(c, a, q) >= 0.0)
             });
             if !ear {
                 continue;
@@ -55,12 +61,18 @@ pub fn fill_polygon(input: &FillInput) -> FillResult {
             // Never leave a degenerate last triangle.
             if m == 4 {
                 let rest: Vec<usize> = idx.iter().copied().filter(|&q| q != b).collect();
-                if orient(rest[0], rest[1], rest[2]) <= 1e-12 * (p[rest[1]] - p[rest[0]]).length_squared().max(1e-300) {
+                if orient(rest[0], rest[1], rest[2])
+                    <= 1e-12 * (p[rest[1]] - p[rest[0]]).length_squared().max(1e-300)
+                {
                     continue;
                 }
             }
             // Prefer well-shaped ears: maximise the minimum angle proxy.
-            let (la, lb, lc) = ((p[b] - p[a]).length(), (p[c] - p[b]).length(), (p[a] - p[c]).length());
+            let (la, lb, lc) = (
+                (p[b] - p[a]).length(),
+                (p[c] - p[b]).length(),
+                (p[a] - p[c]).length(),
+            );
             let q = orient(a, b, c) / (la * la + lb * lb + lc * lc).max(1e-300);
             if best.is_none_or(|(bq, _)| q > bq) {
                 best = Some((q, k));
@@ -75,7 +87,9 @@ pub fn fill_polygon(input: &FillInput) -> FillResult {
         idx.remove(k);
     }
     if method == "fan" {
-        let polys = (1..n - 1).map(|i| vec![0, i as u32, i as u32 + 1]).collect();
+        let polys = (1..n - 1)
+            .map(|i| vec![0, i as u32, i as u32 + 1])
+            .collect();
         return FillResult { polys, method };
     }
     tris.push([idx[0], idx[1], idx[2]]);
