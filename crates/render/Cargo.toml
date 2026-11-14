@@ -1,0 +1,16 @@
+[package]
+name = "newtopo-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+newtopo-kernel.workspace = true
+newtopo-core.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+image.workspace = true
+anyhow.workspace = true
+log.workspace = true

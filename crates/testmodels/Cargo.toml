@@ -1,0 +1,15 @@
+[package]
+name = "newtopo-testmodels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+occt = ["newtopo-kernel/occt", "newtopo-occt-shim/testshapes"]
+
+[dependencies]
+newtopo-kernel.workspace = true
+newtopo-occt-shim = { workspace = true, optional = true }
+anyhow.workspace = true
+glam.workspace = true

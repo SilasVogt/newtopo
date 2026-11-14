@@ -1,0 +1,16 @@
+[package]
+name = "newtopo-occt-shim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "occt-shim"
+
+[features]
+# Test-shape builder (SPEC §3.4): primitives, fillets, booleans, XCAF STEP writer.
+testshapes = []
+
+[dependencies]
+cxx.workspace = true
+
+[build-dependencies]
+cxx-build.workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "newtopo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+newtopo-kernel.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+glam.workspace = true
+robust.workspace = true
+spade.workspace = true
+zip.workspace = true
+sha2.workspace = true
+log.workspace = true
+bytemuck.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+insta.workspace = true
+tempfile.workspace = true
+criterion.workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "newtopo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["occt"]
+occt = ["newtopo-kernel/occt"]
+
+[dependencies]
+newtopo-kernel.workspace = true
+newtopo-core.workspace = true
+newtopo-render.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+glam.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[[bin]]
+name = "newtopo-cli"
+path = "src/main.rs"
