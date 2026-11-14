@@ -1,5 +1,6 @@
 //! newtopo core: no UI, no GPU; everything unit-testable (SPEC §3.3).
 
+pub mod bridge;
 pub mod doc;
 pub mod eval;
 pub mod export;
