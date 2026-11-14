@@ -17,9 +17,17 @@ zip.workspace = true
 sha2.workspace = true
 log.workspace = true
 bytemuck.workspace = true
+regex = "1"
+flate2 = "1"
+getrandom = "0.3"
 
 [dev-dependencies]
 proptest.workspace = true
 insta.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
+ufbx = "0.11"
+
+[[bench]]
+name = "fill"
+harness = false
