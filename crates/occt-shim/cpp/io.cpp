@@ -444,17 +444,7 @@ HealResult heal(Store &s, uint32_t body, const HealOptions &o) {
     fx->SetMsgRegistrator(reg);
     fx->SetMaxTolerance(std::max(o.sewing_tolerance, 1e-4));
     fx->Perform();
-    static const struct {
-      ShapeExtend_Status st;
-      const char *msg;
-    } kinds[] = {{ShapeExtend_DONE1, "fixed free edges"}, {ShapeExtend_DONE2, "fixed free wires"},
-                 {ShapeExtend_DONE3, "fixed faces"},      {ShapeExtend_DONE4, "fixed shells"},
-                 {ShapeExtend_DONE5, "fixed solids"},     {ShapeExtend_DONE6, "fixed shapes in compounds"}};
-    for (const auto &k : kinds) {
-      if (fx->Status(k.st)) {
-        r.fixes.push_back(rust::String(std::string("shape fix: ") + k.msg));
-      }
-    }
+    TopoDS_Shape fixed = fx->Shape();
     std::map<std::string, int> msgs;
     using MsgMap = std::decay_t<decltype(reg->MapShape())>;
     for (MsgMap::Iterator it(reg->MapShape()); it.More(); it.Next()) {
@@ -462,10 +452,34 @@ HealResult heal(Store &s, uint32_t body, const HealOptions &o) {
         msgs[to_utf8(mi.Value().Original())] += 1;
       }
     }
+    // Faces ShapeFix replaced; flags alone (e.g. a shell re-flagged closed)
+    // are not worth reporting when no face changed and nothing was logged.
+    ShapeMap after;
+    TopExp::MapShapes(fixed, TopAbs_FACE, after);
+    int rebuilt = 0;
+    for (int i = 1; i <= after.Extent(); ++i) {
+      rebuilt += b.faces.Contains(after(i)) ? 0 : 1;
+    }
+    if (rebuilt > 0 || !msgs.empty()) {
+      static const struct {
+        ShapeExtend_Status st;
+        const char *msg;
+      } kinds[] = {{ShapeExtend_DONE1, "fixed free edges"}, {ShapeExtend_DONE2, "fixed free wires"},
+                   {ShapeExtend_DONE3, "fixed faces"},      {ShapeExtend_DONE4, "fixed shells"},
+                   {ShapeExtend_DONE5, "fixed solids"},     {ShapeExtend_DONE6, "fixed shapes in compounds"}};
+      for (const auto &k : kinds) {
+        if (fx->Status(k.st)) {
+          r.fixes.push_back(rust::String(std::string("shape fix: ") + k.msg));
+        }
+      }
+    }
+    if (rebuilt > 0) {
+      r.fixes.push_back(rust::String("shape fix: " + std::to_string(rebuilt) + " faces rebuilt"));
+    }
     for (const auto &kv : msgs) {
       r.fixes.push_back(rust::String("shape fix: " + kv.first + " (x" + std::to_string(kv.second) + ")"));
     }
-    shape = fx->Shape();
+    shape = fixed;
   }
 
   if (o.sew) {
