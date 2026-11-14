@@ -462,7 +462,10 @@ impl AppState {
                 let name = RichText::new(&l.name)
                     .font(crate::theme::medium(13.0))
                     .color(pal.text_strong);
-                let r = ui.add(egui::Label::new(name).sense(Sense::click()).truncate());
+                let mut r = ui.add(egui::Label::new(name).sense(Sense::click()).truncate());
+                if l.active {
+                    r = r.on_hover_text(S::OUTLINER_ACTIVE_TIP);
+                }
                 if r.double_clicked() {
                     self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
                 }
@@ -471,9 +474,6 @@ impl AppState {
                         .small()
                         .color(pal.text_dim),
                 );
-                if l.active {
-                    ui.label(RichText::new(S::OUTLINER_ACTIVE).small().color(pal.accent));
-                }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
