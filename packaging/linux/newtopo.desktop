@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=newtopo
+GenericName=CAD Retopology
+Comment=Turn CAD solids into clean, game-ready polygon meshes
+Exec=newtopo %f
+Icon=newtopo
+Terminal=false
+Categories=Graphics;3DGraphics;
+MimeType=application/x-newtopo-scene;
+Keywords=CAD;STEP;IGES;mesh;retopology;game;
+StartupNotify=true
+StartupWMClass=newtopo
