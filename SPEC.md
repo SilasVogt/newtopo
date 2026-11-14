@@ -123,7 +123,7 @@ export or send to a DCC app.
 | UV unwrap / pack | xatlas through a small `cc`-built binding (MIT) | Phase 6. |
 | Export | OBJ: own writer. glTF: `gltf-json` for the JSON plus a small own GLB packer (header, JSON chunk, BIN chunk, accessors). FBX: own binary FBX 7.4 writer (no usable Rust crate). Sources for the FBX format: the public "FBX binary file format specification" post on the Blender developer blog and Autodesk's public FBX docs; validate output by reading it back with `ufbx` (MIT, via a small binding in tests only) and by the Blender import test. Document the written subset in `docs/fbx-subset.md`. Never ship the Autodesk FBX SDK and never copy GPL exporter code. | |
 | Serialisation | `serde`, `serde_json`, `zstd`, `zip` | |
-| Undo/state | Persistent data structures (`im` or `Arc` + copy-on-write) | Cheap snapshots of the document. |
+| Undo/state | Persistent data structures (`imbl`, MPL-2.0, the maintained fork of `im`; or `Arc` + copy-on-write) | Cheap snapshots of the document. |
 | Build | cargo workspace; OCCT from the system package on Linux (`opencascade` on Arch) and vcpkg on Windows, found by `build.rs` via `OCCT_DIR` / pkg-config | `cargo build` is the one command. CI caches OCCT. |
 | Tests | `cargo test`, `proptest`, `insta` (golden files), `criterion` (perf budgets) | |
 | DCC addons | Python for Blender, Maya and 3ds Max (pymxs) | |
@@ -142,7 +142,8 @@ export or send to a DCC app.
 newtopo/
   Cargo.toml (workspace)  SPEC.md
   crates/
-    occt-shim/   # the ONLY C++ in the repo: cxx bridge + shim.cpp/.h, build.rs
+    occt-shim/   # the only C++ we write: cxx bridge + shim.cpp/.h, build.rs
+                 # (third-party C++ such as xatlas is vendored as a dependency)
     kernel/      # CadKernel trait, OCCT impl, MockKernel, B-rep index, face
                  # classification, congruence + symmetry matching
     core/        # no UI, no GPU; everything unit-testable
@@ -175,7 +176,9 @@ Keep the C++ small, boring and fenced off:
   enables them.
 - **Import runs in a separate process** (`newtopo-import`, a small binary
   built from the same crates): it reads STEP/IGES, heals, and writes OCCT
-  `.brep` files (geometry only) plus a JSON sidecar (per body: names, layers,
+  `.bbrep` files (geometry only, OCCT's binary format via `BinTools`; `.brep`
+  text via `BRepTools` is accepted on input for tests) plus a JSON sidecar
+  (per body: names, layers,
   colours, assembly transforms; plus the heal report). The app loads both:
   geometry from the `.brep` files, attributes and the report from the
   sidecar, and keeps the sidecar data in the scene (§8.2). A crash or
@@ -230,21 +233,32 @@ evaluated output mesh. The output mesh is a cache, never the source of truth.
 
 **Closed edges, seams and poles.** These need explicit handling because OCCT
 represents them in ways that don't map to polygons directly:
-- A **closed CAD edge** (a full circle: one vertex, start = end) gets output
-  vertices from the lines that end on it. While fewer than 3 line endpoints
-  land on it, it **also** gets placeholder vertices: `min_closed_segments`
-  (setting, default 8) evenly spaced positions, phase-aligned to the first
-  line endpoint (or the canonical angle, §6.2, if there is none), skipping
-  any position within half a spacing of a line endpoint. Line endpoints are
-  always kept. Placeholders have keys `Placeholder(edge, i)`. So an untouched
-  cylinder is a valid two-loop polygon (two 8-vertex rims), and a cylinder
-  with one iso line has that line's endpoints on both rims plus placeholders.
-- **Seam edges** are dropped. A periodic patch's polygon is the 3D loop(s)
-  without the seam; when the evaluator needs a planar domain it unrolls the
-  period along a **cut**: if the patch has lines crossing the period, cut
-  along one of them; otherwise cut along the auto-fill bridge (§7 step 2).
-  The cut appears as the left and right borders of the unrolled domain.
-  This one rule serves the arrangement (§4.6) and auto-fill (§7).
+- **Short closed loops.** After the arrangement (§4.6 step 3), any closed
+  loop in it (a closed CAD edge, a CAD circle exported as two arcs, a closed
+  split line, or a closed generated line such as an around-direction iso, a
+  low-count grid line or a slice ring) that has **fewer than 3** output
+  vertices **also** gets placeholder vertices: `min_closed_segments`
+  (setting, default 8) evenly spaced positions, phase-aligned to the loop's
+  first existing vertex (or to the face's phase reference, below, if it has
+  none), skipping any position within half a spacing of an existing vertex.
+  Existing vertices are always kept. Placeholders have keys
+  `Placeholder(loop source, i)`. So an untouched cylinder has two 8-vertex
+  rims, and a cylinder with one generator line has that line's endpoints on
+  both rims plus placeholders.
+- **Phase reference.** Every periodic face has a phase reference direction
+  used for the canonical angle (§6.2) and for placeholders. Default: world X
+  projected onto the plane perpendicular to the face's axis (world Y if X is
+  within 10° of the axis, then Z). When rules reach a face through a face
+  mapping (Link §6.11, symmetry §6.12, paste §6.13), the target face's phase
+  reference is the source's reference mapped through the same rigid
+  transform, stored per face in the document. So rotated copies get rigidly
+  transformed lines and placeholders, not world-aligned ones.
+- **Seam edges** are never output edges. The arrangement is computed in the
+  face's UV domain cut at the CAD seam(s) (one for a cylinder, two for a
+  torus), with vertices on both copies of each seam identified. Afterwards
+  every seam edge is dissolved, merging the polygons on its two sides. A
+  polygon that wraps around the period becomes a polygon with two loops (an
+  annulus), which the always-on bridging step (§4.6 step 4) makes simple.
 - **Faces with no boundary left** (full torus, full sphere, closed
   periodic surfaces): until a spread rule is applied, they get an implicit
   Grid with U = V = `min_closed_segments` (sphere: V = half of that, with
@@ -258,8 +272,12 @@ represents them in ways that don't map to polygons directly:
   zero-length degenerate edge itself, which is never output.
 
 ### 4.2 Patches and split lines
-- `SplitLine { id, group, face, kind: Iso { dir: U|V, value } }` (v1 only
-  needs iso splits; keep the enum open for arbitrary UV curves). A through
+- `SplitLine { id, group, face, kind: Iso { dir: U|V, value, seed: Option<f64> } }`
+  (v1 only needs iso splits; keep the enum open for arbitrary UV curves).
+  `seed` is the click position as the parameter along the iso line: a trimmed
+  iso line can have several disconnected pieces (§3.4), and with `seed` set
+  only the piece containing it (or nearest to it) is used; `None` means all
+  pieces (through mode). A through
   split that crosses several faces makes one split line per face sharing a
   `group` id, so it can be deleted or undone as one. Split lines are their own
   document objects, not rules: they are the **only** place splits are stored.
@@ -274,9 +292,19 @@ represents them in ways that don't map to polygons directly:
   of spread rule, with its count(s) **distributed** by each piece's extent
   along the rule's direction (largest-remainder rounding, at least 1 where
   the original was ≥ 1), so line density stays about the same; lines then
-  re-space evenly within each piece. Counts across the split stay as they were.
-  Removing a split line merges patches; the merged patch gets the summed
-  counts of the pieces (undoable; toast says so).
+  re-space evenly within each piece. Counts in the transverse direction (lines
+  parallel to the split) are copied unchanged to both pieces.
+  Slice rules aren't distributed: their planes are geometry, so the pieces
+  just clip them. If the two pieces carry different rule kinds when merged,
+  the merged patch takes the rule of the larger piece (by area).
+  Removing a split line merges patches **direction-aware**: the distributed
+  direction gets the sum of the pieces' counts; the transverse direction keeps
+  the larger piece's count (by area). Split-then-unsplit is not guaranteed to
+  restore counts exactly; undo is (toast says what changed).
+- **Minimum counts on closed patches**: on a patch with no boundary in a
+  periodic direction (a full torus in both, a full sphere around), any spread
+  rule's count in that direction is clamped to at least 3, so the stitched
+  output can't degenerate. The panel shows the clamp.
 
 ### 4.3 Rules
 
@@ -284,9 +312,11 @@ represents them in ways that don't map to polygons directly:
 pub enum Rule {
     Connect { patches: Vec<PatchId>, count_a: u32, count_b: u32,
               start_on_seam: bool, flipped: Vec<PatchId> },
-    Grid    { patch: PatchId, count_u: u32, count_v: u32 },
-    Slice   { scope: SliceScope, count: u32, orient: SliceOrient, through: bool },
-    Iso     { pieces: Vec<(FaceId, UvDir, f64)>, through: bool },
+    Grid    { patch: PatchId, count_u: u32, count_v: u32,
+              start_on_seam: bool, spacing: ArcLength | Parametric },
+    Slice   { scope: SliceScope, count: u32, orient: SliceOrient, through: bool,
+              frozen_planes: Option<Vec<Plane>> },  // set on Body→Patches conversion
+    Iso     { pieces: Vec<IsoPiece>, through: bool },
     Cut     { points: Vec<CutPoint> },          // polyline over the surface
     Join    { a: VertexKey, b: VertexKey },     // "connect vertices"
 }
@@ -298,6 +328,14 @@ pub enum SliceOrient { Auto, GuideEdge(EdgeId) }
   spread rule. Applying another spread tool to a patch takes it over from the
   previous rule (the old rule shrinks; if empty it is deleted). Re-running the
   same tool on a selection replaces the rule on those patches.
+- A `Slice` with `SliceScope::Body` that loses any patch (takeover by another
+  spread rule, or count 0 on a subset) is first converted to
+  `SliceScope::Patches` listing every patch of the body, then shrinks like
+  any other rule. Its planes stay the same (they're computed from the
+  original scope's extent, stored in the rule as `orient` plus the plane
+  positions at conversion time). **AC**: body Slice with 10 planes, then
+  Connect on one patch: that patch has only Connect lines; every other patch
+  keeps exactly its previous Slice lines.
 - **Single-line rules** (Iso, Cut, Join) are additive and can coexist with
   spread rules.
 - Each rule has a stable `RuleId` and an ordinal for deterministic evaluation.
@@ -313,14 +351,20 @@ pub enum Anchor {
 }
 ```
 
-- Priority when vertices merge (collapse/weld): CadVertex > CadEdge > Face.
+- **Collapse** merges to the end with the higher anchor priority:
+  CadVertex > CadEdge > Face (ties: the surface-path midpoint). **Weld**
+  always keeps the **target's** anchor (the user chose where it goes); if the
+  source has a higher-priority anchor than the target, the weld needs a
+  confirmation because it pulls a vertex off a CAD edge or corner (§6.9).
 - Each output edge keeps a `SurfacePath` (along a CAD edge, a UV polyline on a
   face, or a chain across faces) so it can be drawn on the surface and so
   lines can be intersected exactly. Exported edges are straight segments.
 
 ### 4.5 Stable keys and edits
 - Every generated vertex and edge gets a **key** from its provenance, e.g.
-  `LineKey { rule, index }`, `VertexKey::Crossing(LineKey, LineKey)`,
+  `LineKey { rule, index }`, `VertexKey::Crossing(LineKey, LineKey, occurrence)`
+  (`occurrence` counts crossings of the same two lines in order along the
+  first line, since cut paths and through-iso loops can cross twice),
   `VertexKey::OnBoundary(LineKey, EdgeOrSplit, end)`, `VertexKey::Cad(VertexId)`,
   `VertexKey::CutPoint(rule, i)`. Keys don't depend on evaluation order.
 - Edits are stored against keys:
@@ -354,16 +398,26 @@ pub enum Edit {
 2. Each rule generates lines as UV polylines per face (exact iso lines, plane
    sections, sampled geodesic-in-UV for cut segments).
 3. Per patch, build a planar **arrangement** in UV of patch boundary + lines,
-   with exact/robust predicates. Periodic patches are unrolled along a cut as
-   defined in §4.1, and vertices on the two copies of the cut are stitched;
-   seam edges never become output edges.
-4. Create output vertices (anchors + keys) and polygons; share vertices on CAD
+   with exact/robust predicates, in the seam-cut domain; add placeholders to
+   short closed loops; dissolve seam edges (§4.1).
+4. **Loop bridging (always runs, independent of auto-fill)**: every polygon
+   with more than one loop (holes, or an annulus around a period) gets its
+   inner loops joined to the outer loop by bridge chords between existing
+   vertices: the shortest chord that crosses nothing, ties broken by vertex
+   key order. Each such polygon is then split along **two** non-crossing
+   bridge chords per inner loop into simple polygons, so no output polygon
+   ever has a hole or repeats a vertex. The bridge chords are fill edges.
+   For a polygon on a periodic patch, its planar domain is obtained by
+   lifting the periodic coordinate continuously along its (now simple)
+   boundary.
+5. Create output vertices (anchors + keys) and polygons; share vertices on CAD
    edges and split lines between neighbouring patches so the mesh is watertight.
-5. Apply edits in order.
-6. If auto-fill is on, fill every polygon with more than 4 sides or with holes (§7).
-7. Validate (debug builds and `newtopo-cli validate`): manifold, watertight
+6. Apply edits in order.
+7. If auto-fill is on, decompose every polygon with more than 4 sides (§7).
+8. Validate (debug builds and `newtopo-cli validate`): manifold, watertight
    where the B-rep is closed, no zero-length edges, no degenerate or flipped
-   faces (against the CAD normal), every anchor within tolerance.
+   faces (against the CAD normal), no polygon with a hole or repeated vertex,
+   every anchor within tolerance.
 
 **Incremental**: track dirty patches. Changing a rule re-evaluates only its
 patches and their neighbours' shared boundaries. Budgets: < 16 ms for a
@@ -469,7 +523,7 @@ of a 2,000-face body (auto-fill on).
 | Slice | S | Iso | I |
 | Cut | K | Target weld | W |
 | Collapse | Alt+C | Remove edge | Delete |
-| Remove CAD edge (confirm) | Delete twice | Loop / ring | L / R (twice = every other) |
+| Remove CAD edge (confirm) | Delete twice (one press on a CAD edge only arms it, with a toast, for 1 s) | Loop / ring | L / R (twice = every other) |
 | Frame | F | Ortho/persp | O |
 | Hide / unhide all | H / Alt+H | Isolate / step / exit | / then / again, Esc |
 | Visible-only selection | Alt+V | Invert selection | Ctrl+I |
@@ -479,7 +533,9 @@ of a 2,000-face body (auto-fill on).
 
 Inside tools: `A` toggles **through** mode (continue past holes/boundaries),
 `Tab` toggles a tool's direction, `X` toggles Iso's split mode, `Enter`
-accepts, `Esc` cancels, `Backspace` removes the last cut point.
+accepts, `Esc` cancels, `Backspace` removes the last cut point. `Esc`
+precedence: cancel the active tool's pending action first, then leave the
+tool, then exit isolate.
 
 ### 5.9 Feedback
 - Every tool shows a one-line hint in the status bar.
@@ -523,11 +579,11 @@ Adds lines that follow the way a face bends.
   give N segments around; on an open face, N lines give N+1 segments.
 - **Start on seam** (periodic faces, default off): on puts the first line on
   the CAD seam, which depends on how the part was built and rotated in CAD.
-  Off puts it at the **canonical angle**: project the world X axis onto the
-  plane perpendicular to the face's axis (use world Y if X is within 10° of
-  the axis, then Z); the first line goes where that direction meets the
-  surface. A cylinder spun about its own axis in CAD looks identical
-  geometrically, so with start-on-seam off it gets identical lines.
+  Off puts it at the **canonical angle**: where the face's phase reference
+  direction (§4.1; world-X based unless the face was reached through a
+  Link/symmetry/paste mapping) meets the surface. A cylinder spun about its
+  own axis in CAD looks identical geometrically, so with start-on-seam off it
+  gets identical lines.
 - **Modifier+wheel**: while a segment tool is active and the cursor is over
   the viewport, Shift+wheel and Ctrl+wheel go to the tool and override any
   navigation binding that uses those modifiers. Plain wheel still zooms.
@@ -600,7 +656,12 @@ Places one exact iso line where you click.
   the parameter value through that point, and continue. Neighbouring faces'
   UV axes don't need to line up; the match is in 3D. Stop where no direction
   matches, at a sharp edge, or when the walk returns to its start (a loop).
-  The rule stores the list of (face, dir, value) pieces it produced.
+  The rule stores the pieces it produced as
+  `IsoPiece { face, dir, value, seed: Option<f64> }`. `seed` (the click
+  position, or the crossing point for continued pieces, as a parameter along
+  the iso line) picks which disconnected component of a trimmed iso line is
+  meant when through is off; with through on it is `None` and every
+  component on that face is used.
 - **Split mode** (`X`, preview drawn in a different colour): the click adds
   **split lines** (§4.2) instead of an Iso rule, one per face the line
   crosses, sharing a group. Split lines divide the face into patches, so
@@ -636,7 +697,8 @@ Draws lines exactly where you click.
 - Collapses selected edges to one vertex. The merged vertex keeps the
   higher-priority anchor (§4.4). An edge between a generated vertex and a CAD
   vertex/edge always collapses onto the CAD side, so CAD boundaries stay
-  intact.
+  intact. Refuses (with a toast) if the result would flip a face against the
+  CAD normal or be non-manifold. Target Weld (§6.9) refuses the same cases.
 - Collapsing a CAD edge onto itself (both ends CAD) is allowed only after a
   confirmation, warns that the output will no longer match the CAD outline,
   and is output-only.
@@ -645,10 +707,13 @@ Draws lines exactly where you click.
 
 ### 6.9 Target Weld
 - Click a source vertex (highlighted as "from"), then a target vertex
-  ("to"), or drag from one to the other. The source merges into the target;
+  ("to"), or drag from one to the other. The source merges into the target
+  and the result keeps the target's anchor and position (§4.4);
   degenerate edges/faces are removed. Refuses (with a toast) if the result
   would be non-manifold. Tool stays active.
-- Welding two CAD vertices needs a confirmation, as in §6.8.
+- A weld whose source has a higher-priority anchor than the target (e.g. a
+  CAD vertex into a face point), or that welds two CAD vertices, needs a
+  confirmation, as in §6.8.
 - **AC**: welding two vertices of a quad strip turns one quad into a triangle
   and the mesh still validates.
 
@@ -720,12 +785,9 @@ For every polygon with more than four sides or with holes:
 1. **Domain**: use the patch's UV domain, rescaled so a unit of u and of v map
    to similar 3D lengths (sample the metric). If the polygon spans patches
    (after §6.10), flatten the union of their display tessellation with LSCM.
-2. **Holes and periodic loops**: join each inner loop to the outer loop with
-   the shortest diagonal between existing vertices that crosses nothing,
-   giving one weakly simple polygon (the bridge edge is used twice). For a
-   polygon on a periodic patch whose two loops wrap around the period (an
-   untouched cylinder's two rims), this bridge **is** the unroll cut of §4.1,
-   so the polygon becomes a simple polygon in the unrolled domain.
+2. **Input is always simple**: holes and periodic annuli were already split
+   into simple polygons by the evaluator's bridging step (§4.6 step 4), so
+   auto-fill only ever decomposes simple polygons in a planar domain.
 3. **Decompose** with a dynamic program over diagonals, like optimal polygon
    triangulation but allowing quads: for each sub-chain (i, j) whose chord is
    a valid interior diagonal, choose either a triangle (i, k, j) or a quad
@@ -752,7 +814,9 @@ Properties:
 
 **AC**:
 - Vertex count is unchanged by auto-fill.
-- A strictly convex polygon with an even number of vertices fills with quads only.
+- A strictly convex polygon with an even number of vertices, n ≤ 48 (the DP
+  path), fills with quads only. Above 48 the greedy path is quad-dominant best
+  effort with no all-quad guarantee.
 - For polygons with ≤ 9 vertices (seeded generator: random star-shaped
   polygons, 10,000 cases), the quad count equals the maximum found by
   exhaustive search over all decompositions into triangles and **admissible**
@@ -781,8 +845,9 @@ Properties:
 
 ### 8.2 Scenes
 - Scene file `.ntopo`: zip with `scene.json` (format version, settings,
-  layers, objects, split lines, rules, edits, camera), `cad/<body>.brep`
-  (healed B-rep in OCCT binary format, so reload doesn't need the source file),
+  layers, objects, split lines, rules, edits, camera), `cad/<body>.bbrep`
+  (healed B-rep in OCCT's `BinTools` binary format, so reload doesn't need the
+  source file),
   `cad/source.sha256`, `uv/<body>.bin` (UVs from §9.2 keyed by polygon
   vertex keys, with a stale flag). The output mesh is not stored; it's
   re-evaluated. Hard-edge overrides are edits (§4.5) and live in `scene.json`.
@@ -801,11 +866,19 @@ Properties:
   from CAD colours, object names (after rename, §9.1).
 - **Normals**: hard edges = CAD sharp edges (plus user overrides). Smooth
   normals come from the exact CAD surface normal at each vertex, split at hard
-  edges; option for face-weighted normals instead. OBJ writes smoothing
-  groups; FBX writes per-corner normals and edge smoothing; glTF splits
-  vertices.
+  edges; option for face-weighted normals instead. OBJ writes per-corner
+  `vn` normals (split at hard edges) and also smoothing groups (`s`) for
+  tools that read them; Blender's OBJ importer treats `s` only as smooth
+  on/off and derives sharp edges from the split normals. FBX writes
+  per-corner normals and edge smoothing; glTF splits vertices.
 - If auto-fill is off, n-gons are exported as n-gons (FBX/OBJ) or triangulated
   (glTF), with a note in the export dialog.
+- **Polygons with holes are never output**, auto-fill on or off: FBX, OBJ
+  and Blender can't represent a face with a hole, and a single bridged face
+  would repeat vertices. The evaluator's bridging step (§4.6 step 4) always
+  splits them into simple polygons, so preview, statistics and export agree.
+  The untouched cylinder (two rims) therefore shows as two n-gons in preview
+  with auto-fill off.
 - **AC**: exported files import into Blender 4.x, checked by a headless
   Blender script in CI (`blender -b -P`): FBX and OBJ match the output mesh's
   polygon count and unique vertex positions (after merging by distance for
@@ -839,8 +912,10 @@ Properties:
 - One row per host (Blender, Maya, 3ds Max) with connection status and a Send
   button.
 - **Protocol**: TCP on `127.0.0.1` only. Default ports 47110 (Blender), 47111
-  (Maya), 47112 (3ds Max), configurable. Frames: 4-byte length + JSON header
-  (`version`, `type`, `token`) + optional binary payload. Types `hello`,
+  (Maya), 47112 (3ds Max), configurable. Frames: `header_len` (u32,
+  little-endian) + UTF-8 JSON header (`version`, `type`, `token`,
+  `payload_len`) + `payload_len` bytes of binary payload (little-endian
+  arrays, layout described in the header). Types `hello`,
   `push`, `ack`, `error`. A per-install random token, shown in the app and
   pasted once into each addon, authenticates the connection.
 - **Send**: selected objects, or the whole scene including hidden layers when
@@ -857,7 +932,8 @@ Properties:
   on the main thread. 3ds Max: a `QTimer` (via the bundled PySide) polls a
   non-blocking socket and applies changes through `pymxs`.
 - **AC**: sending 50k faces arrives in Blender in < 1 s with layers, names,
-  sharp edges and UVs intact.
+  sharp edges and UVs intact. In CI (`blender -b`), timers may not fire, so
+  the test calls the addon's poll function directly in a loop.
 
 ---
 
@@ -891,13 +967,16 @@ deterministic:
 
 - **Reference models are generated in code** via `make_test_shape`
   (`crates/testmodels` → `.step`): box, filleted box, cylinder with chamfers,
-  plate with a 4 × 4 hole grid, revolved bottle, torus, X-symmetric bracket,
+  plate with a 4 × 4 hole grid, revolved bottle, torus, sphere (poles),
+  cone with a sharp tip (apex), X-symmetric bracket,
   6-fold flange, small assembly with layers, names and colours. Optionally the
   public-domain NIST CAD test models for a large-file benchmark (downloaded at
   test time, not committed).
 - **Unit tests** for every AC in §6–§9.
 - **Property tests**: seeded random sequences of tool calls on every reference
-  model. After each step the output validates; undoing everything returns the
+  model. After each step either the output validates or the tool refused
+  the step with a reason (Collapse and Weld must refuse results that flip a
+  face against the CAD normal or are non-manifold); undoing everything returns the
   initial document exactly; save → load → evaluate gives the same output.
 - **Golden tests**: CLI scripts → exported OBJ compared by topology hash and
   positions within tolerance (`insta`).
@@ -918,8 +997,8 @@ the PR, and Silas's on-screen check.
 
 | Phase | Scope | Exit criteria |
 | --- | --- | --- |
-| **P0 Skeleton** | Cargo workspace; `occt-shim` building and linking OCCT on Linux + Windows CI; `CadKernel` + `MockKernel`; eframe window with a wgpu viewport; `newtopo-cli info` | CI green on both OSes; `info` prints stats for every reference model. **Do the FFI build first.** |
-| **P1 Import and view** | Import with list dialog, healing report, layers, outliner, navigation presets, view cube, selection (modes, box/lasso, visible-only, hide/isolate), command palette, statistics | Silas opens the reference models and a real Plasticity export; 60 fps orbit. |
+| **P0 Skeleton** | Cargo workspace; `occt-shim` building and linking OCCT on Linux + Windows CI; `CadKernel` + `MockKernel`; `testshapes` feature and `crates/testmodels` generating the reference models; eframe window with a wgpu viewport; `newtopo-cli info` (bodies, faces, surface types, layers; link sets and symmetry are added in P5) | CI green on both OSes; `info` prints stats for every reference model. **Do the FFI build first.** |
+| **P1 Import and view** | Import helper + list dialog, healing report, layers, outliner, navigation presets, view cube, selection (modes, box/lasso, visible-only, hide/isolate), command palette (search, run, favourites; shortcut editing and "add to radial" arrive with the radial menu in P4 and the keymap editor in P6), statistics | Silas opens the reference models and a real Plasticity export; 60 fps orbit. |
 | **P2 Document engine** | Patches, split lines, rules, anchors, keys, arrangement, incremental evaluation, undo, save/load, preview mode, `run`/`validate`/`render` CLI. Engine-level `Grid` and plain `Iso` rules (no tool UI yet) to exercise it | Property tests green using split lines, Grid and Iso rules, undo and save/load; closed edges, seams and poles validate on every reference model. |
 | **P3 Core loop** | Connect, Surface Grid, Slice, shared panel, auto-fill, loop/ring/every-other | §6.1–6.4, §6.14 and §7 AC pass. First internal milestone: import → lines → fill → preview. |
 | **P4 Precision and cleanup** | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits, radial menu | §6.5–6.10 AC pass. |
@@ -954,5 +1033,5 @@ Defaults apply if no answer arrives.
   a preview with only tris and quads, export it, and open it in Blender with
   matching counts, names, layers and sharp edges, without touching a DCC tool
   for the retopology.
-- The app never crashes on any reference or fuzz input (the import helper may fail and is reported); every refusal explains itself.
+- The app never crashes on any reference model or fuzzed import file (the import helper may fail and is reported); every refusal explains itself. In-process kernel calls after import are covered by the property tests, not by a no-crash guarantee.
 - `docs/` has a short user guide with screenshots of every tool, written fresh.
