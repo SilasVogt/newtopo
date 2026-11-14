@@ -616,3 +616,23 @@ fn rejects_bad_scale() {
         .is_err()
     );
 }
+
+#[test]
+fn obj_names_are_sanitised() {
+    let m = cube();
+    let o = ExportObject {
+        name: "Bracket #3\nx",
+        layer: "Layer A",
+        color: None,
+        transform: DMat4::IDENTITY,
+        mesh: &m,
+    };
+    let text = String::from_utf8(
+        export(Format::Obj, &[o], &ExportOptions::default())
+            .unwrap()
+            .main,
+    )
+    .unwrap();
+    assert!(text.contains("o Bracket _3_x\n"), "{text}");
+    assert!(text.contains("g Layer_A\n"), "{text}");
+}

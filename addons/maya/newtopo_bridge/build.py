@@ -28,7 +28,7 @@ def _conv(x, y, z, y_up):
 
 
 def _matrix(t, scale, y_up):
-    """Column-major 4x4 body->scene (Z-up) to a Maya MMatrix (row-vector
+    """Column-major 4x4 body->scene (Z-up) to Maya's xform matrix (row-vector
     convention: rows are the transformed axes and the translation)."""
     cols = [[t[c * 4 + r] for r in range(4)] for c in range(4)]
     axes = [_conv(*cols[c][:3], y_up=y_up) for c in range(3)]
@@ -40,7 +40,7 @@ def _matrix(t, scale, y_up):
         # new col for Maya-z is -(old col y).
         axes = [axes[0], axes[2], tuple(-v for v in axes[1])]
     rows = [list(a) + [0.0] for a in axes] + [list(tr) + [1.0]]
-    return om.MMatrix([v for row in rows for v in row])
+    return [float(v) for row in rows for v in row]  # 16 floats, row-major
 
 
 def _layer(name):
@@ -136,7 +136,7 @@ def build_object(o, payload, scale, keep_both, y_up):
     fn.setFaceVertexNormals(normals, face_ids, vert_ids)
     fn.updateSurface()
 
-    cmds.xform(xform, matrix=list(_matrix(o["transform"], scale, y_up)), worldSpace=True)
+    cmds.xform(xform, matrix=_matrix(o["transform"], scale, y_up), worldSpace=True)
     if o.get("material"):
         cmds.sets(fn.fullPathName(), edit=True, forceElement=_shading_group(o["material"]))
     else:

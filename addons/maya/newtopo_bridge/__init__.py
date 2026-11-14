@@ -160,8 +160,9 @@ def start(port=None, token=None):
     global _server
     if _server is not None:
         return _server
-    _server = ThreadedServer(port or get_port(), token if token is not None else get_token())
-    _server.start()
+    srv = ThreadedServer(port or get_port(), token if token is not None else get_token())
+    srv.start()  # raises OSError if the port is taken; nothing is kept then
+    _server = srv
     print("newtopo bridge: listening on 127.0.0.1:%d" % _server.port)
     return _server
 

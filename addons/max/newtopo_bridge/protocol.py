@@ -116,7 +116,8 @@ class Connection(object):
 class PollingServer(object):
     """Non-blocking server on 127.0.0.1 for hosts that poll from a UI timer
     (Blender's bpy.app.timers, 3ds Max's QTimer). One request per
-    connection. `handler(header, payload) -> reply frame bytes`.
+    connection. `handler(header, payload) -> reply frame bytes` runs on the
+    polling (UI) thread once a frame is complete.
     """
 
     READ_BUDGET = 256 << 20  # bytes per poll per connection

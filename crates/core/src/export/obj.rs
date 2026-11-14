@@ -24,11 +24,12 @@ pub fn num(x: f64) -> String {
     }
 }
 
-/// Make a name safe for an OBJ/MTL statement (one line, no leading space).
+/// Make a name safe for an OBJ/MTL statement: one line, no `#` (some
+/// readers treat it as a comment anywhere on a line).
 fn line_safe(s: &str) -> String {
     let t: String = s
         .chars()
-        .map(|c| if c.is_control() { '_' } else { c })
+        .map(|c| if c.is_control() || c == '#' { '_' } else { c })
         .collect();
     let t = t.trim();
     if t.is_empty() {

@@ -63,6 +63,8 @@ def smoothing_groups(sizes, verts, hard_pairs):
         c = comp[f]
         if c not in bit_of:
             used = {bit_of[o] for o in adj.get(c, ()) if o in bit_of}
+            # More than 32 differently-smoothed neighbours can't be
+            # represented; bit 0 is reused then (that hard edge shades smooth).
             bit = next((i for i in range(32) if i not in used), 0)
             bit_of[c] = bit
         out.append(1 << bit_of[c])
@@ -95,7 +97,8 @@ def build_object(o, payload, scale, keep_both):
     name = o["name"]
     if not keep_both:
         old = rt.getNodeByName(name)
-        if old is not None:
+        # Only replace geometry; never delete a same-named camera, helper...
+        if old is not None and rt.superClassOf(old) == rt.GeometryClass:
             rt.delete(old)
 
     obj = rt.convertToPoly(rt.Editable_Mesh())

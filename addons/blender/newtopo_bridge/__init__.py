@@ -3,8 +3,9 @@
 # Install: Edit > Preferences > Get Extensions > Install from Disk (zip of
 # this folder, Blender 4.2+), or as a legacy add-on (Add-ons > Install).
 # Paste the token shown in newtopo into the add-on preferences. The add-on
-# listens on 127.0.0.1 only and never blocks the UI: a bpy.app.timers
-# callback polls a non-blocking socket.
+# listens on 127.0.0.1 only. A bpy.app.timers callback polls a non-blocking
+# socket, so waiting and receiving never block the UI; building the meshes
+# of a push runs on the UI thread (about 70 ms for 50k faces).
 #
 # Headless use (tests): call start_server(port, token) and then poll() in a
 # loop, since timers may not fire in background mode.
