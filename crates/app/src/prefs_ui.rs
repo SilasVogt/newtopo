@@ -70,7 +70,7 @@ impl AppState {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size(vec2(620.0, 520.0))
+            .default_size(vec2(640.0, 600.0))
             .min_width(520.0)
             .default_pos(ctx.content_rect().center() - vec2(310.0, 280.0))
             .show(ctx, |ui| {

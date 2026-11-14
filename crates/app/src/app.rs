@@ -596,6 +596,11 @@ impl AppState {
         }
         self.vd_key = Some(key);
         self.vd_rev = newtopo_render::egui_viewport::next_revision();
+        // Hover and weld-drag hold indices into the old tables.
+        self.hover = None;
+        if matches!(self.drag, Some(crate::viewport::DragState::Weld { .. })) {
+            self.drag = None;
+        }
         self.overlay_sig = 0;
     }
 
