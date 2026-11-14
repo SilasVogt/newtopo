@@ -22,6 +22,8 @@ use glam::{DMat4, DVec2, DVec3};
 use newtopo_occt_shim::{self as shim, Ctx, ffi};
 use std::path::Path;
 
+pub mod checks;
+
 /// CAD file formats the shim reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CadFormat {

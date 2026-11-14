@@ -20,6 +20,7 @@
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
@@ -29,6 +30,7 @@
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
@@ -36,6 +38,8 @@
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Pln.hxx>
+
+#include <cmath>
 
 namespace ntshim {
 
@@ -72,7 +76,21 @@ uint32_t done(Store &s, BRepBuilderAPI_MakeShape &mk, const char *what) {
   if (!mk.IsDone()) {
     fail(std::string(what) + " failed");
   }
-  return s.add(mk.Shape());
+  // Unwrap single-solid compounds so STEP writes a part, not an assembly.
+  TopoDS_Shape out = mk.Shape();
+  while (out.ShapeType() == TopAbs_COMPOUND) {
+    TopoDS_Iterator it(out);
+    if (!it.More()) {
+      break;
+    }
+    TopoDS_Shape first = it.Value();
+    it.Next();
+    if (it.More()) {
+      break;
+    }
+    out = first;
+  }
+  return s.add(out);
 }
 
 gp_Trsf trsf_from(const double *m) {
@@ -211,6 +229,12 @@ uint32_t ts_prism(Store &s, rust::Slice<const double> polygon, double height) {
   return done(s, mk, "prism");
 }
 
+void ts_write_brep_text(Store &s, uint32_t body, rust::Str path) {
+  if (!BRepTools::Write(shape_of(s, body), std::string(path).c_str())) {
+    fail("BREP write failed");
+  }
+}
+
 void ts_write_step(Store &s, rust::Str path, rust::Slice<const XcafNode> nodes) {
   Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
   Handle(TDocStd_Document) doc;
@@ -233,7 +257,13 @@ void ts_write_step(Store &s, rust::Str path, rust::Slice<const XcafNode> nodes) 
   for (size_t i = 0; i < nodes.size(); ++i) {
     const XcafNode &n = nodes[i];
     std::string name(n.name);
-    TopLoc_Location loc(trsf_from(n.transform.data()));
+    // An identity gp_Trsf still makes a non-empty location, which XCAF would
+    // turn into an extra assembly level.
+    bool ident = true;
+    for (size_t k = 0; k < 12; ++k) {
+      ident = ident && std::abs(n.transform[k] - ((k % 5 == 0) ? 1.0 : 0.0)) < 1e-15;
+    }
+    TopLoc_Location loc = ident ? TopLoc_Location() : TopLoc_Location(trsf_from(n.transform.data()));
     TDF_Label proto;
     if (n.body >= 0) {
       auto it = protos.find(n.body);

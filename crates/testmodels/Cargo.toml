@@ -17,3 +17,6 @@ glam.workspace = true
 [[bin]]
 name = "newtopo-testmodels"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile.workspace = true

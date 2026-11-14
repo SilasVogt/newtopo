@@ -213,7 +213,9 @@ pub fn cone_apex(b: &mut Builder) -> Result<Nodes> {
 /// Torus with one blind hole: its toroidal face is trimmed by a single loop.
 pub fn torus_hole(b: &mut Builder) -> Result<Nodes> {
     let t = b.torus(40.0, 12.0)?;
-    let drill = b.rod(DVec3::new(45.0, 0.0, 0.0), DVec3::X, 4.0, 15.0)?;
+    // From the top of the tube at 45° around Z: away from both torus seams.
+    let a = PI / 4.0;
+    let drill = b.rod(DVec3::new(40.0 * a.cos(), 40.0 * a.sin(), 5.0), DVec3::Z, 4.0, 15.0)?;
     let id = b.cut(t, &[drill])?;
     Ok(single("Torus with hole", id))
 }
@@ -276,23 +278,36 @@ pub fn assembly(b: &mut Builder) -> Result<Nodes> {
     ])
 }
 
-/// Builds `model` and writes it as STEP to `path`.
-pub fn write_model(model: &RefModel, path: &Path) -> Result<()> {
+fn with_model(
+    model: &RefModel,
+    path: &Path,
+    write: fn(&mut Builder, &Nodes, &str) -> Result<()>,
+) -> Result<()> {
     let build = model.build;
     let path_s = path.to_str().context("path is not UTF-8")?.to_owned();
     let name = model.name;
     shim::run(move |ctx| {
         let mut b = Builder { ctx, made: Vec::new() };
-        let res = build(&mut b).and_then(|nodes| {
-            ts::ts_write_step(b.ctx.store(), &path_s, &nodes).map_err(err)?;
-            Ok(())
-        });
+        let res = build(&mut b).and_then(|nodes| write(&mut b, &nodes, &path_s));
         for id in std::mem::take(&mut b.made) {
             ffi::unload(b.ctx.store(), id);
         }
         res.with_context(|| format!("reference model {name}"))
     })
     .map_err(|e| anyhow!(e))?
+}
+
+/// Builds `model` and writes it as STEP to `path`.
+pub fn write_model(model: &RefModel, path: &Path) -> Result<()> {
+    with_model(model, path, |b, nodes, p| ts::ts_write_step(b.store(), p, nodes).map_err(err))
+}
+
+/// Builds `model` and writes its first body as OCCT text B-rep (`.brep`).
+pub fn write_model_brep(model: &RefModel, path: &Path) -> Result<()> {
+    with_model(model, path, |b, nodes, p| {
+        let body = nodes.iter().find(|n| n.body >= 0).context("model has no body")?.body as u32;
+        ts::ts_write_brep_text(b.store(), body, p).map_err(err)
+    })
 }
 
 /// Writes every reference model as `<dir>/<name>.step`.

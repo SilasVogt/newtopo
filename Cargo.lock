@@ -2570,6 +2570,7 @@ dependencies = [
  "glam",
  "newtopo-kernel",
  "newtopo-occt-shim",
+ "tempfile",
 ]
 
 [[package]]

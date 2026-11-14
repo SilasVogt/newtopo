@@ -45,6 +45,8 @@ pub mod ffi {
         fn ts_revolve(store: Pin<&mut Store>, profile: &[f64], spline_from: i32, spline_to: i32) -> Result<u32>;
         /// Extrudes a closed (x, y) polygon along +Z.
         fn ts_prism(store: Pin<&mut Store>, polygon: &[f64], height: f64) -> Result<u32>;
+        /// Writes a body as OCCT text B-rep (`BRepTools::Write`).
+        fn ts_write_brep_text(store: Pin<&mut Store>, body: u32, path: &str) -> Result<()>;
         /// Writes an XCAF STEP file (AP214, mm) with names, layers and colours.
         fn ts_write_step(store: Pin<&mut Store>, path: &str, nodes: &[XcafNode]) -> Result<()>;
     }

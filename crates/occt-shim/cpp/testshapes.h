@@ -17,6 +17,7 @@ uint32_t ts_chamfer(Store &s, uint32_t body, rust::Slice<const uint32_t> edges, 
 uint32_t ts_boolean(Store &s, uint8_t op, uint32_t a, rust::Slice<const uint32_t> tools);
 uint32_t ts_revolve(Store &s, rust::Slice<const double> profile, int32_t spline_from, int32_t spline_to);
 uint32_t ts_prism(Store &s, rust::Slice<const double> polygon, double height);
+void ts_write_brep_text(Store &s, uint32_t body, rust::Str path);
 void ts_write_step(Store &s, rust::Str path, rust::Slice<const XcafNode> nodes);
 
 } // namespace ntshim
