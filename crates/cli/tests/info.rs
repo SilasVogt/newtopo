@@ -15,19 +15,46 @@ fn helper_present() -> bool {
 #[test]
 fn info_prints_stats_for_every_reference_model() {
     if !helper_present() {
-        eprintln!("SKIPPED: newtopo-import not built next to newtopo-cli (run `cargo build -p newtopo-import`)");
+        eprintln!(
+            "SKIPPED: newtopo-import not built next to newtopo-cli (run `cargo build -p newtopo-import`)"
+        );
         return;
     }
     let dir = tempfile::tempdir().unwrap();
     for path in newtopo_testmodels::write_all(dir.path()).unwrap() {
-        let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli")).arg("info").arg(&path).output().unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli"))
+            .arg("info")
+            .arg(&path)
+            .output()
+            .unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(out.status.success(), "{}: {}", path.display(), String::from_utf8_lossy(&out.stderr));
-        for key in ["bodies:", "faces:", "edges:", "layers:", "colours:", "link sets: n/a", "symmetry: n/a"] {
-            assert!(text.contains(key), "{}: missing {key:?} in\n{text}", path.display());
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for key in [
+            "bodies:",
+            "faces:",
+            "edges:",
+            "layers:",
+            "colours:",
+            "link sets: n/a",
+            "symmetry: n/a",
+        ] {
+            assert!(
+                text.contains(key),
+                "{}: missing {key:?} in\n{text}",
+                path.display()
+            );
         }
 
-        let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli")).args(["info", "--json"]).arg(&path).output().unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli"))
+            .args(["info", "--json"])
+            .arg(&path)
+            .output()
+            .unwrap();
         assert!(out.status.success());
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         let bodies = v["bodies"].as_array().unwrap();
@@ -55,7 +82,11 @@ fn info_reports_import_failure() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("bad.step");
     std::fs::write(&p, "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=GARBAGE(;\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli")).arg("info").arg(&p).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_newtopo-cli"))
+        .arg("info")
+        .arg(&p)
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("import failed"));
 }

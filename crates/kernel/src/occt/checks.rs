@@ -29,8 +29,17 @@ pub struct CheckOptions {
 
 impl Default for CheckOptions {
     fn default() -> Self {
-        CheckOptions { tol: 1e-3, mesh_tol: 0.2, min_normal_agreement: 0.97 }
+        CheckOptions {
+            tol: 1e-3,
+            mesh_tol: 0.2,
+            min_normal_agreement: 0.97,
+        }
     }
+}
+
+/// `d <= tol`, false for NaN.
+fn within(d: f64, tol: f64) -> bool {
+    d <= tol
 }
 
 fn coedge_ends(t: &BodyTopology, e: EdgeId, reversed: bool) -> (f64, f64) {
@@ -73,9 +82,17 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
         }
         let outers = f.wires.iter().filter(|w| w.outer).count();
         if outers != 1 || !f.wires[0].outer {
-            bad!("face {fid}: {outers} outer wires (first outer: {})", f.wires[0].outer);
+            bad!(
+                "face {fid}: {outers} outer wires (first outer: {})",
+                f.wires[0].outer
+            );
         }
-        let seam_uses = f.wires.iter().flat_map(|w| &w.coedges).filter(|c| t.edge(c.edge).seam).count();
+        let seam_uses = f
+            .wires
+            .iter()
+            .flat_map(|w| &w.coedges)
+            .filter(|c| t.edge(c.edge).seam)
+            .count();
         let closed_dirs = f.surface.u_closed as usize + f.surface.v_closed as usize;
         if closed_dirs > 0 && seam_uses < 2 * closed_dirs {
             bad!("face {fid}: closed in {closed_dirs} directions but {seam_uses} seam coedges");
@@ -83,7 +100,10 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
         for (wi, w) in f.wires.iter().enumerate() {
             for c in &w.coedges {
                 if !t.edge(c.edge).faces.contains(&fid) {
-                    bad!("face {fid} wire {wi}: edge {} does not list the face", c.edge);
+                    bad!(
+                        "face {fid} wire {wi}: edge {} does not list the face",
+                        c.edge
+                    );
                 }
             }
             // Chain continuity in 3D.
@@ -101,8 +121,10 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
             }
             for i in 0..n {
                 let gap = ends[i].1.distance(ends[(i + 1) % n].0);
-                if !(gap <= o.tol) {
-                    bad!("face {fid} wire {wi}: coedge {i} ends {gap:.2e} away from the next start");
+                if !within(gap, o.tol) {
+                    bad!(
+                        "face {fid} wire {wi}: coedge {i} ends {gap:.2e} away from the next start"
+                    );
                 }
             }
             // Pcurve endpoints through the surface match the 3D endpoints.
@@ -122,10 +144,13 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
                         continue;
                     }
                 };
-                for j in 0..2 {
-                    let d = on[j].p.distance(ends[ci].0 * (1 - j) as f64 + ends[ci].1 * j as f64);
-                    if !(d <= o.tol) {
-                        bad!("face {fid} edge {}: pcurve end {j} is {d:.2e} off the 3D curve", c.edge);
+                for (j, (ev, end)) in on.iter().zip([ends[ci].0, ends[ci].1]).enumerate() {
+                    let d = ev.p.distance(end);
+                    if !within(d, o.tol) {
+                        bad!(
+                            "face {fid} edge {}: pcurve end {j} is {d:.2e} off the 3D curve",
+                            c.edge
+                        );
                     }
                 }
             }
@@ -143,8 +168,11 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
             bad!("face {fid}: empty tessellation");
             continue;
         }
-        let cent: Vec<DVec2> =
-            mesh.triangles.iter().map(|tr| tr.iter().map(|&i| mesh.uvs[i as usize]).sum::<DVec2>() / 3.0).collect();
+        let cent: Vec<DVec2> = mesh
+            .triangles
+            .iter()
+            .map(|tr| tr.iter().map(|&i| mesh.uvs[i as usize]).sum::<DVec2>() / 3.0)
+            .collect();
         let evals = k.face_eval(body, fid, &cent).unwrap_or_default();
         let mut agree = 0usize;
         let mut counted = 0usize;
@@ -170,7 +198,10 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
         if let Ok(cls) = k.face_classify_uv(body, fid, &cent) {
             let out = cls.iter().filter(|c| **c == crate::UvClass::Out).count();
             if out * 20 > cls.len() {
-                bad!("face {fid}: {out}/{} triangle centroids classify as outside", cls.len());
+                bad!(
+                    "face {fid}: {out}/{} triangle centroids classify as outside",
+                    cls.len()
+                );
             }
         } else {
             bad!("face {fid}: classify failed");
@@ -179,23 +210,39 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
         let step = (mesh.positions.len() / 24).max(1);
         // Skip singular points (apex, poles): their normal is only a limit.
         let all: Vec<usize> = (0..mesh.positions.len()).step_by(step).collect();
-        let sing = k.face_eval(body, fid, &all.iter().map(|&i| mesh.uvs[i]).collect::<Vec<_>>()).unwrap_or_default();
+        let sing = k
+            .face_eval(
+                body,
+                fid,
+                &all.iter().map(|&i| mesh.uvs[i]).collect::<Vec<_>>(),
+            )
+            .unwrap_or_default();
         let idx: Vec<usize> = all
             .iter()
             .zip(&sing)
-            .filter(|(_, e)| e.du.cross(e.dv).length() > 1e-9 * (1.0 + e.du.length() * e.dv.length()))
+            .filter(|(_, e)| {
+                e.du.cross(e.dv).length() > 1e-9 * (1.0 + e.du.length() * e.dv.length())
+            })
             .map(|(&i, _)| i)
             .collect();
-        let pushed: Vec<DVec3> = idx.iter().map(|&i| mesh.positions[i] + mesh.normals[i] * 0.1).collect();
+        let pushed: Vec<DVec3> = idx
+            .iter()
+            .map(|&i| mesh.positions[i] + mesh.normals[i] * 0.1)
+            .collect();
         match k.project_to_face(body, fid, &pushed) {
             Ok(res) => {
                 for (&i, r) in idx.iter().zip(&res) {
                     match r {
                         Some((uv, p)) => {
                             let d = p.distance(mesh.positions[i]);
-                            let on = k.face_eval(body, fid, &[*uv]).map(|e| e[0].p.distance(*p)).unwrap_or(f64::MAX);
-                            if !(d <= o.tol.max(1e-2 * o.mesh_tol)) || !(on <= o.tol) {
-                                bad!("face {fid}: projection of vertex {i} landed {d:.2e} away (uv off by {on:.2e})");
+                            let on = k
+                                .face_eval(body, fid, &[*uv])
+                                .map(|e| e[0].p.distance(*p))
+                                .unwrap_or(f64::MAX);
+                            if !within(d, o.tol.max(1e-2 * o.mesh_tol)) || !within(on, o.tol) {
+                                bad!(
+                                    "face {fid}: projection of vertex {i} landed {d:.2e} away (uv off by {on:.2e})"
+                                );
                             }
                         }
                         None => bad!("face {fid}: projection of vertex {i} failed"),
@@ -223,7 +270,9 @@ pub fn check_body(k: &dyn CadKernel, body: BodyId, o: CheckOptions) -> Vec<Strin
         match k.project_to_edge(body, eid, &pts) {
             Ok(res) => {
                 for (p, r) in pts.iter().zip(&res) {
-                    let back = r.and_then(|t| k.edge_eval(body, eid, &[t]).ok()).map(|q| q[0].distance(*p));
+                    let back = r
+                        .and_then(|t| k.edge_eval(body, eid, &[t]).ok())
+                        .map(|q| q[0].distance(*p));
                     if !back.is_some_and(|d| d <= o.tol) {
                         bad!("edge {eid}: projection did not return to the curve ({back:?})");
                     }

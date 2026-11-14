@@ -138,14 +138,24 @@ pub mod ffi {
 
         /// format: 0 STEP, 1 IGES, 2 BREP. `unit_m`: target length unit in
         /// metres (0.001 = mm).
-        fn import_cad(store: Pin<&mut Store>, path: &str, format: u8, unit_m: f64) -> Result<ImportResultFfi>;
+        fn import_cad(
+            store: Pin<&mut Store>,
+            path: &str,
+            format: u8,
+            unit_m: f64,
+        ) -> Result<ImportResultFfi>;
         fn heal(store: Pin<&mut Store>, body: u32, opts: &HealOptions) -> Result<HealResult>;
 
         fn topology(store: Pin<&mut Store>, body: u32) -> Result<TopologyFfi>;
         /// uv pairs in; 12 doubles out per point (p, n, du, dv).
         fn face_eval(store: Pin<&mut Store>, body: u32, face: u32, uv: &[f64]) -> Result<Vec<f64>>;
         /// 0 in, 1 on, 2 out.
-        fn face_classify_uv(store: Pin<&mut Store>, body: u32, face: u32, uv: &[f64]) -> Result<Vec<u8>>;
+        fn face_classify_uv(
+            store: Pin<&mut Store>,
+            body: u32,
+            face: u32,
+            uv: &[f64],
+        ) -> Result<Vec<u8>>;
         /// 3 doubles out per parameter.
         fn edge_eval(store: Pin<&mut Store>, body: u32, edge: u32, t: &[f64]) -> Result<Vec<f64>>;
         /// 2 doubles out per parameter.
@@ -158,9 +168,19 @@ pub mod ffi {
             t: &[f64],
         ) -> Result<Vec<f64>>;
         /// xyz in; 6 doubles out per point: ok (0/1), u, v, x, y, z.
-        fn project_to_face(store: Pin<&mut Store>, body: u32, face: u32, p: &[f64]) -> Result<Vec<f64>>;
+        fn project_to_face(
+            store: Pin<&mut Store>,
+            body: u32,
+            face: u32,
+            p: &[f64],
+        ) -> Result<Vec<f64>>;
         /// xyz in; one parameter out per point (NaN = failed).
-        fn project_to_edge(store: Pin<&mut Store>, body: u32, edge: u32, p: &[f64]) -> Result<Vec<f64>>;
+        fn project_to_edge(
+            store: Pin<&mut Store>,
+            body: u32,
+            edge: u32,
+            p: &[f64],
+        ) -> Result<Vec<f64>>;
         fn tessellate(store: Pin<&mut Store>, body: u32, face: u32, tol: f64) -> Result<MeshFfi>;
     }
 }
@@ -188,7 +208,9 @@ fn occt_thread() -> &'static (mpsc::Sender<Job>, thread::ThreadId) {
             // OCCT recurses deeply in booleans and STEP translation.
             .stack_size(64 << 20)
             .spawn(move || {
-                let mut ctx = Ctx { store: ffi::new_store() };
+                let mut ctx = Ctx {
+                    store: ffi::new_store(),
+                };
                 while let Ok(job) = rx.recv() {
                     // A panicking job only loses its own reply channel.
                     let _ = catch_unwind(AssertUnwindSafe(|| job(&mut ctx)));

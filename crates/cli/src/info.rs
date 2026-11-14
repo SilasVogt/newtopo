@@ -85,7 +85,10 @@ fn hex(c: [f32; 3]) -> String {
 }
 
 fn edge_stats(t: &BodyTopology, sharp: f64) -> EdgeStats {
-    let mut s = EdgeStats { total: t.edges.len(), ..Default::default() };
+    let mut s = EdgeStats {
+        total: t.edges.len(),
+        ..Default::default()
+    };
     for e in &t.edges {
         s.seam += e.seam as usize;
         s.degenerate += e.degenerate as usize;
@@ -130,14 +133,18 @@ pub fn report(
         warnings: imported.warnings.clone(),
     };
     for b in &imported.bodies {
-        let id = kernel.load_brep(&b.brep).with_context(|| format!("loading body {}", b.attrs.name))?;
+        let id = kernel
+            .load_brep(&b.brep)
+            .with_context(|| format!("loading body {}", b.attrs.name))?;
         let topo = kernel.topology(id);
         kernel.unload(id);
         let topo = topo.with_context(|| format!("topology of {}", b.attrs.name))?;
         let mut hist = BTreeMap::new();
         for f in &topo.faces {
             *hist.entry(f.surface.kind.name().to_string()).or_insert(0) += 1;
-            *r.surface_types.entry(f.surface.kind.name().to_string()).or_insert(0) += 1;
+            *r.surface_types
+                .entry(f.surface.kind.name().to_string())
+                .or_insert(0) += 1;
         }
         let edges = edge_stats(&topo, sharp);
         add_edges(&mut r.edges, &edges);
@@ -196,7 +203,10 @@ fn counts_text(m: &BTreeMap<String, usize>) -> String {
     if m.is_empty() {
         return "none".into();
     }
-    m.iter().map(|(k, n)| format!("{k} ({n})")).collect::<Vec<_>>().join(", ")
+    m.iter()
+        .map(|(k, n)| format!("{k} ({n})"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Human-readable report.
@@ -219,11 +229,20 @@ pub fn render_text(r: &InfoReport) -> String {
             let _ = write!(head, "  colour={c}");
         }
         let _ = writeln!(s, "{head}");
-        let _ = writeln!(s, "      faces {} ({})", b.faces, hist_text(&b.surface_types));
+        let _ = writeln!(
+            s,
+            "      faces {} ({})",
+            b.faces,
+            hist_text(&b.surface_types)
+        );
         let _ = writeln!(s, "      edges {}", edges_text(&b.edges));
         let _ = writeln!(s, "      vertices {}  area {:.3}", b.vertices, b.area);
         let h = &b.heal;
-        let _ = write!(s, "      heal: faces {} -> {}", h.faces_before, h.faces_after);
+        let _ = write!(
+            s,
+            "      heal: faces {} -> {}",
+            h.faces_before, h.faces_after
+        );
         if !h.failed_faces.is_empty() {
             let ids: Vec<String> = h.failed_faces.iter().map(|f| f.to_string()).collect();
             let _ = write!(s, ", failed faces [{}]", ids.join(", "));
@@ -244,8 +263,16 @@ pub fn render_text(r: &InfoReport) -> String {
     let _ = writeln!(s, "edges:    {}", edges_text(&r.edges));
     let _ = writeln!(s, "layers:   {}", counts_text(&r.layers));
     let _ = writeln!(s, "colours:  {}", counts_text(&r.colors));
-    let _ = writeln!(s, "link sets: {}", r.link_sets.map_or("n/a".into(), |n| n.to_string()));
-    let _ = writeln!(s, "symmetry: {}", r.symmetry.clone().unwrap_or_else(|| "n/a".into()));
+    let _ = writeln!(
+        s,
+        "link sets: {}",
+        r.link_sets.map_or("n/a".into(), |n| n.to_string())
+    );
+    let _ = writeln!(
+        s,
+        "symmetry: {}",
+        r.symmetry.clone().unwrap_or_else(|| "n/a".into())
+    );
     for w in &r.warnings {
         let _ = writeln!(s, "warning:  {w}");
     }
@@ -280,7 +307,11 @@ pub fn run(a: &InfoArgs) -> Result<()> {
         }
         true
     })?;
-    let name = a.model.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = a
+        .model
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let k = kernel();
     let r = report(name, a.units.clone(), &imported, k.as_ref(), a.sharp_angle)?;
     if a.json {

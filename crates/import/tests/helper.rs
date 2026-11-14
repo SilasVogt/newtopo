@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn opts() -> ImportOptions {
-    ImportOptions { helper: Some(PathBuf::from(env!("CARGO_BIN_EXE_newtopo-import"))), ..Default::default() }
+    ImportOptions {
+        helper: Some(PathBuf::from(env!("CARGO_BIN_EXE_newtopo-import"))),
+        ..Default::default()
+    }
 }
 
 fn import(path: &Path) -> Result<ImportedFile, String> {
@@ -33,10 +36,21 @@ fn every_reference_model_imports() {
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         assert!(!f.bodies.is_empty());
         assert_eq!(f.source_sha256.len(), 64);
-        assert!(steps.iter().any(|(p, m)| *p == 1.0 && m == "done"), "{steps:?}");
-        assert!(steps.windows(2).all(|w| w[0].0 <= w[1].0), "progress not monotonic: {steps:?}");
+        assert!(
+            steps.iter().any(|(p, m)| *p == 1.0 && m == "done"),
+            "{steps:?}"
+        );
+        assert!(
+            steps.windows(2).all(|w| w[0].0 <= w[1].0),
+            "progress not monotonic: {steps:?}"
+        );
         for b in &f.bodies {
-            assert!(b.heal.failed_faces.is_empty(), "{}: {:?}", path.display(), b.heal);
+            assert!(
+                b.heal.failed_faces.is_empty(),
+                "{}: {:?}",
+                path.display(),
+                b.heal
+            );
             let id = k.load_brep(&b.brep).unwrap();
             let t = k.topology(id).unwrap();
             assert_eq!(t.faces.len(), b.heal.faces_after);
@@ -60,7 +74,10 @@ fn assembly_sidecar_attributes() {
     assert!(o.distance(glam::DVec3::new(40.0, 10.0, 44.0)) < 1e-9);
     let k = OcctKernel::new();
     let id = k.load_brep(&ring.brep).unwrap();
-    assert_eq!(k.topology(id).unwrap().faces[0].surface.kind, SurfaceKind::Torus);
+    assert_eq!(
+        k.topology(id).unwrap().faces[0].surface.kind,
+        SurfaceKind::Torus
+    );
     k.unload(id);
 }
 
@@ -74,11 +91,20 @@ fn brep_input_and_units() {
     assert_eq!(f.bodies[0].attrs.name, "box");
     let s = dir.path().join("box.step");
     newtopo_testmodels::write_model(newtopo_testmodels::model("box").unwrap(), &s).unwrap();
-    let o = ImportOptions { units: "cm".into(), ..opts() };
+    let o = ImportOptions {
+        units: "cm".into(),
+        ..opts()
+    };
     let f = run_import(&s, &o, &mut |_, _| true).unwrap();
     let k = OcctKernel::new();
     let id = k.load_brep(&f.bodies[0].brep).unwrap();
-    let max_x = k.topology(id).unwrap().vertices.iter().map(|v| v.point.x).fold(f64::MIN, f64::max);
+    let max_x = k
+        .topology(id)
+        .unwrap()
+        .vertices
+        .iter()
+        .map(|v| v.point.x)
+        .fold(f64::MIN, f64::max);
     assert!((max_x - 4.0).abs() < 1e-9, "{max_x}");
     k.unload(id);
 }
@@ -87,7 +113,8 @@ fn brep_input_and_units() {
 fn malformed_step_fails_cleanly() {
     let dir = tempfile::tempdir().unwrap();
     let good = dir.path().join("box.step");
-    newtopo_testmodels::write_model(newtopo_testmodels::model("filleted_box").unwrap(), &good).unwrap();
+    newtopo_testmodels::write_model(newtopo_testmodels::model("filleted_box").unwrap(), &good)
+        .unwrap();
     let text = std::fs::read_to_string(&good).unwrap();
 
     // Truncated in the middle of the DATA section.
@@ -104,7 +131,9 @@ fn malformed_step_fails_cleanly() {
     std::fs::write(&dangling, lines.join("\n")).unwrap();
     // Garbage bytes with a STEP extension.
     let garbage = dir.path().join("garbage.step");
-    let bytes: Vec<u8> = (0..20000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    let bytes: Vec<u8> = (0..20000u32)
+        .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+        .collect();
     std::fs::write(&garbage, bytes).unwrap();
     // Garbage IGES and an empty file.
     let iges = dir.path().join("garbage.igs");
@@ -140,7 +169,10 @@ fn timeout_and_cancel_kill_the_helper() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("flange.step");
     newtopo_testmodels::write_model(newtopo_testmodels::model("flange").unwrap(), &p).unwrap();
-    let o = ImportOptions { timeout: Duration::from_millis(1), ..opts() };
+    let o = ImportOptions {
+        timeout: Duration::from_millis(1),
+        ..opts()
+    };
     let e = run_import(&p, &o, &mut |_, _| true).unwrap_err();
     assert!(e.0.contains("timed out"), "{e}");
     let e = run_import(&p, &opts(), &mut |_, _| false).unwrap_err();

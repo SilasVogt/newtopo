@@ -33,7 +33,13 @@ pub struct ImportOptions {
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        ImportOptions { heal: true, sewing_tolerance: 1e-3, units: "mm".into(), timeout: Duration::from_secs(300), helper: None }
+        ImportOptions {
+            heal: true,
+            sewing_tolerance: 1e-3,
+            units: "mm".into(),
+            timeout: Duration::from_secs(300),
+            helper: None,
+        }
     }
 }
 
@@ -117,7 +123,11 @@ pub fn find_helper(explicit: Option<&Path>) -> Option<PathBuf> {
     let mut dir = exe.parent();
     for _ in 0..4 {
         let d = dir?;
-        for cand in [d.join(&name), d.join("debug").join(&name), d.join("release").join(&name)] {
+        for cand in [
+            d.join(&name),
+            d.join("debug").join(&name),
+            d.join("release").join(&name),
+        ] {
             if cand.is_file() {
                 return Some(cand);
             }
@@ -133,9 +143,13 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> std::io::Result<TempDir> {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let p = std::env::temp_dir().join(format!("newtopo-import-{}-{nanos}-{n}", std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("newtopo-import-{}-{nanos}-{n}", std::process::id()));
         std::fs::create_dir_all(&p)?;
         Ok(TempDir(p))
     }
@@ -163,17 +177,32 @@ fn kill(child: &mut Child) {
 
 /// Error text from the helper's stderr (non-warning lines first).
 fn stderr_text(lines: &[String]) -> String {
-    let errs: Vec<&str> = lines.iter().map(String::as_str).filter(|l| !l.starts_with("warning: ")).collect();
-    let pick = if errs.is_empty() { lines.iter().map(String::as_str).collect() } else { errs };
+    let errs: Vec<&str> = lines
+        .iter()
+        .map(String::as_str)
+        .filter(|l| !l.starts_with("warning: "))
+        .collect();
+    let pick = if errs.is_empty() {
+        lines.iter().map(String::as_str).collect()
+    } else {
+        errs
+    };
     let tail = pick.len().saturating_sub(20);
     pick[tail..].join("\n")
 }
 
-pub fn run_import(path: &Path, opts: &ImportOptions, progress: Progress) -> anyhow_like::Result<ImportedFile> {
+pub fn run_import(
+    path: &Path,
+    opts: &ImportOptions,
+    progress: Progress,
+) -> anyhow_like::Result<ImportedFile> {
     let helper = find_helper(opts.helper.as_deref()).ok_or_else(|| {
         fail(match &opts.helper {
             Some(p) => format!("import helper not found at {}", p.display()),
-            None => format!("import helper `{}` not found next to the executable (set {HELPER_ENV})", helper_name()),
+            None => format!(
+                "import helper `{}` not found next to the executable (set {HELPER_ENV})",
+                helper_name()
+            ),
         })
     })?;
     if !path.is_file() {
@@ -194,7 +223,9 @@ pub fn run_import(path: &Path, opts: &ImportOptions, progress: Progress) -> anyh
     if !opts.heal {
         cmd.arg("--no-heal");
     }
-    let mut child = cmd.spawn().map_err(|e| fail(format!("cannot start {}: {e}", helper.display())))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| fail(format!("cannot start {}: {e}", helper.display())))?;
 
     let (tx, rx) = mpsc::channel::<Line>();
     let out = child.stdout.take().expect("piped stdout");
@@ -251,7 +282,10 @@ pub fn run_import(path: &Path, opts: &ImportOptions, progress: Progress) -> anyh
             }
             let text = stderr_text(&stderr);
             let sep = if text.is_empty() { "" } else { "\n" };
-            return Err(fail(format!("timed out after {} s{sep}{text}", opts.timeout.as_secs_f32())));
+            return Err(fail(format!(
+                "timed out after {} s{sep}{text}",
+                opts.timeout.as_secs_f32()
+            )));
         }
         if last_poll.elapsed() > Duration::from_millis(100) {
             // Re-poll with the last state so cancel works while OCCT is busy.
@@ -262,30 +296,49 @@ pub fn run_import(path: &Path, opts: &ImportOptions, progress: Progress) -> anyh
             }
         }
     };
-    let warnings: Vec<String> =
-        stderr.iter().filter_map(|l| l.strip_prefix("warning: ").map(str::to_string)).collect();
+    let warnings: Vec<String> = stderr
+        .iter()
+        .filter_map(|l| l.strip_prefix("warning: ").map(str::to_string))
+        .collect();
     if !status.success() {
         let text = stderr_text(&stderr);
-        return Err(fail(if text.is_empty() { format!("helper exited with {status}") } else { text }));
+        return Err(fail(if text.is_empty() {
+            format!("helper exited with {status}")
+        } else {
+            text
+        }));
     }
 
     let side_path = dir.0.join(SIDECAR_FILE);
     let side_bytes = std::fs::read(&side_path).map_err(|e| fail(format!("no sidecar: {e}")))?;
-    let side: Sidecar = serde_json::from_slice(&side_bytes).map_err(|e| fail(format!("bad sidecar: {e}")))?;
+    let side: Sidecar =
+        serde_json::from_slice(&side_bytes).map_err(|e| fail(format!("bad sidecar: {e}")))?;
     if side.version != SIDECAR_VERSION {
-        return Err(fail(format!("sidecar version {} (expected {SIDECAR_VERSION})", side.version)));
+        return Err(fail(format!(
+            "sidecar version {} (expected {SIDECAR_VERSION})",
+            side.version
+        )));
     }
     let mut bodies = Vec::with_capacity(side.bodies.len());
     for b in side.bodies {
         if b.file.contains(['/', '\\']) || b.file.contains("..") {
             return Err(fail(format!("bad body file name {:?}", b.file)));
         }
-        let brep = std::fs::read(dir.0.join(&b.file)).map_err(|e| fail(format!("{}: {e}", b.file)))?;
-        bodies.push(ImportedBody { brep, attrs: b.attrs, heal: b.heal });
+        let brep =
+            std::fs::read(dir.0.join(&b.file)).map_err(|e| fail(format!("{}: {e}", b.file)))?;
+        bodies.push(ImportedBody {
+            brep,
+            attrs: b.attrs,
+            heal: b.heal,
+        });
     }
     let mut all_warnings = side.warnings;
     all_warnings.extend(warnings);
-    Ok(ImportedFile { bodies, source_sha256: side.source_sha256, warnings: all_warnings })
+    Ok(ImportedFile {
+        bodies,
+        source_sha256: side.source_sha256,
+        warnings: all_warnings,
+    })
 }
 
 /// Minimal error type so the kernel crate needs no anyhow.
@@ -313,7 +366,10 @@ mod tests {
 
     #[test]
     fn progress_lines() {
-        assert_eq!(parse_progress("progress 0.5 healing body 1"), Some((0.5, "healing body 1".into())));
+        assert_eq!(
+            parse_progress("progress 0.5 healing body 1"),
+            Some((0.5, "healing body 1".into()))
+        );
         assert_eq!(parse_progress("progress 1"), Some((1.0, String::new())));
         assert_eq!(parse_progress("progress 7 x"), Some((1.0, "x".into())));
         assert_eq!(parse_progress("progress x y"), None);
@@ -322,7 +378,10 @@ mod tests {
 
     #[test]
     fn missing_helper_is_an_error() {
-        let opts = ImportOptions { helper: Some("/nonexistent/newtopo-import".into()), ..Default::default() };
+        let opts = ImportOptions {
+            helper: Some("/nonexistent/newtopo-import".into()),
+            ..Default::default()
+        };
         let e = run_import(Path::new("x.step"), &opts, &mut |_, _| true).unwrap_err();
         assert!(e.0.starts_with("import failed:"), "{e}");
     }

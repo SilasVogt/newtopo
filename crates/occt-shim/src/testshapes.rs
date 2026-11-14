@@ -26,7 +26,15 @@ pub mod ffi {
         include!("newtopo-occt-shim/cpp/testshapes.h");
         type Store = crate::ffi::Store;
 
-        fn ts_box(store: Pin<&mut Store>, x: f64, y: f64, z: f64, dx: f64, dy: f64, dz: f64) -> Result<u32>;
+        fn ts_box(
+            store: Pin<&mut Store>,
+            x: f64,
+            y: f64,
+            z: f64,
+            dx: f64,
+            dy: f64,
+            dz: f64,
+        ) -> Result<u32>;
         /// Axis +Z through the origin, base at z = 0.
         fn ts_cylinder(store: Pin<&mut Store>, r: f64, h: f64) -> Result<u32>;
         fn ts_cone(store: Pin<&mut Store>, r1: f64, r2: f64, h: f64) -> Result<u32>;
@@ -42,7 +50,12 @@ pub mod ffi {
         /// Revolves a closed (r, z) profile 360° about +Z. Points with index in
         /// `[spline_from, spline_to]` are joined by one interpolated B-spline,
         /// the rest by lines; the last point connects back to the first.
-        fn ts_revolve(store: Pin<&mut Store>, profile: &[f64], spline_from: i32, spline_to: i32) -> Result<u32>;
+        fn ts_revolve(
+            store: Pin<&mut Store>,
+            profile: &[f64],
+            spline_from: i32,
+            spline_to: i32,
+        ) -> Result<u32>;
         /// Extrudes a closed (x, y) polygon along +Z.
         fn ts_prism(store: Pin<&mut Store>, polygon: &[f64], height: f64) -> Result<u32>;
         /// Writes a body as OCCT text B-rep (`BRepTools::Write`).

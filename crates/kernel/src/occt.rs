@@ -14,9 +14,9 @@
 //!   is exactly what [`CadKernel::edge_pcurve_eval`] expects for seams.
 
 use crate::{
-    BodyAttributes, BodyId, BodyTopology, CadKernel, CoEdge, CurveKind, EdgeId, EdgeTopo, FaceId, FaceMesh,
-    FaceTopo, HealReport, KResult, KernelError, SurfEval, SurfaceInfo, SurfaceKind, UvClass, VertexId, VertexTopo,
-    WireTopo,
+    BodyAttributes, BodyId, BodyTopology, CadKernel, CoEdge, CurveKind, EdgeId, EdgeTopo, FaceId,
+    FaceMesh, FaceTopo, HealReport, KResult, KernelError, SurfEval, SurfaceInfo, SurfaceKind,
+    UvClass, VertexId, VertexTopo, WireTopo,
 };
 use glam::{DMat4, DVec2, DVec3};
 use newtopo_occt_shim::{self as shim, Ctx, ffi};
@@ -76,7 +76,11 @@ pub struct HealSettings {
 
 impl Default for HealSettings {
     fn default() -> Self {
-        HealSettings { fix: true, sew: true, sewing_tolerance: 1e-3 }
+        HealSettings {
+            fix: true,
+            sew: true,
+            sewing_tolerance: 1e-3,
+        }
     }
 }
 
@@ -104,7 +108,12 @@ fn failure(msg: impl Into<String>) -> KernelError {
 }
 
 /// Maps the shim's "unknown body/face/edge N" messages to typed errors.
-fn map_err(e: shim::cxx::Exception, body: BodyId, face: Option<FaceId>, edge: Option<EdgeId>) -> KernelError {
+fn map_err(
+    e: shim::cxx::Exception,
+    body: BodyId,
+    face: Option<FaceId>,
+    edge: Option<EdgeId>,
+) -> KernelError {
     let m = e.what();
     if m.starts_with("unknown body") {
         KernelError::UnknownBody(body)
@@ -174,7 +183,10 @@ fn convert_topology(t: ffi::TopologyFfi) -> BodyTopology {
                             .edges
                             .iter()
                             .zip(w.reversed.iter())
-                            .map(|(&e, &r)| CoEdge { edge: EdgeId(e), reversed: r })
+                            .map(|(&e, &r)| CoEdge {
+                                edge: EdgeId(e),
+                                reversed: r,
+                            })
                             .collect(),
                     })
                     .collect(),
@@ -198,8 +210,16 @@ fn convert_topology(t: ffi::TopologyFfi) -> BodyTopology {
             dihedral: (!e.dihedral.is_nan()).then_some(e.dihedral),
         })
         .collect();
-    let vertices = t.vertices.chunks_exact(3).map(|c| VertexTopo { point: v3(c) }).collect();
-    BodyTopology { faces, edges, vertices }
+    let vertices = t
+        .vertices
+        .chunks_exact(3)
+        .map(|c| VertexTopo { point: v3(c) })
+        .collect();
+    BodyTopology {
+        faces,
+        edges,
+        vertices,
+    }
 }
 
 fn convert_attrs(b: &ffi::ImportedBodyFfi) -> BodyAttributes {
@@ -225,7 +245,10 @@ impl OcctKernel {
     }
 
     /// Runs `f` on the OCCT thread.
-    fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Ctx) -> KResult<R> + Send + 'static) -> KResult<R> {
+    fn call<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Ctx) -> KResult<R> + Send + 'static,
+    ) -> KResult<R> {
         shim::run(f).map_err(failure)?
     }
 
@@ -233,7 +256,9 @@ impl OcctKernel {
     /// readers become errors. **Only the import helper process may call
     /// this** (SPEC §3.4); never the app.
     pub fn enable_signal_handlers() -> KResult<()> {
-        shim::run(|_| ffi::enable_signal_handlers()).map_err(failure)?.map_err(|e| failure(e.what()))
+        shim::run(|_| ffi::enable_signal_handlers())
+            .map_err(failure)?
+            .map_err(|e| failure(e.what()))
     }
 
     /// Reads a STEP/IGES/BREP file through XCAF: one body per leaf shape
@@ -241,14 +266,21 @@ impl OcctKernel {
     /// colours and assembly transforms. `unit_m` is the target length unit in
     /// metres (0.001 = mm). Does not heal.
     pub fn import_file(&self, path: &Path, format: CadFormat, unit_m: f64) -> KResult<LoadedFile> {
-        let path = path.to_str().ok_or_else(|| failure("path is not valid UTF-8"))?.to_owned();
+        let path = path
+            .to_str()
+            .ok_or_else(|| failure("path is not valid UTF-8"))?
+            .to_owned();
         self.call(move |ctx| {
-            let r = ffi::import_cad(ctx.store(), &path, format.code(), unit_m).map_err(|e| failure(e.what()))?;
+            let r = ffi::import_cad(ctx.store(), &path, format.code(), unit_m)
+                .map_err(|e| failure(e.what()))?;
             Ok(LoadedFile {
                 bodies: r
                     .bodies
                     .iter()
-                    .map(|b| LoadedBody { body: BodyId(b.body), attrs: convert_attrs(b) })
+                    .map(|b| LoadedBody {
+                        body: BodyId(b.body),
+                        attrs: convert_attrs(b),
+                    })
                     .collect(),
                 warnings: r.warnings,
             })
@@ -258,9 +290,13 @@ impl OcctKernel {
     /// Heals a body in place (ShapeFix + sewing). Face ids change.
     pub fn heal(&self, body: BodyId, settings: HealSettings) -> KResult<HealReport> {
         self.call(move |ctx| {
-            let opts =
-                ffi::HealOptions { fix: settings.fix, sew: settings.sew, sewing_tolerance: settings.sewing_tolerance };
-            let r = ffi::heal(ctx.store(), body.0, &opts).map_err(|e| map_err(e, body, None, None))?;
+            let opts = ffi::HealOptions {
+                fix: settings.fix,
+                sew: settings.sew,
+                sewing_tolerance: settings.sewing_tolerance,
+            };
+            let r =
+                ffi::heal(ctx.store(), body.0, &opts).map_err(|e| map_err(e, body, None, None))?;
             Ok(HealReport {
                 fixes: r.fixes,
                 failed_faces: r.failed_faces.into_iter().map(FaceId).collect(),
@@ -272,7 +308,8 @@ impl OcctKernel {
 
     /// Number of bodies currently loaded (all `OcctKernel` values).
     pub fn body_count(&self) -> usize {
-        self.call(|ctx| Ok(ffi::body_count(&ctx.store))).unwrap_or(0)
+        self.call(|ctx| Ok(ffi::body_count(&ctx.store)))
+            .unwrap_or(0)
     }
 }
 
@@ -283,11 +320,17 @@ impl CadKernel for OcctKernel {
 
     fn load_brep(&self, bytes: &[u8]) -> KResult<BodyId> {
         let bytes = bytes.to_vec();
-        self.call(move |ctx| ffi::load_brep(ctx.store(), &bytes).map(BodyId).map_err(|e| failure(e.what())))
+        self.call(move |ctx| {
+            ffi::load_brep(ctx.store(), &bytes)
+                .map(BodyId)
+                .map_err(|e| failure(e.what()))
+        })
     }
 
     fn save_brep(&self, body: BodyId) -> KResult<Vec<u8>> {
-        self.call(move |ctx| ffi::save_brep(ctx.store(), body.0).map_err(|e| map_err(e, body, None, None)))
+        self.call(move |ctx| {
+            ffi::save_brep(ctx.store(), body.0).map_err(|e| map_err(e, body, None, None))
+        })
     }
 
     fn unload(&self, body: BodyId) {
@@ -299,17 +342,25 @@ impl CadKernel for OcctKernel {
 
     fn topology(&self, body: BodyId) -> KResult<BodyTopology> {
         self.call(move |ctx| {
-            ffi::topology(ctx.store(), body.0).map(convert_topology).map_err(|e| map_err(e, body, None, None))
+            ffi::topology(ctx.store(), body.0)
+                .map(convert_topology)
+                .map_err(|e| map_err(e, body, None, None))
         })
     }
 
     fn face_eval(&self, body: BodyId, face: FaceId, uv: &[DVec2]) -> KResult<Vec<SurfEval>> {
         let flat: Vec<f64> = uv.iter().flat_map(|p| [p.x, p.y]).collect();
         self.call(move |ctx| {
-            let out = ffi::face_eval(ctx.store(), body.0, face.0, &flat).map_err(|e| map_err(e, body, Some(face), None))?;
+            let out = ffi::face_eval(ctx.store(), body.0, face.0, &flat)
+                .map_err(|e| map_err(e, body, Some(face), None))?;
             Ok(out
                 .chunks_exact(12)
-                .map(|c| SurfEval { p: v3(&c[0..3]), n: v3(&c[3..6]), du: v3(&c[6..9]), dv: v3(&c[9..12]) })
+                .map(|c| SurfEval {
+                    p: v3(&c[0..3]),
+                    n: v3(&c[3..6]),
+                    du: v3(&c[6..9]),
+                    dv: v3(&c[9..12]),
+                })
                 .collect())
         })
     }
@@ -333,7 +384,8 @@ impl CadKernel for OcctKernel {
     fn edge_eval(&self, body: BodyId, edge: EdgeId, t: &[f64]) -> KResult<Vec<DVec3>> {
         let t = t.to_vec();
         self.call(move |ctx| {
-            let out = ffi::edge_eval(ctx.store(), body.0, edge.0, &t).map_err(|e| map_err(e, body, None, Some(edge)))?;
+            let out = ffi::edge_eval(ctx.store(), body.0, edge.0, &t)
+                .map_err(|e| map_err(e, body, None, Some(edge)))?;
             Ok(out.chunks_exact(3).map(v3).collect())
         })
     }
@@ -350,11 +402,19 @@ impl CadKernel for OcctKernel {
         self.call(move |ctx| {
             let out = ffi::edge_pcurve_eval(ctx.store(), body.0, edge.0, face.0, reversed, &t)
                 .map_err(|e| map_err(e, body, Some(face), Some(edge)))?;
-            Ok(out.chunks_exact(2).map(|c| DVec2::new(c[0], c[1])).collect())
+            Ok(out
+                .chunks_exact(2)
+                .map(|c| DVec2::new(c[0], c[1]))
+                .collect())
         })
     }
 
-    fn project_to_face(&self, body: BodyId, face: FaceId, p: &[DVec3]) -> KResult<Vec<Option<(DVec2, DVec3)>>> {
+    fn project_to_face(
+        &self,
+        body: BodyId,
+        face: FaceId,
+        p: &[DVec3],
+    ) -> KResult<Vec<Option<(DVec2, DVec3)>>> {
         let flat: Vec<f64> = p.iter().flat_map(|q| q.to_array()).collect();
         self.call(move |ctx| {
             let out = ffi::project_to_face(ctx.store(), body.0, face.0, &flat)
@@ -366,23 +426,40 @@ impl CadKernel for OcctKernel {
         })
     }
 
-    fn project_to_edge(&self, body: BodyId, edge: EdgeId, p: &[DVec3]) -> KResult<Vec<Option<f64>>> {
+    fn project_to_edge(
+        &self,
+        body: BodyId,
+        edge: EdgeId,
+        p: &[DVec3],
+    ) -> KResult<Vec<Option<f64>>> {
         let flat: Vec<f64> = p.iter().flat_map(|q| q.to_array()).collect();
         self.call(move |ctx| {
             let out = ffi::project_to_edge(ctx.store(), body.0, edge.0, &flat)
                 .map_err(|e| map_err(e, body, None, Some(edge)))?;
-            Ok(out.into_iter().map(|t| (!t.is_nan()).then_some(t)).collect())
+            Ok(out
+                .into_iter()
+                .map(|t| (!t.is_nan()).then_some(t))
+                .collect())
         })
     }
 
     fn tessellate(&self, body: BodyId, face: FaceId, tol: f64) -> KResult<FaceMesh> {
         self.call(move |ctx| {
-            let m = ffi::tessellate(ctx.store(), body.0, face.0, tol).map_err(|e| map_err(e, body, Some(face), None))?;
+            let m = ffi::tessellate(ctx.store(), body.0, face.0, tol)
+                .map_err(|e| map_err(e, body, Some(face), None))?;
             Ok(FaceMesh {
                 positions: m.positions.chunks_exact(3).map(v3).collect(),
                 normals: m.normals.chunks_exact(3).map(v3).collect(),
-                uvs: m.uvs.chunks_exact(2).map(|c| DVec2::new(c[0], c[1])).collect(),
-                triangles: m.triangles.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect(),
+                uvs: m
+                    .uvs
+                    .chunks_exact(2)
+                    .map(|c| DVec2::new(c[0], c[1]))
+                    .collect(),
+                triangles: m
+                    .triangles
+                    .chunks_exact(3)
+                    .map(|c| [c[0], c[1], c[2]])
+                    .collect(),
             })
         })
     }

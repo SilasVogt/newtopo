@@ -27,18 +27,54 @@ pub struct RefModel {
 
 /// Every reference model of SPEC §11, in a fixed order.
 pub const MODELS: &[RefModel] = &[
-    RefModel { name: "box", build: box_model },
-    RefModel { name: "filleted_box", build: filleted_box },
-    RefModel { name: "cylinder_chamfered", build: cylinder_chamfered },
-    RefModel { name: "plate_holes", build: plate_holes },
-    RefModel { name: "bottle", build: bottle },
-    RefModel { name: "torus", build: torus },
-    RefModel { name: "sphere", build: sphere },
-    RefModel { name: "cone_apex", build: cone_apex },
-    RefModel { name: "torus_hole", build: torus_hole },
-    RefModel { name: "bracket", build: bracket },
-    RefModel { name: "flange", build: flange },
-    RefModel { name: "assembly", build: assembly },
+    RefModel {
+        name: "box",
+        build: box_model,
+    },
+    RefModel {
+        name: "filleted_box",
+        build: filleted_box,
+    },
+    RefModel {
+        name: "cylinder_chamfered",
+        build: cylinder_chamfered,
+    },
+    RefModel {
+        name: "plate_holes",
+        build: plate_holes,
+    },
+    RefModel {
+        name: "bottle",
+        build: bottle,
+    },
+    RefModel {
+        name: "torus",
+        build: torus,
+    },
+    RefModel {
+        name: "sphere",
+        build: sphere,
+    },
+    RefModel {
+        name: "cone_apex",
+        build: cone_apex,
+    },
+    RefModel {
+        name: "torus_hole",
+        build: torus_hole,
+    },
+    RefModel {
+        name: "bracket",
+        build: bracket,
+    },
+    RefModel {
+        name: "flange",
+        build: flange,
+    },
+    RefModel {
+        name: "assembly",
+        build: assembly,
+    },
 ];
 
 fn err(e: shim::cxx::Exception) -> anyhow::Error {
@@ -57,7 +93,14 @@ fn rigid(m: DMat4) -> [f64; 12] {
 }
 
 /// A node with an identity placement.
-pub fn node(name: &str, parent: i32, body: i32, layer: &str, color: Option<[f32; 3]>, place: DMat4) -> XcafNode {
+pub fn node(
+    name: &str,
+    parent: i32,
+    body: i32,
+    layer: &str,
+    color: Option<[f32; 3]>,
+    place: DMat4,
+) -> XcafNode {
     XcafNode {
         name: name.into(),
         parent,
@@ -113,7 +156,12 @@ impl Builder<'_> {
         let x = if z.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
         let x = (x - z * x.dot(z)).normalize();
         let y = z.cross(x);
-        let m = DMat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), from.extend(1.0));
+        let m = DMat4::from_cols(
+            x.extend(0.0),
+            y.extend(0.0),
+            z.extend(0.0),
+            from.extend(1.0),
+        );
         self.transform(c, m)
     }
     pub fn fillet(&mut self, body: u32, edges: &[u32], r: f64) -> Result<u32> {
@@ -143,13 +191,29 @@ impl Builder<'_> {
         self.keep(r)
     }
     /// Edge ids of `body` whose end vertices both satisfy `pred`.
-    pub fn edges_where(&mut self, body: u32, pred: impl Fn(DVec3, DVec3, f64) -> bool) -> Result<Vec<u32>> {
+    pub fn edges_where(
+        &mut self,
+        body: u32,
+        pred: impl Fn(DVec3, DVec3, f64) -> bool,
+    ) -> Result<Vec<u32>> {
         let t = ffi::topology(self.store(), body).map_err(err)?;
-        let vtx = |i: i64| DVec3::new(t.vertices[3 * i as usize], t.vertices[3 * i as usize + 1], t.vertices[3 * i as usize + 2]);
+        let vtx = |i: i64| {
+            DVec3::new(
+                t.vertices[3 * i as usize],
+                t.vertices[3 * i as usize + 1],
+                t.vertices[3 * i as usize + 2],
+            )
+        };
         Ok(t.edges
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.v0 >= 0 && e.v1 >= 0 && !e.seam && !e.degenerate && pred(vtx(e.v0), vtx(e.v1), e.length))
+            .filter(|(_, e)| {
+                e.v0 >= 0
+                    && e.v1 >= 0
+                    && !e.seam
+                    && !e.degenerate
+                    && pred(vtx(e.v0), vtx(e.v1), e.length)
+            })
             .map(|(i, _)| i as u32)
             .collect())
     }
@@ -167,7 +231,14 @@ pub fn box_model(b: &mut Builder) -> Result<Nodes> {
 pub fn filleted_box(b: &mut Builder) -> Result<Nodes> {
     let bx = b.boxed(DVec3::ZERO, DVec3::new(40.0, 30.0, 20.0))?;
     let id = b.fillet(bx, &[], 4.0)?;
-    Ok(vec![node("Filleted box", -1, id as i32, "Parts", Some([0.2, 0.45, 0.8]), DMat4::IDENTITY)])
+    Ok(vec![node(
+        "Filleted box",
+        -1,
+        id as i32,
+        "Parts",
+        Some([0.2, 0.45, 0.8]),
+        DMat4::IDENTITY,
+    )])
 }
 
 pub fn cylinder_chamfered(b: &mut Builder) -> Result<Nodes> {
@@ -190,7 +261,16 @@ pub fn plate_holes(b: &mut Builder) -> Result<Nodes> {
 }
 
 pub fn bottle(b: &mut Builder) -> Result<Nodes> {
-    let profile = [(0.0, 0.0), (25.0, 0.0), (26.0, 30.0), (24.0, 60.0), (14.0, 80.0), (9.0, 92.0), (9.0, 100.0), (0.0, 100.0)];
+    let profile = [
+        (0.0, 0.0),
+        (25.0, 0.0),
+        (26.0, 30.0),
+        (24.0, 60.0),
+        (14.0, 80.0),
+        (9.0, 92.0),
+        (9.0, 100.0),
+        (0.0, 100.0),
+    ];
     let id = b.revolve(&profile, (1, 5))?;
     Ok(single("Bottle", id))
 }
@@ -215,7 +295,12 @@ pub fn torus_hole(b: &mut Builder) -> Result<Nodes> {
     let t = b.torus(40.0, 12.0)?;
     // From the top of the tube at 45° around Z: away from both torus seams.
     let a = PI / 4.0;
-    let drill = b.rod(DVec3::new(40.0 * a.cos(), 40.0 * a.sin(), 5.0), DVec3::Z, 4.0, 15.0)?;
+    let drill = b.rod(
+        DVec3::new(40.0 * a.cos(), 40.0 * a.sin(), 5.0),
+        DVec3::Z,
+        4.0,
+        15.0,
+    )?;
     let id = b.cut(t, &[drill])?;
     Ok(single("Torus with hole", id))
 }
@@ -225,8 +310,14 @@ pub fn bracket(b: &mut Builder) -> Result<Nodes> {
     let base = b.boxed(DVec3::new(-40.0, 0.0, 0.0), DVec3::new(80.0, 40.0, 8.0))?;
     let wall = b.boxed(DVec3::new(-40.0, 0.0, 0.0), DVec3::new(80.0, 8.0, 50.0))?;
     let l = b.fuse(base, &[wall])?;
-    let corner = b.edges_where(l, |p, q, _| near(p.y, 8.0) && near(p.z, 8.0) && near(q.y, 8.0) && near(q.z, 8.0))?;
-    anyhow::ensure!(corner.len() == 1, "bracket: expected one inner corner edge, found {}", corner.len());
+    let corner = b.edges_where(l, |p, q, _| {
+        near(p.y, 8.0) && near(p.z, 8.0) && near(q.y, 8.0) && near(q.z, 8.0)
+    })?;
+    anyhow::ensure!(
+        corner.len() == 1,
+        "bracket: expected one inner corner edge, found {}",
+        corner.len()
+    );
     let filleted = b.fillet(l, &corner, 5.0)?;
     let mut holes = Vec::new();
     for x in [-25.0, 25.0] {
@@ -236,7 +327,14 @@ pub fn bracket(b: &mut Builder) -> Result<Nodes> {
         holes.push(b.rod(DVec3::new(x, -1.0, 32.0), DVec3::Y, 4.0, 10.0)?);
     }
     let id = b.cut(filleted, &holes)?;
-    Ok(vec![node("Bracket", -1, id as i32, "Brackets", Some([0.6, 0.62, 0.66]), DMat4::IDENTITY)])
+    Ok(vec![node(
+        "Bracket",
+        -1,
+        id as i32,
+        "Brackets",
+        Some([0.6, 0.62, 0.66]),
+        DMat4::IDENTITY,
+    )])
 }
 
 /// Flange with 6-fold symmetry about Z: disk, filleted hub, bore, bolt circle.
@@ -245,14 +343,22 @@ pub fn flange(b: &mut Builder) -> Result<Nodes> {
     let hub = b.cylinder(30.0, 30.0)?;
     let body = b.fuse(disk, &[hub])?;
     let ring = b.edges_where(body, |p, q, len| {
-        near(p.z, 10.0) && near(q.z, 10.0) && near(len, 2.0 * PI * 30.0) && near(p.truncate().length(), 30.0)
+        near(p.z, 10.0)
+            && near(q.z, 10.0)
+            && near(len, 2.0 * PI * 30.0)
+            && near(p.truncate().length(), 30.0)
     })?;
     anyhow::ensure!(!ring.is_empty(), "flange: hub/disk edge not found");
     let filleted = b.fillet(body, &ring, 4.0)?;
     let mut tools = vec![b.rod(DVec3::new(0.0, 0.0, -1.0), DVec3::Z, 15.0, 32.0)?];
     for k in 0..6 {
         let a = k as f64 * PI / 3.0;
-        tools.push(b.rod(DVec3::new(45.0 * a.cos(), 45.0 * a.sin(), -1.0), DVec3::Z, 5.0, 12.0)?);
+        tools.push(b.rod(
+            DVec3::new(45.0 * a.cos(), 45.0 * a.sin(), -1.0),
+            DVec3::Z,
+            5.0,
+            12.0,
+        )?);
     }
     let id = b.cut(filleted, &tools)?;
     Ok(single("Flange", id))
@@ -269,12 +375,47 @@ pub fn assembly(b: &mut Builder) -> Result<Nodes> {
     let rot_x = DMat4::from_mat3(DMat3::from_rotation_x(FRAC_PI_2));
     Ok(vec![
         node("Bench", -1, -1, "", None, DMat4::IDENTITY),
-        node("Base", 0, base, "Structure", Some([0.35, 0.4, 0.5]), DMat4::IDENTITY),
-        node("Post left", 0, post, "Structure", Some([0.8, 0.8, 0.82]), t(10.0, 10.0, 10.0)),
-        node("Post right", 0, post, "Structure", None, t(70.0, 10.0, 10.0)),
+        node(
+            "Base",
+            0,
+            base,
+            "Structure",
+            Some([0.35, 0.4, 0.5]),
+            DMat4::IDENTITY,
+        ),
+        node(
+            "Post left",
+            0,
+            post,
+            "Structure",
+            Some([0.8, 0.8, 0.82]),
+            t(10.0, 10.0, 10.0),
+        ),
+        node(
+            "Post right",
+            0,
+            post,
+            "Structure",
+            None,
+            t(70.0, 10.0, 10.0),
+        ),
         node("Cap", 0, -1, "", None, t(40.0, 10.0, 50.0)),
-        node("Knob", 4, knob, "Hardware", Some([0.85, 0.1, 0.1]), DMat4::IDENTITY),
-        node("Ring", 4, ring, "Hardware", Some([0.95, 0.8, 0.1]), t(0.0, 0.0, -6.0) * rot_x),
+        node(
+            "Knob",
+            4,
+            knob,
+            "Hardware",
+            Some([0.85, 0.1, 0.1]),
+            DMat4::IDENTITY,
+        ),
+        node(
+            "Ring",
+            4,
+            ring,
+            "Hardware",
+            Some([0.95, 0.8, 0.1]),
+            t(0.0, 0.0, -6.0) * rot_x,
+        ),
     ])
 }
 
@@ -287,7 +428,10 @@ fn with_model(
     let path_s = path.to_str().context("path is not UTF-8")?.to_owned();
     let name = model.name;
     shim::run(move |ctx| {
-        let mut b = Builder { ctx, made: Vec::new() };
+        let mut b = Builder {
+            ctx,
+            made: Vec::new(),
+        };
         let res = build(&mut b).and_then(|nodes| write(&mut b, &nodes, &path_s));
         for id in std::mem::take(&mut b.made) {
             ffi::unload(b.ctx.store(), id);
@@ -299,13 +443,19 @@ fn with_model(
 
 /// Builds `model` and writes it as STEP to `path`.
 pub fn write_model(model: &RefModel, path: &Path) -> Result<()> {
-    with_model(model, path, |b, nodes, p| ts::ts_write_step(b.store(), p, nodes).map_err(err))
+    with_model(model, path, |b, nodes, p| {
+        ts::ts_write_step(b.store(), p, nodes).map_err(err)
+    })
 }
 
 /// Builds `model` and writes its first body as OCCT text B-rep (`.brep`).
 pub fn write_model_brep(model: &RefModel, path: &Path) -> Result<()> {
     with_model(model, path, |b, nodes, p| {
-        let body = nodes.iter().find(|n| n.body >= 0).context("model has no body")?.body as u32;
+        let body = nodes
+            .iter()
+            .find(|n| n.body >= 0)
+            .context("model has no body")?
+            .body as u32;
         ts::ts_write_brep_text(b.store(), body, p).map_err(err)
     })
 }

@@ -81,9 +81,17 @@ fn has_lib(dir: &Path, name: &str) -> bool {
 }
 
 fn from_prefix(prefix: &Path) -> Option<Occt> {
-    let includes = [prefix.join("include/opencascade"), prefix.join("inc"), prefix.join("include")];
+    let includes = [
+        prefix.join("include/opencascade"),
+        prefix.join("inc"),
+        prefix.join("include"),
+    ];
     let include = includes.into_iter().find(|d| has_headers(d))?;
-    let mut libs = vec![prefix.join("lib"), prefix.join("lib64"), prefix.join("lib/x86_64-linux-gnu")];
+    let mut libs = vec![
+        prefix.join("lib"),
+        prefix.join("lib64"),
+        prefix.join("lib/x86_64-linux-gnu"),
+    ];
     // Windows installer layout: win64/vc14/lib (any compiler dir).
     if let Ok(rd) = std::fs::read_dir(prefix.join("win64")) {
         for e in rd.flatten() {
@@ -100,7 +108,11 @@ fn from_prefix(prefix: &Path) -> Option<Occt> {
 
 fn find_occt() -> Option<Occt> {
     if let (Ok(inc), Ok(lib)) = (env::var("OCCT_INCLUDE_DIR"), env::var("OCCT_LIB_DIR")) {
-        return Some(Occt { include: inc.into(), lib: lib.into(), bin: None });
+        return Some(Occt {
+            include: inc.into(),
+            lib: lib.into(),
+            bin: None,
+        });
     }
     if let Ok(dir) = env::var("OCCT_DIR") {
         let dir = PathBuf::from(dir);
@@ -113,7 +125,13 @@ fn find_occt() -> Option<Occt> {
             dir.display()
         );
     }
-    let prefixes = ["/usr", "/usr/local", "/opt/homebrew/opt/opencascade", "/usr/local/opt/opencascade", "/opt/opencascade"];
+    let prefixes = [
+        "/usr",
+        "/usr/local",
+        "/opt/homebrew/opt/opencascade",
+        "/usr/local/opt/opencascade",
+        "/opt/opencascade",
+    ];
     prefixes.iter().find_map(|p| from_prefix(Path::new(p)))
 }
 
@@ -145,9 +163,16 @@ fn main() {
     }
 
     let mut build = cxx_build::bridges(bridges);
-    build.files(files).include(&occt.include).include("cpp").std("c++17");
+    build
+        .files(files)
+        .include(&occt.include)
+        .include("cpp")
+        .std("c++17");
     if target_os == "windows" {
-        build.flag_if_supported("/bigobj").flag_if_supported("/EHsc").define("_USE_MATH_DEFINES", None);
+        build
+            .flag_if_supported("/bigobj")
+            .flag_if_supported("/EHsc")
+            .define("_USE_MATH_DEFINES", None);
     } else {
         // Lets OCC_CATCH_SIGNALS turn signals into Standard_Failure in the
         // import helper (the only process that calls OSD::SetSignal).
