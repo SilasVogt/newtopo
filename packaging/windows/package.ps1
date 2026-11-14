@@ -114,7 +114,7 @@ if ($dumpbin) {
   foreach ($e in $exes) { $queue.Enqueue("$stage\$e") }
   while ($queue.Count) {
     $f = $queue.Dequeue()
-    foreach ($dll in Get-Imports $f) {
+    foreach ($dll in (Get-Imports $f)) {
       if (Test-Path "$stage\$dll") { continue }
       foreach ($d in $libDirs) {
         if (Test-Path "$d\$dll") {
@@ -136,7 +136,7 @@ Write-Host "bundled $bundled DLLs"
 $crt = $env:NEWTOPO_VCREDIST_DIR
 if (-not $crt -and $vsPath) {
   $crt = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -notmatch '\\onecore\\' } |
+    Where-Object { $_.FullName -match '\\MSVC\\\d+\.\d+\.\d+\\x64\\' } |
     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $crt) { throw "MSVC runtime DLLs not found (install VS Build Tools or set NEWTOPO_VCREDIST_DIR)" }
@@ -150,8 +150,8 @@ if ($dumpbin) {
   Get-ChildItem $stage -File | ForEach-Object { $present[$_.Name.ToLower()] = $true }
   $sys = "$env:SystemRoot\System32"
   $bad = @()
-  foreach ($f in Get-ChildItem $stage -File | Where-Object { $_.Extension -in '.exe', '.dll' }) {
-    foreach ($dll in Get-Imports $f.FullName) {
+  foreach ($f in (Get-ChildItem $stage -File | Where-Object { $_.Extension -in '.exe', '.dll' })) {
+    foreach ($dll in (Get-Imports $f.FullName)) {
       $l = $dll.ToLower()
       if ($present[$l] -or $l -like 'api-ms-win-*' -or $l -like 'ext-ms-*' -or (Test-Path "$sys\$dll")) { continue }
       $bad += "$($f.Name) -> $dll"
