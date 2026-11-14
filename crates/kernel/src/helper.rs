@@ -21,7 +21,13 @@ pub struct ImportOptions {
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        ImportOptions { heal: true, sewing_tolerance: 1e-3, units: "mm".into(), timeout: Duration::from_secs(300), helper: None }
+        ImportOptions {
+            heal: true,
+            sewing_tolerance: 1e-3,
+            units: "mm".into(),
+            timeout: Duration::from_secs(300),
+            helper: None,
+        }
     }
 }
 
@@ -46,9 +52,15 @@ pub struct ImportedFile {
 /// Progress callback: fraction 0..1 and a message. Return false to cancel.
 pub type Progress<'a> = &'a mut dyn FnMut(f32, &str) -> bool;
 
-pub fn run_import(path: &Path, opts: &ImportOptions, progress: Progress) -> anyhow_like::Result<ImportedFile> {
+pub fn run_import(
+    path: &Path,
+    opts: &ImportOptions,
+    progress: Progress,
+) -> anyhow_like::Result<ImportedFile> {
     let _ = (path, opts, progress);
-    Err(anyhow_like::Error("import helper not implemented yet".into()))
+    Err(anyhow_like::Error(
+        "import helper not implemented yet".into(),
+    ))
 }
 
 /// Minimal error type so the kernel crate needs no anyhow.

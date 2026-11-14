@@ -20,7 +20,17 @@ pub mod occt;
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
-            Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            Serialize,
+            Deserialize,
         )]
         #[serde(transparent)]
         pub struct $name(pub u32);
@@ -283,10 +293,15 @@ pub trait CadKernel: Send + Sync {
         t: &[f64],
     ) -> KResult<Vec<DVec2>>;
     /// Closest point on the face (within its trims): (uv, point).
-    fn project_to_face(&self, body: BodyId, face: FaceId, p: &[DVec3])
-    -> KResult<Vec<Option<(DVec2, DVec3)>>>;
+    fn project_to_face(
+        &self,
+        body: BodyId,
+        face: FaceId,
+        p: &[DVec3],
+    ) -> KResult<Vec<Option<(DVec2, DVec3)>>>;
     /// Closest parameter on the edge curve within its range.
-    fn project_to_edge(&self, body: BodyId, edge: EdgeId, p: &[DVec3]) -> KResult<Vec<Option<f64>>>;
+    fn project_to_edge(&self, body: BodyId, edge: EdgeId, p: &[DVec3])
+    -> KResult<Vec<Option<f64>>>;
     fn tessellate(&self, body: BodyId, face: FaceId, tol: f64) -> KResult<FaceMesh>;
 }
 
@@ -298,16 +313,26 @@ pub struct Aabb {
 }
 
 impl Aabb {
-    pub const EMPTY: Aabb = Aabb { min: DVec3::splat(f64::INFINITY), max: DVec3::splat(f64::NEG_INFINITY) };
+    pub const EMPTY: Aabb = Aabb {
+        min: DVec3::splat(f64::INFINITY),
+        max: DVec3::splat(f64::NEG_INFINITY),
+    };
     pub fn add(&mut self, p: DVec3) {
         self.min = self.min.min(p);
         self.max = self.max.max(p);
     }
     pub fn union(&self, o: &Aabb) -> Aabb {
-        Aabb { min: self.min.min(o.min), max: self.max.max(o.max) }
+        Aabb {
+            min: self.min.min(o.min),
+            max: self.max.max(o.max),
+        }
     }
     pub fn diagonal(&self) -> f64 {
-        if self.min.x > self.max.x { 0.0 } else { (self.max - self.min).length() }
+        if self.min.x > self.max.x {
+            0.0
+        } else {
+            (self.max - self.min).length()
+        }
     }
     pub fn center(&self) -> DVec3 {
         (self.min + self.max) * 0.5
