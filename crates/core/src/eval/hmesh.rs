@@ -484,10 +484,6 @@ impl HMesh {
 }
 
 impl HMesh {
-    /// Split curved edges that join the same two (final) vertices as another
-    /// edge, so no polygon degenerates to a 2-gon (e.g. sphere lunes between
-    /// two meridians, a chord against an arc whose vertex was dropped).
-
     /// Split half-edge `h` (and its twin) at the midpoint of its path when
     /// the path is curved in 3D (deviation above `rel` × chord). Returns
     /// whether it split.
@@ -649,6 +645,9 @@ impl HMesh {
         true
     }
 
+    /// Split curved edges that join the same two (final) vertices as another
+    /// edge, so no polygon degenerates to a 2-gon (e.g. sphere lunes between
+    /// two meridians, a chord against an arc whose vertex was dropped).
     pub fn split_parallel_edges(
         &mut self,
         ctx: &super::ctx::BodyCtx,
