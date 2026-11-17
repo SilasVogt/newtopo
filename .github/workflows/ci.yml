@@ -25,8 +25,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.96.0  # keep in sync with rust-toolchain.toml
           components: rustfmt
       - run: cargo fmt --all --check
 
@@ -37,8 +38,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-deps
       - uses: ./.github/actions/occt
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.96.0  # keep in sync with rust-toolchain.toml
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -60,7 +62,9 @@ jobs:
           # Software Vulkan (lavapipe) for headless wgpu tests.
           extra: mesa-vulkan-drivers libvulkan1
       - uses: ./.github/actions/occt
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0  # keep in sync with rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
         shell: bash
