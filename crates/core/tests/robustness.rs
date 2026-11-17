@@ -360,3 +360,31 @@ fn scene_drop_unloads_bodies() {
     assert!(format!("{e:#}").contains("missing"), "{e:#}");
     assert_eq!(k.body_count(), 0);
 }
+
+/// Saved scenes get normal file permissions (not the temp file's 0600), and
+/// re-saving keeps whatever mode the user set.
+#[cfg(unix)]
+#[test]
+fn saved_scene_has_normal_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let k = Arc::new(MockKernel::new());
+    let mut s = Scene::new(k);
+    s.add_body(
+        &MockBody::cylinder(2.0, 5.0).to_brep_bytes(),
+        BodyAttributes::default(),
+        HealReport::default(),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("perm.ntopo");
+    s.save(&path).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_ne!(mode, 0o600, "a new scene must not be private-only");
+    assert_eq!(mode & 0o400, 0o400);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    s.save(&path).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}

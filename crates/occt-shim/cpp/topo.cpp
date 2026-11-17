@@ -1,5 +1,5 @@
 // Topology, surface info, evaluation, classification, projection, meshing.
-#include "shim.h"
+#include "newtopo-occt-shim/cpp/shim.h"
 #include "newtopo-occt-shim/src/lib.rs.h"
 
 #include <BRepAdaptor_Curve.hxx>

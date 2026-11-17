@@ -1,5 +1,5 @@
 // Reading, writing and healing: BREP/BinTools, STEP/IGES through XCAF.
-#include "shim.h"
+#include "newtopo-occt-shim/cpp/shim.h"
 #include "newtopo-occt-shim/src/lib.rs.h"
 
 #include <BRepBuilderAPI_Copy.hxx>

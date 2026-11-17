@@ -649,9 +649,20 @@ impl Scene {
         let mut prefix = std::ffi::OsString::from(".");
         prefix.push(name);
         prefix.push(".");
-        let tmp = tempfile::Builder::new()
-            .prefix(&prefix)
-            .suffix(".tmp")
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(&prefix).suffix(".tmp");
+        // Temp files default to 0600; a saved scene should get the usual
+        // permissions: the existing file's mode when replacing it, otherwise
+        // 0666 filtered by the process umask (like `File::create`).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(path)
+                .map(|m| m.permissions().mode() & 0o7777)
+                .unwrap_or(0o666);
+            builder.permissions(std::fs::Permissions::from_mode(mode));
+        }
+        let tmp = builder
             .tempfile_in(dir)
             .with_context(|| format!("create a temporary file in {}", dir.display()))?;
         let file = self.write_zip(tmp.reopen()?)?;
