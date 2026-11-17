@@ -46,11 +46,11 @@ pub fn parse_args(args: &[String]) -> LaunchArgs {
     out
 }
 
-/// A document argument as a path: accepts `file://` URLs (some desktop
+/// A document argument as a path: accepts `file:` URLs (some desktop
 /// launchers pass them) and makes relative paths absolute.
 pub fn document_path(s: &str) -> PathBuf {
-    let p = match s.strip_prefix("file://") {
-        Some(rest) => PathBuf::from(percent_decode(rest)),
+    let p = match file_url_to_path(s, cfg!(windows)) {
+        Some(p) => PathBuf::from(p),
         None => PathBuf::from(s),
     };
     if p.is_relative()
@@ -59,6 +59,56 @@ pub fn document_path(s: &str) -> PathBuf {
         return cwd.join(p);
     }
     p
+}
+
+/// Convert a `file:` URL to a local path string (RFC 8089). `windows`
+/// selects the target conventions so both are testable on any host:
+/// * `file:///home/a/b.ntopo`, `file://localhost/home/a/b.ntopo` → `/home/a/b.ntopo`
+/// * `file:///C:/Users/a.ntopo`, `file:///C|/Users/a.ntopo` → `C:\Users\a.ntopo`
+/// * `file://server/share/a.ntopo` → `\\server\share\a.ntopo` (UNC, Windows only)
+///
+/// Percent-escapes are decoded. Returns `None` for non-file URLs and for
+/// remote hosts on non-Windows systems.
+pub fn file_url_to_path(s: &str, windows: bool) -> Option<String> {
+    let rest = s
+        .get(..5)
+        .filter(|p| p.eq_ignore_ascii_case("file:"))
+        .map(|_| &s[5..])?;
+    // Strip any query or fragment.
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    let (host, path) = match rest.strip_prefix("//") {
+        Some(r) => match r.find('/') {
+            Some(i) => (&r[..i], &r[i..]),
+            None => (r, ""),
+        },
+        None => ("", rest),
+    };
+    let path = percent_decode(path);
+    let local = host.is_empty() || host.eq_ignore_ascii_case("localhost");
+    if !windows {
+        return (local && path.starts_with('/')).then_some(path);
+    }
+    if !local {
+        // UNC: \\server\share\…
+        let tail = path.trim_start_matches('/').replace('/', "\\");
+        return Some(format!("\\\\{host}\\{tail}"));
+    }
+    // "/C:/x" or "/C|/x" → "C:\x".
+    let p = path.trim_start_matches('/');
+    let b = p.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && (b[1] == b':' || b[1] == b'|') {
+        let rest = &p[2..];
+        return Some(format!(
+            "{}:{}",
+            &p[..1],
+            if rest.is_empty() {
+                "\\".to_string()
+            } else {
+                rest.replace('/', "\\")
+            }
+        ));
+    }
+    Some(path.replace('/', "\\"))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -144,11 +194,78 @@ mod tests {
 
     #[test]
     fn file_urls_and_relative_paths() {
+        assert!(document_path("rel.ntopo").is_absolute());
+        #[cfg(unix)]
         assert_eq!(
             document_path("file:///home/u/My%20Part.ntopo"),
             PathBuf::from("/home/u/My Part.ntopo")
         );
-        assert!(document_path("rel.ntopo").is_absolute());
+        #[cfg(windows)]
+        assert_eq!(
+            document_path("file:///C:/Users/u/My%20Part.ntopo"),
+            PathBuf::from(r"C:\Users\u\My Part.ntopo")
+        );
+    }
+
+    #[test]
+    fn unix_file_urls() {
+        let u = |s| file_url_to_path(s, false);
+        assert_eq!(
+            u("file:///home/u/a.ntopo").as_deref(),
+            Some("/home/u/a.ntopo")
+        );
+        assert_eq!(
+            u("file://localhost/home/u/a.ntopo").as_deref(),
+            Some("/home/u/a.ntopo")
+        );
+        assert_eq!(
+            u("FILE://LOCALHOST/tmp/x.step").as_deref(),
+            Some("/tmp/x.step")
+        );
+        assert_eq!(
+            u("file:/tmp/one%20slash.step").as_deref(),
+            Some("/tmp/one slash.step")
+        );
+        assert_eq!(
+            u("file:///tmp/%C3%BCber.ntopo").as_deref(),
+            Some("/tmp/über.ntopo")
+        );
+        assert_eq!(
+            u("file:///tmp/a.ntopo#frag").as_deref(),
+            Some("/tmp/a.ntopo")
+        );
+        assert_eq!(
+            u("file://server/share/a.ntopo"),
+            None,
+            "remote host on Unix"
+        );
+        assert_eq!(u("https://x/a.ntopo"), None);
+    }
+
+    #[test]
+    fn windows_file_urls() {
+        let w = |s| file_url_to_path(s, true);
+        assert_eq!(
+            w("file:///C:/Users/a.ntopo").as_deref(),
+            Some(r"C:\Users\a.ntopo")
+        );
+        assert_eq!(
+            w("file:///c|/Users/My%20Docs/a.ntopo").as_deref(),
+            Some(r"c:\Users\My Docs\a.ntopo")
+        );
+        assert_eq!(
+            w("file://localhost/C:/a.ntopo").as_deref(),
+            Some(r"C:\a.ntopo")
+        );
+        assert_eq!(w("file:///D:").as_deref(), Some(r"D:\"));
+        assert_eq!(
+            w("file://server/share/dir/a.ntopo").as_deref(),
+            Some(r"\\server\share\dir\a.ntopo")
+        );
+        assert_eq!(
+            w("file://server/share/x%23y.step").as_deref(),
+            Some(r"\\server\share\x#y.step")
+        );
     }
 
     #[test]

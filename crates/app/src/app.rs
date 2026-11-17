@@ -202,6 +202,8 @@ pub struct AppState {
     pub ui_pointer: Option<egui::Pos2>,
     /// Rules copied with Ctrl+C (SPEC §6.13).
     pub clipboard: Option<newtopo_core::link::Clipboard>,
+    /// Autosave files written or recovered by this session.
+    pub owned_autosaves: BTreeSet<PathBuf>,
     /// Bodies that can't be selected (see [`AppState::is_locked`]).
     pub locked: BTreeSet<BodyId>,
     /// Selection before the last key command (double-press support).
@@ -246,9 +248,7 @@ impl App {
         let dock = if screenshot_mode {
             default_layout()
         } else {
-            crate::prefs::load_json::<Option<DockState<Tab>>>(paths.file("layout.json").as_deref())
-                .filter(|d| d.find_tab(&Tab::Viewport).is_some())
-                .unwrap_or_else(default_layout)
+            load_layout(paths.file("layout.json").as_deref())
         };
         let recovery = if screenshot_mode {
             vec![]
@@ -284,6 +284,7 @@ impl App {
             sel_before_key: None,
             clipboard: None,
             locked: BTreeSet::new(),
+            owned_autosaves: BTreeSet::new(),
             drag: None,
             jobs: Default::default(),
             time: 0.0,
@@ -389,7 +390,7 @@ impl App {
         }
 
         let st = &mut self.st;
-        st.autosave_tick();
+        st.autosave_tick(&ctx);
         // A wheel gesture ends after 400 ms without ticks (SPEC §4.7).
         if let Some(t) = st.tool.wheel_last {
             if st.time - t > crate::tools::COALESCE_SECS {
@@ -446,6 +447,99 @@ impl App {
             crate::jobs::remove_autosaves(st);
         }
     }
+}
+
+/// Load the saved dock layout, falling back to the default when it is
+/// missing or broken. A broken file is kept as `layout.json.bak`.
+fn load_layout(path: Option<&std::path::Path>) -> DockState<Tab> {
+    // Rects of never-drawn nodes are NaN, which JSON writes as null; read
+    // them back as zero instead of rejecting the whole layout.
+    fn nan_rects(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(o) => {
+                for (k, x) in o.iter_mut() {
+                    if (k == "x" || k == "y") && x.is_null() {
+                        *x = serde_json::json!(0.0);
+                    } else {
+                        nan_rects(x);
+                    }
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(nan_rects),
+            _ => {}
+        }
+    }
+    let saved: Option<DockState<Tab>> = path
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| {
+            let mut v: serde_json::Value = serde_json::from_str(&s).ok()?;
+            nan_rects(&mut v);
+            serde_json::from_value::<Option<DockState<Tab>>>(v)
+                .ok()
+                .flatten()
+        });
+    let unreadable = saved.is_none() && path.is_some_and(|p| p.exists());
+    match saved {
+        Some(d) if d.find_tab(&Tab::Viewport).is_some() && layout_usable(&d) => d,
+        Some(_) => {
+            log::warn!("saved panel layout is broken; using the default");
+            if let Some(p) = path {
+                let _ = std::fs::rename(p, p.with_extension("json.bak"));
+            }
+            default_layout()
+        }
+        None => {
+            if unreadable && let Some(p) = path {
+                log::warn!("saved panel layout is unreadable; using the default");
+                let _ = std::fs::rename(p, p.with_extension("json.bak"));
+            }
+            default_layout()
+        }
+    }
+}
+
+/// egui_dock trusts its indices and panics on bad ones (focused surface or
+/// node out of range, missing children, active tab past the end). Exercise
+/// the accessors and a full off-screen layout pass on a copy, catching
+/// panics.
+pub fn layout_usable(d: &DockState<Tab>) -> bool {
+    struct Probe;
+    impl TabViewer for Probe {
+        type Tab = Tab;
+        fn id(&mut self, tab: &mut Tab) -> egui::Id {
+            egui::Id::new(("probe", *tab))
+        }
+        fn title(&mut self, tab: &mut Tab) -> egui::WidgetText {
+            tab.title().into()
+        }
+        fn ui(&mut self, _ui: &mut Ui, _tab: &mut Tab) {}
+    }
+    let mut copy = d.clone();
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _ = copy.focused_leaf();
+        let _ = copy.iter_all_tabs().count();
+        let _ = copy.find_active_focused();
+        let ctx = egui::Context::default();
+        for t in 0..2 {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                time: Some(t as f64 * 0.1),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                DockArea::new(&mut copy).show_inside(ui, &mut Probe);
+            });
+            out.textures_delta.clear();
+        }
+    }))
+    .is_ok();
+    std::panic::set_hook(hook);
+    ok
 }
 
 fn open_tab(dock: &mut DockState<Tab>, tab: Tab) {
@@ -1614,4 +1708,86 @@ pub fn paint_logo(p: &egui::Painter, r: egui::Rect, accent: Color32) {
         ],
         s,
     );
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// Layout JSON as saved after a session (rects are NaN → null until
+    /// the dock has been drawn; use zeros).
+    fn saved_json() -> serde_json::Value {
+        fn fix(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Null => *v = serde_json::json!(0.0),
+                serde_json::Value::Array(a) => a.iter_mut().for_each(fix),
+                serde_json::Value::Object(o) => o
+                    .iter_mut()
+                    .filter(|(k, _)| *k != "focused_surface" && *k != "focused_node")
+                    .for_each(|(_, x)| fix(x)),
+                _ => {}
+            }
+        }
+        let mut v = serde_json::to_value(default_layout()).unwrap();
+        fix(&mut v);
+        v
+    }
+
+    fn tamper(f: impl FnOnce(&mut serde_json::Value)) -> Option<DockState<Tab>> {
+        let mut v = saved_json();
+        f(&mut v);
+        match serde_json::from_value(v.clone()) {
+            Ok(d) => Some(d),
+            Err(e) => panic!("{e}: {v}"),
+        }
+    }
+
+    #[test]
+    fn default_layout_is_usable() {
+        assert!(layout_usable(&default_layout()));
+    }
+
+    #[test]
+    fn broken_indices_are_rejected() {
+        let d =
+            tamper(|v| v["focused_surface"] = serde_json::json!(99)).expect("still deserialises");
+        assert!(!layout_usable(&d), "focused surface out of range");
+        // A split node whose children are gone.
+        if let Some(d) = tamper(|v| {
+            if let Some(nodes) = v["surfaces"][0]["Main"]["nodes"].as_array_mut() {
+                nodes.truncate(1);
+            }
+        }) {
+            assert!(!layout_usable(&d), "split without children");
+        }
+    }
+
+    #[test]
+    fn layout_with_unset_rects_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("layout.json");
+        crate::prefs::save_json(Some(&p), &Some(default_layout()));
+        let d = load_layout(Some(&p));
+        assert!(d.find_tab(&Tab::Viewport).is_some());
+        assert!(
+            !dir.path().join("layout.json.bak").exists(),
+            "a fresh layout is not broken"
+        );
+    }
+
+    #[test]
+    fn broken_file_falls_back_and_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("layout.json");
+        let mut v = saved_json();
+        assert!(
+            serde_json::from_value::<DockState<Tab>>(v.clone()).is_ok(),
+            "fixture parses"
+        );
+        v["focused_surface"] = serde_json::json!(7);
+        std::fs::write(&p, serde_json::to_string(&v).unwrap()).unwrap();
+        let d = load_layout(Some(&p));
+        assert!(layout_usable(&d));
+        assert!(dir.path().join("layout.json.bak").exists());
+    }
 }

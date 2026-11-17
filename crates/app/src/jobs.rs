@@ -80,10 +80,32 @@ pub fn find_recoverable(paths: &Paths, prefs: &crate::prefs::Prefs) -> Vec<PathB
     out
 }
 
+/// Delete the autosaves this session wrote (or recovered), never one still
+/// offered in the recovery dialog: those belong to the user's decision.
 pub fn remove_autosaves(st: &mut AppState) {
-    if let Some(a) = autosave_path(&st.paths, st.doc.path.as_deref()) {
-        let _ = std::fs::remove_file(a);
+    for p in removable_autosaves(&st.owned_autosaves, &st.ui.recovery) {
+        let _ = std::fs::remove_file(&p);
+        st.owned_autosaves.remove(&p);
     }
+}
+
+/// Owned autosaves minus those pending in the recovery dialog.
+pub fn removable_autosaves(
+    owned: &std::collections::BTreeSet<PathBuf>,
+    pending: &[PathBuf],
+) -> Vec<PathBuf> {
+    owned
+        .iter()
+        .filter(|p| !pending.contains(p))
+        .cloned()
+        .collect()
+}
+
+/// Seconds until the next autosave should run, when one is due at all
+/// (dirty document, autosave on). The frame loop asks for a repaint then,
+/// so an idle window still autosaves.
+pub fn autosave_wait(dirty: bool, minutes: u32, now: f64, next: f64) -> Option<f64> {
+    (dirty && minutes > 0 && next > 0.0).then(|| (next - now).max(0.0))
 }
 
 pub fn with_confirmed(op: Op) -> Op {
@@ -276,6 +298,8 @@ impl AppState {
                     let job = self.jobs.import.take().expect("job");
                     let cancelled = job.cancel.load(Ordering::Relaxed);
                     match r {
+                        // Cancel wins even if the helper finished meanwhile.
+                        Ok(_) if cancelled => self.toast(ToastKind::Info, S::IMPORT_CANCELLED),
                         Ok(file) => {
                             if file.bodies.len() > 1 {
                                 let existing_names: Vec<String> = self
@@ -570,8 +594,12 @@ impl AppState {
         self.doc.set_camera(self.view.camera.to_doc());
         match self.doc.save(&path) {
             Ok(()) => {
-                if let Some(a) = old_autosave {
-                    let _ = std::fs::remove_file(a);
+                if let Some(a) = old_autosave
+                    && self.owned_autosaves.contains(&a)
+                    && !self.ui.recovery.contains(&a)
+                {
+                    let _ = std::fs::remove_file(&a);
+                    self.owned_autosaves.remove(&a);
                 }
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
@@ -584,9 +612,18 @@ impl AppState {
         }
     }
 
-    pub fn autosave_tick(&mut self) {
+    pub fn autosave_tick(&mut self, ctx: &egui::Context) {
         if self.screenshot_mode || self.prefs.autosave_minutes == 0 {
             return;
+        }
+        // Wake up for the deadline even when the user is idle.
+        if let Some(wait) = autosave_wait(
+            self.doc.is_dirty(),
+            self.prefs.autosave_minutes,
+            self.time,
+            self.next_autosave,
+        ) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.05)));
         }
         let interval = self.prefs.autosave_minutes as f64 * 60.0;
         if self.next_autosave == 0.0 || self.next_autosave > self.time + interval {
@@ -608,7 +645,10 @@ impl AppState {
         }
         self.doc.set_camera(self.view.camera.to_doc());
         match self.doc.save_copy(&p) {
-            Ok(()) => log::info!("autosaved to {}", p.display()),
+            Ok(()) => {
+                log::info!("autosaved to {}", p.display());
+                self.owned_autosaves.insert(p);
+            }
             Err(e) => log::warn!("autosave failed: {e}"),
         }
     }
@@ -621,6 +661,8 @@ impl AppState {
             .filter(|p| is_scene(p) && self.paths.untitled_autosave().as_deref() != Some(autosave));
         match self.doc.open(autosave) {
             Ok(()) => {
+                // The user chose this autosave: it is ours to clean up now.
+                self.owned_autosaves.insert(autosave.to_path_buf());
                 self.demo = None;
                 self.doc.path = original;
                 self.doc.bump();
@@ -1264,6 +1306,101 @@ fn write_export(path: &Path, files: ExportFiles) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::App;
+
+    fn app() -> (egui::Context, App) {
+        let ctx = egui::Context::default();
+        let app = App::new(&ctx, Paths::default(), false, true);
+        (ctx, app)
+    }
+
+    #[test]
+    fn pending_recovery_autosave_survives_exit_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_ctx, mut app) = app();
+        let pending = dir.path().join("untitled.ntopo.autosave");
+        let mine = dir.path().join("mine.ntopo.autosave");
+        std::fs::write(&pending, b"x").unwrap();
+        std::fs::write(&mine, b"y").unwrap();
+        app.st.ui.recovery = vec![pending.clone()];
+        app.st.owned_autosaves.insert(mine.clone());
+        // Even if this session had written to the pending path, it stays
+        // while the user hasn't answered the recovery dialog.
+        app.st.owned_autosaves.insert(pending.clone());
+        remove_autosaves(&mut app.st);
+        assert!(pending.exists(), "pending recovery file must survive");
+        assert!(!mine.exists(), "our own autosave is cleaned up");
+    }
+
+    #[test]
+    fn new_and_open_drop_the_old_scene() {
+        let (_ctx, mut app) = app();
+        app.st.doc.ensure_scene().unwrap();
+        app.st.ensure_view_data();
+        let weak = Arc::downgrade(&app.st.doc.scene.as_ref().unwrap().kernel);
+        app.st.do_pending(crate::app::PendingAfterPrompt::New);
+        assert!(
+            weak.upgrade().is_none(),
+            "New must drop the old scene (and its kernel)"
+        );
+        // Open replaces the scene the same way.
+        app.st.doc.ensure_scene().unwrap();
+        let weak = Arc::downgrade(&app.st.doc.scene.as_ref().unwrap().kernel);
+        let next = newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel());
+        app.st.doc.set_scene(next, None);
+        assert!(
+            weak.upgrade().is_none(),
+            "Open must drop the previous scene"
+        );
+    }
+
+    #[test]
+    fn idle_window_wakes_for_autosave() {
+        assert_eq!(autosave_wait(true, 5, 100.0, 400.0), Some(300.0));
+        assert_eq!(autosave_wait(true, 5, 500.0, 400.0), Some(0.0));
+        assert_eq!(autosave_wait(false, 5, 100.0, 400.0), None);
+        assert_eq!(autosave_wait(true, 0, 100.0, 400.0), None);
+    }
+
+    fn fake_import(cancel: bool) -> (egui::Context, App) {
+        let (ctx, mut app) = app();
+        let body = |n: &str| newtopo_kernel::helper::ImportedBody {
+            brep: vec![],
+            attrs: newtopo_kernel::BodyAttributes {
+                name: n.into(),
+                ..Default::default()
+            },
+            heal: Default::default(),
+        };
+        let (tx, rx) = channel();
+        tx.send(Ok(ImportedFile {
+            bodies: vec![body("a"), body("b")],
+            source_sha256: String::new(),
+            warnings: vec![],
+        }))
+        .unwrap();
+        app.st.jobs.import = Some(ImportJob {
+            path: PathBuf::from("/x/a.step"),
+            progress: Arc::new(Mutex::new((1.0, String::new()))),
+            cancel: Arc::new(AtomicBool::new(cancel)),
+            rx,
+        });
+        app.st.poll_jobs(&ctx);
+        (ctx, app)
+    }
+
+    #[test]
+    fn cancelled_import_is_discarded_even_when_it_succeeded() {
+        let (_c, app) = fake_import(true);
+        assert!(app.st.ui.import_list.is_none() && app.st.ui.import_report.is_none());
+        assert!(!app.st.doc.has_scene() && !app.st.busy());
+        let (_c, app) = fake_import(false);
+        assert!(
+            app.st.ui.import_list.is_some(),
+            "control: an uncancelled result shows the list"
+        );
+    }
+
     use super::*;
 
     #[test]
