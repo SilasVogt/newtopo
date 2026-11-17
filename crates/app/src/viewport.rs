@@ -688,6 +688,37 @@ impl AppState {
     /// Loop or ring through view edge `i`, optionally every other.
     fn loop_from(&self, i: usize, ring: bool, alternate: bool) -> Vec<EdgeSel> {
         let e = &self.vd.edges[i];
+        // Real scenes: the core's walks (SPEC §6.14) over the output mesh.
+        if let (Some(oi), Some(mesh)) = (e.out, self.vd.outputs.iter().find(|o| o.body == e.body)) {
+            let adj = newtopo_core::select::Adjacency::new(mesh);
+            let oi = oi as usize;
+            let mut seq = if ring {
+                adj.edge_ring(oi)
+            } else {
+                adj.edge_loop(oi)
+            };
+            if alternate {
+                // Keep the clicked edge on the "every other" phase.
+                let pos = seq.iter().position(|&x| x == oi).unwrap_or(0);
+                seq = seq
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| (*k as isize - pos as isize).rem_euclid(2) == 0)
+                    .map(|(_, x)| *x)
+                    .collect();
+            }
+            if e.kind != EdgeKind::Fill {
+                seq = newtopo_core::select::editable_only(mesh, &seq);
+            }
+            let wanted: std::collections::HashSet<u32> = seq.iter().map(|&x| x as u32).collect();
+            return self
+                .vd
+                .edges
+                .iter()
+                .filter(|ed| ed.body == e.body && ed.out.is_some_and(|o| wanted.contains(&o)))
+                .filter_map(|ed| ed.sel.clone())
+                .collect();
+        }
         let (Some(t), Some(bt)) = (e.topo, self.vd.topo.get(&e.body)) else {
             return e.sel.clone().into_iter().collect();
         };
@@ -973,10 +1004,37 @@ impl AppState {
         if self.tool.active != Tool::Connect {
             return;
         }
-        let Some(demo) = &self.demo else { return };
         if self.doc.has_scene() {
+            let r = self.scene_sphere().1 as f32;
+            for key in &self.sel.faces {
+                for ar in self.vd.arrows.get(key).into_iter().flatten() {
+                    let len = (r * 0.12).min(ar.size * 0.35);
+                    let o0 = ar.origin + ar.normal * r * 0.004;
+                    if let Some(a) = ar.a {
+                        o.add_arrow(
+                            o0 - a * len * 0.5,
+                            a,
+                            ar.normal.cross(a),
+                            len,
+                            c.arrow_a,
+                            3.0,
+                        );
+                    }
+                    if let Some(b) = ar.b {
+                        o.add_arrow(
+                            o0 - b * len * 0.5,
+                            b,
+                            ar.normal.cross(b),
+                            len,
+                            c.arrow_b,
+                            3.0,
+                        );
+                    }
+                }
+            }
             return;
         }
+        let Some(demo) = &self.demo else { return };
         let r = self.scene_sphere().1 as f32;
         let eye = self.view.camera.eye().as_vec3();
         for (b, f) in &self.sel.faces {

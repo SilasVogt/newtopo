@@ -8,7 +8,9 @@ run and check the UI.
 
 | What | Command |
 | --- | --- |
-| App (no OCCT) | `cargo run -p newtopo --no-default-features` |
+| App (OCCT) | `OCCT_DIR=$HOME/.cache/newtopo-occt/install cargo run -p newtopo [-- file.step\|scene.ntopo]` |
+| App (no OCCT, no import) | `cargo run -p newtopo --no-default-features` |
+| Real-model end-to-end run + screenshots | `newtopo-testmodels <models>` then `newtopo --shot <dir> --models <models>` |
 | App with the synthetic sample loaded | `... -- --sample` |
 | Headless UI screenshots (no window) | `cargo run -p newtopo --no-default-features -- --shot <dir>` |
 | Real-window self-check: run, capture, quit | `... -- --sample --window-shot <png>` |
@@ -66,11 +68,14 @@ command degrades gracefully with no scene.
    A panic inside `apply` marks the document changed and blocks further
    `apply` calls until a new scene is loaded (the scene may be half-modified).
    Remove once the facade is complete.
-2. **No kernel constructor yet.** `docstate::make_kernel()` returns `None`;
-   import/open then report "no CAD kernel in this build". Wire it to the
-   kernel's constructor (see API requests).
-3. **Face mode selects whole CAD faces** as `PatchId::whole(body, face)` until
-   the facade exposes patches.
+2. **Kernel**: `docstate::make_kernel()` = `newtopo_kernel::default_kernel()`.
+   Without the `occt` feature, import shows "This build has no CAD import".
+   **Kernel calls take the kernel's body handle** (`scene.ctx(body).kbody`),
+   not the document's `BodyId`: they differ (the kernel numbers bodies per
+   process). `AppState::kbody()` maps them.
+3. **Face mode selects CAD faces**; ops get every patch of each selected face
+   from `Scene::patches` (so split faces work). Picking a single patch of a
+   split face needs a UV-containment query (see API requests).
 4. **Selection is app-side** and not an undo step (SPEC §4.7 says it should
    be by default; the preference exists but has no effect yet).
 5. **Box = left-drag, lasso = right-drag** in every navigation preset
@@ -79,14 +84,18 @@ command degrades gracefully with no scene.
    Maya (Alt+LMB orbit, Alt/plain MMB pan, Alt+RMB zoom), 3ds Max (Alt+MMB
    orbit, MMB pan, Ctrl+Alt+MMB zoom). Wheel zooms towards the cursor. Plain
    wheel always zooms; Shift/Ctrl+wheel go to an active segment tool.
-7. **`IsoDir::U` = the line of constant u** (it runs along v); `value` is the
-   u value and `seed` the v at the click. Please confirm in the engine.
+7. **`IsoDir::U` = the line of constant u** (confirmed in the engine);
+   `Op::Iso` takes `value` and `seed` normalised to the face's parameter range
+   (0..1). The app normalises the projected uv with `SurfaceInfo::u_range` /
+   `v_range`.
 8. **Iso preview** samples the iso line via `kernel.face_eval` and clips with
    `face_classify_uv` (96 samples). Through mode can't be previewed across
    faces without an engine query.
-9. **Wheel coalescing** (SPEC §4.7, 400 ms): implemented as undo-then-apply
-   for every tick after the first within 400 ms, so a gesture leaves one undo
-   step. Costs an extra evaluation per tick; see API requests.
+9. **Wheel coalescing** (SPEC §4.7, 400 ms): `Scene::apply_coalesced` per
+   tick; the frame loop calls `end_coalesce` after 400 ms without ticks.
+   Multi-op actions (collapse of several edges, batch rename, Slice on several
+   objects, removing edges on several bodies) are grouped the same way
+   (`begin_coalesce` … `end_coalesce`) so each is one undo step.
 10. **Double-press bindings** run the single command on the first press; on
     the second press the selection from before the first press is restored
     and the double command runs (so `L L` gives every other edge of the loop,
@@ -120,13 +129,13 @@ command degrades gracefully with no scene.
     worker thread; unit conversion = scene units → chosen units folded into
     `scale`. Lists fan-fallback polygons and the n-gon note when auto-fill is
     off.
-18. **Batch rename** preview/collision logic lives in `studio.rs` (pure
-    functions with tests) because `core::rename` is still empty. Regex
-    replace is not offered (no regex crate in the workspace). Apply issues one
-    `Op::RenameBody` per changed object.
-19. **Bridge panel** goes through `studio::bridge_adapter` (always
-    "unavailable" for now). The per-install token is 128 bits from the std
-    random-seeded hasher, stored in prefs, with copy/regenerate.
+18. **Batch rename** runs on `core::rename` (`preview` for the live list,
+    regex and match-case options). Apply is one undo step (grouped
+    `Op::RenameBody`s).
+19. **Bridge panel** runs on `core::bridge`: `probe` every 3 s on a
+    background thread while the panel is open (never blocks the UI), `send_with`
+    on a worker thread (scale = scene units → metres, keep-both option), host
+    renames reported in a toast. Token from `bridge::generate_token`.
 20. **UV panel** shows the options from SPEC §9.2 and a "coming soon" note.
 21. **Themes**: `assets/themes/graphite-dark.json` and `paper-light.json`,
     designed for this app (mint accent on graphite; deep green accent on paper).
@@ -145,74 +154,67 @@ command degrades gracefully with no scene.
     conflicts.
 25. **Layout persistence**: `<config>/layout.json` (egui_dock `DockState`
     with serde), `prefs.json`, `keymap.json` (overrides only).
+27. **Connect arrows** on real scenes come from `PatchInfo::bend` (A along
+    ∂u for OneU/Two/Radial, ∂v for OneV; B along ∂v for Two), evaluated at the
+    display-mesh vertex nearest each face's centroid (projected to exact uv).
+28. **Loops and rings** on real scenes use `core::select::Adjacency`
+    (+ `editable_only`); the sample model keeps the app's own walker.
+29. **Delete** sends one `Op::RemoveEdges` per body (one `RemoveEdge` when a
+    single edge is selected).
+30. **Launch**: the first free argument is a `.ntopo` or CAD file (file
+    associations, `Exec=newtopo %f`, Windows `"%1"`); `file://` URLs are
+    decoded, relative paths made absolute, macOS `-psn_…` ignored. The import
+    helper is looked up next to the *canonical* executable (through
+    `/usr/bin` symlinks, AppImage, `.app/Contents/MacOS`, Windows install
+    dir), then next to the invoked path, then the kernel's own search.
+    macOS "open document" Apple Events (double-click in Finder while running)
+    are not handled yet.
+31. **Windows icon**: `crates/app/build.rs` embeds `packaging/icons/newtopo.ico`
+    through `embed-resource` (a `cfg(windows)` build-dependency, resource
+    script `crates/app/newtopo.rc`); a missing resource compiler only warns.
+    Not built on Windows from here — please check it in Windows CI.
+32. **Check output mesh** (Edit menu / palette) runs `Scene::validate_all`
+    and toasts the problem kinds; History tooltips show `dormant_reasons`.
 26. **Copy/paste rules** (Ctrl+C/V) and **Connect Tab flip** toast "not
     available yet" (no ops).
 
 ## API requests (engine facade, `crates/core/src/scene.rs` and `ops.rs`)
 
-Exact signatures the app would use; current workaround in brackets.
+Round 2 wired: `default_kernel`, `HAS_CAD_IMPORT`, coalescing, `patches` /
+`patch_records`, `select`, `Op::RemoveEdges`, `validate_all`,
+`dormant_reasons`, `issue_reason`, `core::rename`, `core::bridge`. Still
+open (workaround in brackets):
 
-1. Kernel construction:
-   `pub fn newtopo_kernel::default_kernel() -> std::sync::Arc<dyn CadKernel>`
-   (OCCT when the feature is on, else the mock). [`make_kernel()` returns `None`.]
-2. Gesture coalescing:
-   `pub fn Scene::apply_coalesced(&mut self, op: Op, gesture: u64) -> Result<OpOutcome, Refusal>`
-   — replaces the previous undo step if it carried the same `gesture` id.
-   [undo + apply per wheel tick.]
-3. One undo step for several ops:
-   `pub fn Scene::apply_all(&mut self, ops: Vec<Op>) -> Result<Vec<OpOutcome>, Refusal>`
-   (all or nothing). Needed for multi-edge Remove/Collapse, batch rename,
-   per-body Slice. [one step per op.]
-4. Patches for face mode:
-   `pub fn Scene::patches(&self, body: BodyId) -> Vec<PatchView>` with
-   `pub struct PatchView { pub id: PatchId, pub face: FaceId, pub triangles: Vec<[u32; 3]> /* into face_meshes[face] */ }`.
-   [whole faces.]
-5. Connect bend directions for the arrows (SPEC §5.2/6.2):
-   `pub fn Scene::bend_info(&self, patch: PatchId) -> Option<BendInfo>` with
-   `pub struct BendInfo { pub origin: DVec3, pub normal: DVec3, pub a: Option<DVec3>, pub b: Option<DVec3>, pub warn: bool }`
-   (body coordinates; `warn` = direction disagrees with selected neighbours).
-   [arrows only on the sample model.]
-6. Link sets: `pub fn Scene::link_set(&self, body: BodyId, face: FaceId) -> Vec<FaceId>` for the
-   linked tint and selection expansion. [none.]
-7. Layer and lock ops (`Op` variants):
-   `SetBodyLocked { body: BodyId, locked: bool }`,
-   `SetLayerVisible { layer: LayerId, visible: bool }`,
-   `SetLayerLocked { layer: LayerId, locked: bool }`,
-   `CreateLayer { name: String }`, `DeleteLayer { layer: LayerId }`,
-   `RenameLayer { layer: LayerId, name: String }`,
-   `MoveBodyToLayer { body: BodyId, layer: LayerId }`,
-   `SetActiveLayer { layer: LayerId }`. [app-side overrides / toasts.]
-8. Selection in the document (SPEC §4.7):
-   `Op::SetSelection { selection: doc::Selection }` (objects, patches, edge
-   keys, vertex keys). [app-side selection.]
-9. Copy/paste rules (SPEC §6.13):
-   `pub fn Scene::copy_rules(&self, body: BodyId) -> RuleClipboard` and
-   `Op::PasteRules { clip: RuleClipboard, targets: Vec<BodyId> }` returning the
-   unmatched faces in `OpOutcome::message`. [toast.]
-10. Flip A/B on a patch: `Op::FlipConnect { patch: PatchId }`. [toast.]
-11. Delete a single edit from History: `Op::DeleteEdit { edit: u32 }`.
-12. Replace on import: `pub fn Scene::replace_body(&mut self, old: BodyId, brep: &[u8], attrs: BodyAttributes, heal: HealReport) -> anyhow::Result<BodyId>`.
-    [imports as new.]
-13. Autosave without touching the saved marker:
-    `pub fn Scene::save_copy(&mut self, path: &Path) -> anyhow::Result<()>`.
-    [`save` to the autosave path; app tracks dirty itself.]
-14. Camera into the document: `Op::SetCamera { camera: doc::Camera }` or
-    `pub fn Scene::set_camera(&mut self, c: Camera)` (not an undo step).
-    [camera is read on open, never written.]
-15. Loops/rings from `core::select`:
-    `pub fn Scene::edge_loop(&self, body: BodyId, edge: &EdgeKey, ring: bool, every_other: bool) -> Vec<EdgeKey>`
-    and `pub fn Scene::face_strip(&self, body: BodyId, patch: PatchId) -> Vec<PatchId>`.
-    [app walks the `OutputMesh` topology itself (`selection::TopoMesh`).]
-16. Iso preview including through mode:
-    `pub fn Scene::iso_preview(&self, body: BodyId, face: FaceId, dir: IsoDir, value: f64, seed: Option<f64>, through: bool) -> Vec<Vec<DVec3>>`.
-    [kernel sampling, no through.]
-17. Confirm the assumption that `doc::BodyEntry::id` is also the kernel's
-    `BodyId` (the app calls `scene.kernel.project_to_face/edge` with it).
-18. `core::bridge` (when it lands): `hosts() -> Vec<HostStatus>`,
-    `send(host, objects, keep_both) -> Result<SendReport>`; plug into
-    `studio::bridge_adapter`.
-19. `core::rename`: if it exposes `preview(op, names) -> Vec<String>`, the
-    rename panel will call it instead of `studio::rename_preview`.
+1. Several ops as one step: `Scene::apply_all(ops)`. [grouped with
+   `begin_coalesce`/`end_coalesce`; fine unless a later op is refused, which
+   leaves the earlier ones applied within the step.]
+2. Layer and lock ops: `SetBodyLocked`, `SetLayerVisible`, `SetLayerLocked`,
+   `CreateLayer`, `DeleteLayer`, `RenameLayer`, `MoveBodyToLayer`,
+   `SetActiveLayer`. [app-side overrides / toasts.]
+3. Selection in the document (`Op::SetSelection`). [app-side.]
+4. Copy/paste rules, `Op::FlipConnect`, `Op::DeleteEdit`. [toasts.]
+5. `Scene::replace_body(...)`. [Replace imports as new.]
+6. `Scene::save_copy(path)`. [autosave uses `save`; app tracks dirty.]
+7. `Scene::set_camera(Camera)`. [camera read on open, never written.]
+8. `Scene::iso_preview(...)` with through mode. [kernel sampling, no through.]
+9. `Scene::bend_info(patch)` with origin/directions/warn flag. [derived from
+   `PatchInfo::bend` + kernel; no warning tint.]
+10. `Scene::link_set(body, face)` for the linked tint. [none.]
+11. `Scene::patch_at(body, face, uv) -> Option<PatchId>` to pick one piece of
+    a split face. [whole face.]
+12. A public `Scene::kernel_body(body) -> Option<BodyId>` would be clearer
+    than reaching through `ctx(body).kbody`.
+
+## Engine notes from the round-2 run
+
+No engine bug blocked the app. Exercised headless on the reference models
+(`newtopo --shot <dir> --models <dir>`): import (single and the 5-body
+assembly through the import list), Slice ×10, Connect A=8 on 16 hole walls,
+Grid 4×3, Iso, Iso split, Cut, Collapse, Remove (3 edges, one step, undo),
+Weld (confirmation, then a correct refusal "a face would flip against the
+CAD surface"), preview, OBJ/FBX/GLB export, save → open with identical stats,
+`validate_all` clean. Two things the app had wrong and now handles:
+document vs kernel body ids, and normalised iso values.
 
 ## Known gaps
 
@@ -223,8 +225,6 @@ Exact signatures the app would use; current workaround in brackets.
 - Record ops (SPEC §10) is not wired in the UI.
 - The import list shows names/layers only (no per-object face counts until
   the helper reports them).
-- `newtopo-cli render` wiring is left to the lead
-  (`newtopo_render::core_scene::render_core_scene_to_png`).
 - `cargo clippy -D warnings` on the whole workspace currently fails in
   `crates/core` (scaffold: `doc_lazy_continuation` in `doc.rs`,
   `manual_non_exhaustive` in `scene.rs`); the app and render crates are clean

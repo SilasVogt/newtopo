@@ -18,9 +18,21 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 /// Owned data for one export object (moved to the export thread).
-type ExportItem = (String, String, Option<[f32; 3]>, glam::DMat4, OutputMesh);
+pub type ExportItem = (String, String, Option<[f32; 3]>, glam::DMat4, OutputMesh);
 
 pub const CAD_EXTS: [&str; 5] = ["step", "stp", "iges", "igs", "brep"];
+
+/// `name.ext` in `folder` — short enough for a toast.
+pub fn short_path(p: &Path) -> String {
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match p.parent().and_then(|d| d.file_name()) {
+        Some(d) => format!("{name} in {}", d.to_string_lossy()),
+        None => name,
+    }
+}
 
 pub fn is_cad(p: &Path) -> bool {
     p.extension()
@@ -152,7 +164,7 @@ pub struct ExportDialog {
     pub units: String,
 }
 
-fn unit_mm(u: &str) -> f64 {
+pub fn unit_mm(u: &str) -> f64 {
     match u {
         "cm" => 10.0,
         "m" => 1000.0,
@@ -162,6 +174,11 @@ fn unit_mm(u: &str) -> f64 {
 }
 
 impl AppState {
+    /// An import or export is running.
+    pub fn busy(&self) -> bool {
+        self.jobs.import.is_some() || self.jobs.export.is_some()
+    }
+
     // ------------------------------------------------------------ import
 
     pub fn import_dialog(&mut self) {
@@ -178,7 +195,30 @@ impl AppState {
         }
     }
 
+    /// A document passed on the command line (file association).
+    pub fn open_from_launch(&mut self, p: PathBuf) {
+        if !p.is_file() {
+            self.toast(
+                ToastKind::Error,
+                format!("Can't open {}: file not found", p.display()),
+            );
+        } else if is_scene(&p) {
+            self.open_scene(Some(p));
+        } else if is_cad(&p) {
+            self.start_import(p);
+        } else {
+            self.toast(
+                ToastKind::Warn,
+                format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+            );
+        }
+    }
+
     pub fn start_import(&mut self, path: PathBuf) {
+        if !newtopo_kernel::HAS_CAD_IMPORT {
+            self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
+            return;
+        }
         if self.jobs.import.is_some() {
             self.toast(
                 ToastKind::Info,
@@ -196,6 +236,7 @@ impl AppState {
             heal: self.prefs.import.heal,
             sewing_tolerance: self.prefs.import.sewing_tolerance,
             units: self.prefs.import.units.clone(),
+            helper: crate::launch::helper_path(),
             ..Default::default()
         };
         let (p2, c2, path2) = (progress.clone(), cancel.clone(), path.clone());
@@ -293,7 +334,7 @@ impl AppState {
                     match r.and_then(|files| write_export(&job.path, files)) {
                         Ok(()) => self.toast(
                             ToastKind::Info,
-                            format!("{} {}", S::TOAST_EXPORTED, job.path.display()),
+                            format!("{} {}", S::TOAST_EXPORTED, short_path(&job.path)),
                         ),
                         Err(e) => self.toast(ToastKind::Error, e),
                     }
@@ -303,6 +344,14 @@ impl AppState {
                 }
                 Err(TryRecvError::Empty) => {}
             }
+        }
+    }
+
+    /// Import the objects marked Keep/Replace in the open import list.
+    pub fn accept_import_list(&mut self) {
+        if let Some(list) = self.ui.import_list.take() {
+            let choices = list.rows.iter().map(|r| r.choice).collect();
+            self.finish_import(&list.path, list.file, choices);
         }
     }
 
@@ -433,6 +482,8 @@ impl AppState {
                     .scene
                     .as_ref()
                     .and_then(|s| guard(|| s.doc().camera).ok())
+                    // The default camera means none was saved: frame instead.
+                    .filter(|c| *c != newtopo_core::doc::Camera::default())
                 {
                     self.view.camera = newtopo_render::OrbitCamera::from_doc(&cam, self.prefs.up);
                     self.view.needs_frame = false;
@@ -475,7 +526,7 @@ impl AppState {
                 self.dirty_settings = true;
                 self.toast(
                     ToastKind::Info,
-                    format!("{} {}", S::TOAST_SAVED, path.display()),
+                    format!("{} {}", S::TOAST_SAVED, short_path(&path)),
                 );
             }
             Err(e) => self.toast(ToastKind::Error, format!("Couldn't save: {e}")),
@@ -542,6 +593,30 @@ impl AppState {
         });
     }
 
+    /// Owned export data for the selected objects, or every object
+    /// (hidden ones included) when nothing is selected (SPEC §8.3, §9.3).
+    pub fn export_items(&self) -> Option<Vec<ExportItem>> {
+        let scene = self.doc.scene.as_ref()?;
+        let (bodies, layers) =
+            guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone())).ok()?;
+        let selected = &self.sel.objects;
+        Some(
+            bodies
+                .iter()
+                .filter(|b| selected.is_empty() || selected.contains(&b.id))
+                .filter_map(|b| {
+                    let mesh = self.vd.outputs.iter().find(|o| o.body == b.id)?.clone();
+                    let layer = layers
+                        .iter()
+                        .find(|l| l.id == b.layer)
+                        .map(|l| l.name.clone())
+                        .unwrap_or_default();
+                    Some((b.name.clone(), layer, b.color, b.transform, mesh))
+                })
+                .collect(),
+        )
+    }
+
     fn run_export(&mut self, d: ExportDialog) {
         let (ext, filter) = match d.format {
             Format::Obj => ("obj", "OBJ"),
@@ -561,30 +636,15 @@ impl AppState {
         } else {
             path
         };
-        let Some(scene) = self.doc.scene.as_ref() else {
-            return;
-        };
-        let Ok((bodies, layers)) =
-            guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone()))
-        else {
+        self.export_to(path, d);
+    }
+
+    /// Export to `path` on a worker thread (no file dialog).
+    pub fn export_to(&mut self, path: PathBuf, d: ExportDialog) {
+        let Some(objects) = self.export_items() else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;
         };
-        let selected = &self.sel.objects;
-        let outputs: Vec<OutputMesh> = self.vd.outputs.clone();
-        let objects: Vec<ExportItem> = bodies
-            .iter()
-            .filter(|b| selected.is_empty() || selected.contains(&b.id))
-            .filter_map(|b| {
-                let mesh = outputs.iter().find(|o| o.body == b.id)?.clone();
-                let layer = layers
-                    .iter()
-                    .find(|l| l.id == b.layer)
-                    .map(|l| l.name.clone())
-                    .unwrap_or_default();
-                Some((b.name.clone(), layer, b.color, b.transform, mesh))
-            })
-            .collect();
         if objects.is_empty() {
             self.toast(
                 ToastKind::Warn,
@@ -917,11 +977,7 @@ impl AppState {
             });
         });
         match done {
-            Some(true) => {
-                let list = self.ui.import_list.take().expect("list");
-                let choices = list.rows.iter().map(|r| r.choice).collect();
-                self.finish_import(&list.path, list.file, choices);
-            }
+            Some(true) => self.accept_import_list(),
             Some(false) => self.ui.import_list = None,
             None => {}
         }

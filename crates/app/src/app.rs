@@ -166,6 +166,7 @@ pub struct UiState {
     pub outliner: crate::panels::OutlinerState,
     pub rename: crate::studio::RenameState,
     pub uv: crate::studio::UvOptions,
+    pub bridge: crate::studio::BridgeUi,
     pub export: Option<crate::jobs::ExportDialog>,
     pub import_list: Option<crate::jobs::ImportList>,
     pub import_report: Option<crate::jobs::ImportReport>,
@@ -382,6 +383,15 @@ impl App {
 
         let st = &mut self.st;
         st.autosave_tick();
+        // A wheel gesture ends after 400 ms without ticks (SPEC §4.7).
+        if let Some(t) = st.tool.wheel_last {
+            if st.time - t > crate::tools::COALESCE_SECS {
+                st.doc.end_gesture();
+                st.tool.wheel_last = None;
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            }
+        }
         let title = format!(
             "{}{} — {}",
             st.doc.title(),
@@ -624,11 +634,44 @@ impl AppState {
 
     /// Apply an op; refusals become toasts or a confirmation dialog.
     pub fn apply(&mut self, op: Op) -> Option<newtopo_core::ops::OpOutcome> {
+        self.apply_ex(op, false)
+    }
+
+    /// Apply as part of the open wheel gesture (one undo step per gesture).
+    pub fn apply_coalesced(&mut self, op: Op) -> Option<newtopo_core::ops::OpOutcome> {
+        self.apply_ex(op, true)
+    }
+
+    /// Apply several ops as one undo step. Returns how many were accepted.
+    pub fn apply_group(&mut self, ops: Vec<Op>) -> (usize, u32) {
+        if self.is_demo() {
+            self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
+            return (0, 0);
+        }
+        self.doc.begin_group();
+        let mut n = 0;
+        let mut lines = 0;
+        for op in ops {
+            if let Some(o) = self.apply(op) {
+                n += 1;
+                lines += o.lines_added;
+            }
+        }
+        self.doc.end_gesture();
+        (n, lines)
+    }
+
+    fn apply_ex(&mut self, op: Op, coalesced: bool) -> Option<newtopo_core::ops::OpOutcome> {
         if self.is_demo() {
             self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             return None;
         }
-        match self.doc.apply(op.clone()) {
+        let r = if coalesced {
+            self.doc.apply_coalesced(op.clone())
+        } else {
+            self.doc.apply(op.clone())
+        };
+        match r {
             Ok(o) => {
                 if let Some(m) = &o.message {
                     self.toast(ToastKind::Info, m.clone());
@@ -778,6 +821,7 @@ impl AppState {
             PasteRules => self.paste_rules(),
             Undo => self.undo(),
             Redo => self.redo(),
+            CheckMesh => self.check_mesh(),
             PurgeDormant => {
                 self.apply(Op::PurgeDormant);
             }
@@ -869,6 +913,32 @@ impl AppState {
             .scene
             .as_ref()
             .and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
+    }
+
+    /// Validate every body's output (SPEC §4.6 step 8) and report.
+    fn check_mesh(&mut self) {
+        let Some(scene) = self.doc.scene.as_mut() else {
+            self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
+            return;
+        };
+        match crate::docstate::guard(|| scene.validate_all()) {
+            Ok(v) if v.is_empty() => self.toast(
+                ToastKind::Info,
+                "Output mesh checks out: no problems found.",
+            ),
+            Ok(v) => {
+                let mut kinds: Vec<&str> = v
+                    .iter()
+                    .map(|(_, i)| newtopo_core::scene::issue_reason(i))
+                    .collect();
+                kinds.dedup();
+                self.toast(
+                    ToastKind::Warn,
+                    format!("{} problem(s): {}", v.len(), kinds.join("; ")),
+                );
+            }
+            Err(e) => self.toast(ToastKind::Error, e),
+        }
     }
 
     fn copy_rules(&mut self) {
@@ -1239,7 +1309,12 @@ impl AppState {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
-                for c in [Cmd::CopyRules, Cmd::PasteRules, Cmd::PurgeDormant] {
+                for c in [
+                    Cmd::CopyRules,
+                    Cmd::PasteRules,
+                    Cmd::PurgeDormant,
+                    Cmd::CheckMesh,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();

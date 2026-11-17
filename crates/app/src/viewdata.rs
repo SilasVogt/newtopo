@@ -35,6 +35,8 @@ pub struct EdgeItem {
     pub topo: Option<u32>,
     /// The CAD edge this lies on, if any.
     pub cad_edge: Option<newtopo_kernel::EdgeId>,
+    /// Index into the body's `OutputMesh::edges` (real scenes).
+    pub out: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +61,17 @@ pub struct BodyTopo {
     pub edge_item: HashMap<u32, usize>,
     /// Topo poly → CAD face.
     pub poly_face: Vec<FaceId>,
+}
+
+/// Where a patch's Connect directions point (world space).
+#[derive(Clone, Copy, Debug)]
+pub struct BendArrow {
+    pub origin: Vec3,
+    pub normal: Vec3,
+    pub a: Option<Vec3>,
+    pub b: Option<Vec3>,
+    /// Size of the face (bounding-box diagonal) to scale the arrow.
+    pub size: f32,
 }
 
 /// Display settings that change what the base scene contains.
@@ -86,6 +99,10 @@ pub struct ViewData {
     pub topo: HashMap<BodyId, BodyTopo>,
     pub bounds: Option<(Vec3, Vec3)>,
     pub outputs: Vec<OutputMesh>,
+    /// Connect direction arrows per selected-able face (real scenes).
+    pub arrows: HashMap<(BodyId, FaceId), Vec<BendArrow>>,
+    /// Patches per body (real scenes; SPEC §4.2).
+    pub patches: HashMap<BodyId, Vec<newtopo_core::scene::PatchInfo>>,
     /// Non-fatal problems building the view (shown once as a toast).
     pub error: Option<String>,
 }
@@ -260,6 +277,91 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
         Ok(o) => vd.outputs = o,
         Err(e) => vd.error = Some(e),
     }
+    for e in &entries {
+        if let Ok(p) = guard(|| scene.patches(e.id)) {
+            // Arrows: evaluate each patch's interior sample on the surface;
+            // the A family spreads along u (OneU, Two) or v (OneV).
+            use newtopo_core::eval::lines::Bend;
+            // Sample point per face: the display-mesh vertex nearest the
+            // mesh centroid (on the surface, with its exact uv).
+            let samples: HashMap<FaceId, (glam::DVec3, f64)> = guard(|| {
+                scene
+                    .body_view(e.id)
+                    .map(|bv| {
+                        bv.face_meshes
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, fm)| !fm.positions.is_empty())
+                            .map(|(fi, fm)| {
+                                let c = fm.positions.iter().copied().sum::<glam::DVec3>()
+                                    / fm.positions.len() as f64;
+                                let k = (0..fm.positions.len())
+                                    .min_by(|&x, &y| {
+                                        (fm.positions[x] - c)
+                                            .length()
+                                            .total_cmp(&(fm.positions[y] - c).length())
+                                    })
+                                    .unwrap_or(0);
+                                let mut bb = newtopo_kernel::Aabb::EMPTY;
+                                fm.positions.iter().for_each(|p| bb.add(*p));
+                                (FaceId(fi as u32), (fm.positions[k], bb.diagonal()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+            let k = scene.kernel.clone();
+            // Kernel calls take the kernel's body handle, not the document's.
+            let Some(kb) = guard(|| scene.ctx(e.id).map(|c| c.kbody)).ok().flatten() else {
+                vd.patches.insert(e.id, p);
+                continue;
+            };
+            let mut done: BTreeSet<FaceId> = BTreeSet::new();
+            for info in &p {
+                let (da, db) = match info.bend {
+                    Bend::OneU => (Some(0), None),
+                    Bend::OneV => (Some(1), None),
+                    Bend::Two => (Some(0), Some(1)),
+                    Bend::Radial => (Some(0), None),
+                    Bend::Flat => (None, None),
+                };
+                if da.is_none() || !done.insert(info.face) {
+                    continue;
+                }
+                let Some((sp, size)) = samples.get(&info.face) else {
+                    continue;
+                };
+                // Exact uv of the sample through the kernel.
+                let Ok(Ok(proj)) = guard(|| k.project_to_face(kb, info.face, &[*sp])) else {
+                    continue;
+                };
+                let Some(Some((uv, _))) = proj.first() else {
+                    continue;
+                };
+                let Ok(Ok(ev)) = guard(|| k.face_eval(kb, info.face, &[*uv])) else {
+                    continue;
+                };
+                let Some(ev) = ev.first() else { continue };
+                let m = e.transform;
+                let pick = |d: Option<usize>| {
+                    d.map(|d| xn(&m, if d == 0 { ev.du } else { ev.dv }))
+                        .filter(|v| *v != Vec3::ZERO)
+                };
+                vd.arrows
+                    .entry((e.id, info.face))
+                    .or_default()
+                    .push(BendArrow {
+                        origin: xf(&m, ev.p),
+                        normal: xn(&m, ev.n),
+                        a: pick(da),
+                        b: pick(db),
+                        size: *size as f32,
+                    });
+            }
+            vd.patches.insert(e.id, p);
+        }
+    }
     let c = &p.colors;
     let mut rs = RenderScene::default();
     let (mut ppos, mut ptris, mut pids) = (Vec::new(), Vec::new(), Vec::new());
@@ -370,6 +472,7 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                                 path,
                                 topo: None,
                                 cad_edge: Some(newtopo_kernel::EdgeId(ei as u32)),
+                                out: None,
                             });
                         }
                     }
@@ -431,6 +534,7 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                     path,
                     topo,
                     cad_edge,
+                    out: Some(i as u32),
                 });
             }
             for (i, v) in out.vertices.iter().enumerate() {
@@ -581,6 +685,7 @@ pub fn from_demo(bodies: &[SynthBody], p: &DisplayParams) -> ViewData {
                 path,
                 topo: Some(ti as u32),
                 cad_edge: None,
+                out: None,
             });
         }
         for (i, q) in vpos.iter().enumerate() {

@@ -122,6 +122,7 @@ commands! {
     Undo => "edit.undo", "Undo", Edit, Some(Icon::Undo), ["Ctrl+Z"];
     Redo => "edit.redo", "Redo", Edit, Some(Icon::Redo), ["Ctrl+Shift+Z", "Ctrl+Y"];
     PurgeDormant => "edit.purge_dormant", "Purge dormant edits", Edit, Some(Icon::Trash), [];
+    CheckMesh => "edit.check_mesh", "Check output mesh", Edit, Some(Icon::Warning), [];
 
     RenamePanel => "panel.rename", "Batch rename panel", Panels, Some(Icon::Rename), ["F1"];
     BridgePanel => "panel.bridge", "Bridge panel", Panels, Some(Icon::Bridge), ["F2"];

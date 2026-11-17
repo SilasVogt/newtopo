@@ -21,6 +21,8 @@ struct Shooter {
     queue: wgpu::Queue,
     renderer: egui_wgpu::Renderer,
     _headless: newtopo_render::Headless,
+    /// Monotonic UI clock shared by every frame this shooter runs.
+    clock: f64,
 }
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -50,6 +52,7 @@ impl Shooter {
             queue,
             renderer,
             _headless: headless,
+            clock: 0.5,
         })
     }
 
@@ -85,7 +88,9 @@ impl Shooter {
         let mut pending_free = Default::default();
         let n = frames.len();
         for (i, ev) in frames.into_iter().enumerate() {
-            let mut full = ctx.run_ui(self.raw(i as f64 * 0.06 + 0.5, ev), |ui| app.frame(ui));
+            let _ = i;
+            self.clock += 0.06;
+            let mut full = ctx.run_ui(self.raw(self.clock, ev), |ui| app.frame(ui));
             for (id, deltas) in &full.textures_delta.set {
                 for delta in deltas {
                     self.renderer
@@ -351,6 +356,502 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
             )?;
             img.save(dir.join(format!("debug-{name}")))?;
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- real models
+
+/// Run frames (no rendering) until `done` or a timeout; background jobs
+/// (import/export threads) need real time, so this sleeps between frames.
+fn settle(
+    s: &mut Shooter,
+    ctx: &egui::Context,
+    app: &mut App,
+    t: &mut f64,
+    done: impl Fn(&App) -> bool,
+    max_secs: f64,
+) -> bool {
+    settle_ex(s, ctx, app, t, done, max_secs, true)
+}
+
+fn settle_ex(
+    s: &mut Shooter,
+    ctx: &egui::Context,
+    app: &mut App,
+    t: &mut f64,
+    done: impl Fn(&App) -> bool,
+    max_secs: f64,
+    upload: bool,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        s.clock += 0.05;
+        *t = s.clock;
+        let raw = s.raw(s.clock, vec![]);
+        let mut out = ctx.run_ui(raw, |ui| app.frame(ui));
+        // Textures (the font atlas) must reach the renderer even when this
+        // frame isn't drawn — but only for the context being rendered: the
+        // renderer keys textures by id, which every context reuses.
+        for (id, deltas) in out.textures_delta.set.iter().filter(|_| upload) {
+            for d in deltas {
+                s.renderer.update_texture(&s.device, &s.queue, *id, d);
+            }
+        }
+        for id in out.textures_delta.free.iter().filter(|_| upload) {
+            s.renderer.free_texture(id);
+        }
+        out.textures_delta.clear();
+        if done(app) {
+            return true;
+        }
+        if start.elapsed().as_secs_f64() > max_secs {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Import a model, waiting for the helper; accepts the import list as is.
+fn import(
+    s: &mut Shooter,
+    ctx: &egui::Context,
+    app: &mut App,
+    t: &mut f64,
+    path: &Path,
+) -> anyhow::Result<()> {
+    app.st.start_import(path.to_path_buf());
+    let ok = settle(s, ctx, app, t, |a| !a.st.busy(), 120.0);
+    anyhow::ensure!(ok, "import of {} timed out", path.display());
+    if app.st.ui.import_list.is_some() {
+        app.st.accept_import_list();
+        settle(s, ctx, app, t, |_| true, 1.0);
+    }
+    if let Some(r) = &app.st.ui.import_report {
+        anyhow::ensure!(
+            r.errors.is_empty(),
+            "import of {} failed: {:?}",
+            path.display(),
+            r.errors
+        );
+        app.st.ui.import_report = None;
+    }
+    anyhow::ensure!(
+        app.st.doc.has_scene(),
+        "no scene after importing {}",
+        path.display()
+    );
+    settle(s, ctx, app, t, |_| true, 1.0);
+    Ok(())
+}
+
+/// Faces of `body` whose surface is of `kind`.
+fn faces_of_kind(app: &App, body: BodyId, kind: newtopo_kernel::SurfaceKind) -> Vec<FaceId> {
+    let Some(scene) = app.st.doc.scene.as_ref() else {
+        return vec![];
+    };
+    scene
+        .body_view(body)
+        .map(|bv| {
+            bv.topology
+                .faces
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.surface.kind == kind)
+                .map(|(i, _)| FaceId(i as u32))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn first_body(app: &App) -> BodyId {
+    app.st
+        .doc
+        .scene
+        .as_ref()
+        .and_then(|s| s.doc().bodies.first().map(|b| b.id))
+        .unwrap_or_default()
+}
+
+/// Screenshots and an end-to-end check on the reference STEP models
+/// (`newtopo-testmodels <dir>`): import, tools, preview, export, save/open.
+pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let mut s = Shooter::new()?;
+    let tmp = dir.join("e2e");
+    std::fs::create_dir_all(&tmp)?;
+    let new_app = || {
+        let ctx = egui::Context::default();
+        let app = App::new(&ctx, Paths::default(), true, true);
+        (ctx, app, 1.0f64)
+    };
+
+    // 1. Filleted box: object mode, Slice ×10.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("filleted_box.step"),
+        )?;
+        let b = first_body(&app);
+        app.st.mode = Mode::Object;
+        app.st.sel.objects.insert(b);
+        app.st.tool.seg.slice = 10;
+        app.st.activate_tool(Tool::Slice);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        let stats = app.st.doc.scene.as_mut().map(|s| s.stats());
+        eprintln!(
+            "filleted_box after slice: {stats:?}, lines {:?}",
+            app.st.tool.last_lines_added
+        );
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(6),
+            &dir.join("10-filleted-box-slice.png"),
+        )?;
+        // Save and reopen: same output.
+        let p = tmp.join("filleted_box.ntopo");
+        app.st.doc.save(&p).map_err(anyhow::Error::msg)?;
+        let before = app.st.doc.scene.as_mut().map(|s| s.stats());
+        let (ctx2, mut app2, mut t2) = new_app();
+        app2.st.open_scene(Some(p.clone()));
+        settle_ex(&mut s, &ctx2, &mut app2, &mut t2, |_| true, 1.0, false);
+        let after = app2.st.doc.scene.as_mut().map(|s| s.stats());
+        anyhow::ensure!(
+            before == after,
+            "save/open changed the output: {before:?} vs {after:?}"
+        );
+        // Export OBJ and FBX through the app's export path.
+        for (fmt, ext) in [
+            (newtopo_core::export::Format::Obj, "obj"),
+            (newtopo_core::export::Format::Fbx, "fbx"),
+            (newtopo_core::export::Format::Glb, "glb"),
+        ] {
+            let out = tmp.join(format!("filleted_box.{ext}"));
+            app.st.export_to(
+                out.clone(),
+                crate::jobs::ExportDialog {
+                    format: fmt,
+                    opts: Default::default(),
+                    units: "mm".into(),
+                },
+            );
+            settle(&mut s, &ctx, &mut app, &mut t, |a| !a.st.busy(), 60.0);
+            anyhow::ensure!(
+                out.metadata().map(|m| m.len() > 100).unwrap_or(false),
+                "export {ext} missing"
+            );
+        }
+        // Palette over the real scene.
+        app.st.ui.palette.open_fresh();
+        app.st.ui.palette.query = "slice".into();
+        s.shoot(&ctx, &mut app, frames(8), &dir.join("12-palette-real.png"))?;
+        app.st.ui.palette.open = false;
+        // Export dialog.
+        app.st.open_export_dialog();
+        s.shoot(&ctx, &mut app, frames(8), &dir.join("13-export-dialog.png"))?;
+    }
+
+    // 2. Plate with holes: Connect on the hole walls, preview with auto-fill.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("plate_holes.step"),
+        )?;
+        let b = first_body(&app);
+        let walls = faces_of_kind(&app, b, newtopo_kernel::SurfaceKind::Cylinder);
+        eprintln!("plate_holes: {} cylinder faces", walls.len());
+        app.st.mode = Mode::Face;
+        for f in &walls {
+            app.st.sel.faces.insert((b, *f));
+        }
+        app.st.tool.seg.a = 8;
+        app.st.activate_tool(Tool::Connect);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        // Get closer: frame a few hole walls, look in at a lower angle.
+        let keep = app.st.sel.faces.clone();
+        app.st.sel.faces = keep.iter().take(6).cloned().collect();
+        app.st.frame_selection();
+        app.st.sel.faces = keep;
+        app.st.view.camera.pitch = 0.62;
+        app.st.view.camera.yaw += 0.25;
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(6),
+            &dir.join("11a-plate-connect.png"),
+        )?;
+        app.st.view.preview = true;
+        app.st.view.wireframe = true;
+        app.st.tool.active = Tool::Select;
+        app.st.sel.faces.clear();
+        let stats = app.st.doc.scene.as_mut().map(|s| s.stats());
+        eprintln!("plate_holes preview: {stats:?}");
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(6),
+            &dir.join("11-plate-connect-preview.png"),
+        )?;
+        // Edge mode: loop on a Connect line, then remove it as one step.
+        app.st.view.preview = false;
+        app.st.mode = Mode::Edge;
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        if let Some(e) = app
+            .st
+            .vd
+            .edges
+            .iter()
+            .find(|e| e.kind == crate::viewdata::EdgeKind::Line)
+            .and_then(|e| e.sel.clone())
+        {
+            app.st.sel.edges.insert(e);
+            app.st.select_loop(false, false);
+            let n = app.st.sel.edges.len();
+            let rev = app.st.doc.revision;
+            app.st.remove_selected();
+            eprintln!(
+                "plate_holes: removed a loop of {n} edges (revision {rev} -> {})",
+                app.st.doc.revision
+            );
+            app.st.undo();
+        }
+    }
+
+    // 2b. Single-line tools and edits on the filleted box.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("filleted_box.step"),
+        )?;
+        let b = first_body(&app);
+        let planes = faces_of_kind(&app, b, newtopo_kernel::SurfaceKind::Plane);
+        // Pick the planar faces the default iso camera sees: top, +X, -Y.
+        let normal_of = |app: &App, f: FaceId| -> glam::DVec3 {
+            app.st
+                .doc
+                .scene
+                .as_ref()
+                .and_then(|s| {
+                    s.body_view(b).and_then(|bv| {
+                        bv.face_meshes
+                            .get(f.idx())
+                            .and_then(|m| m.normals.first().copied())
+                    })
+                })
+                .unwrap_or_default()
+        };
+        let best = |app: &App, dir: glam::DVec3| {
+            *planes
+                .iter()
+                .max_by(|x, y| {
+                    normal_of(app, **x)
+                        .dot(dir)
+                        .total_cmp(&normal_of(app, **y).dot(dir))
+                })
+                .unwrap()
+        };
+        let top = best(&app, glam::DVec3::Z);
+        let side_x = best(&app, glam::DVec3::X);
+        let side_y = best(&app, glam::DVec3::NEG_Y);
+        let planes = [top, side_x, side_y];
+        let report = |app: &mut App, what: &str, rev0: u64| {
+            let last = app
+                .st
+                .toasts
+                .items
+                .last()
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
+            let ok = app.st.doc.revision != rev0;
+            eprintln!(
+                "{what}: {} {}",
+                if ok { "applied" } else { "NOT applied" },
+                if ok { String::new() } else { last }
+            );
+            ok
+        };
+        // Grid on a planar face.
+        app.st.mode = Mode::Face;
+        app.st.sel.faces.insert((b, top));
+        app.st.tool.seg.u = 4;
+        app.st.tool.seg.v = 3;
+        let r0 = app.st.doc.revision;
+        app.st.activate_tool(Tool::Grid);
+        report(&mut app, "grid 4x3", r0);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        // Iso through the centre of another planar face.
+        let f2 = planes[1];
+        let c = app.st.vd.face_centers[&newtopo_render::pick::FaceRef {
+            body: b.0,
+            face: f2.0,
+        }];
+        app.st.tool.active = Tool::Iso;
+        app.st.hover = Some(crate::viewport::Hover::Face(
+            newtopo_render::pick::FaceRef {
+                body: b.0,
+                face: f2.0,
+            },
+            c.as_dvec3(),
+        ));
+        app.st.on_hover_changed();
+        let r0 = app.st.doc.revision;
+        app.st.iso_click();
+        report(&mut app, "iso", r0);
+        app.st.tool.iso_split = true;
+        app.st.tool.iso_dir = crate::tools::IsoDirSel::V;
+        app.st.on_hover_changed();
+        let r0 = app.st.doc.revision;
+        app.st.iso_click();
+        report(&mut app, "iso split", r0);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        // Cut across a third planar face (two face points).
+        let f3 = planes[2];
+        let fr = newtopo_render::pick::FaceRef {
+            body: b.0,
+            face: f3.0,
+        };
+        let centre = app.st.vd.face_centers[&fr];
+        let tris = &app.st.vd.face_tris[&fr];
+        let corner = app.st.vd.pick.positions[app.st.vd.pick.tris[tris[0] as usize][0] as usize];
+        let pts = [centre.lerp(corner, 0.6), centre.lerp(corner, -0.6)];
+        app.st.tool.active = Tool::Cut;
+        app.st.tool.cut.clear();
+        for p in pts {
+            if let Some(uv) = app.st.face_uv(b, f3, p.as_dvec3()) {
+                app.st.tool.cut.push(crate::tools::CutPick {
+                    point: newtopo_core::doc::CutPoint::Face {
+                        body: b,
+                        face: f3,
+                        uv,
+                    },
+                    pos: p,
+                });
+            }
+        }
+        let r0 = app.st.doc.revision;
+        app.st.cut_finish(false);
+        report(&mut app, "cut", r0);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        // Collapse and remove a generated edge; weld two generated vertices.
+        app.st.tool.active = Tool::Select;
+        app.st.mode = Mode::Edge;
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        let lines: Vec<_> = app
+            .st
+            .vd
+            .edges
+            .iter()
+            .filter(|e| e.kind == crate::viewdata::EdgeKind::Line)
+            .filter_map(|e| e.sel.clone())
+            .collect();
+        eprintln!("generated edges: {}", lines.len());
+        if let Some(e) = lines.first() {
+            app.st.sel.edges = [e.clone()].into();
+            let r0 = app.st.doc.revision;
+            app.st.collapse_selected();
+            report(&mut app, "collapse", r0);
+            app.st.undo();
+        }
+        if lines.len() > 3 {
+            app.st.sel.edges = lines[1..4].iter().cloned().collect();
+            let r0 = app.st.doc.revision;
+            app.st.remove_selected();
+            report(&mut app, "remove 3 edges (one step)", r0);
+            let r1 = app.st.doc.revision;
+            app.st.undo();
+            eprintln!(
+                "undo after remove: revision {r1} -> {}",
+                app.st.doc.revision
+            );
+        }
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        app.st.mode = Mode::Vertex;
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        let gv: Vec<usize> = (0..app.st.vd.verts.len())
+            .filter(|&i| matches!(&app.st.vd.verts[i].sel, crate::selection::VertSel::Key(_, k) if !k.is_cad()))
+            .collect();
+        if gv.len() >= 2 {
+            // The two closest generated vertices.
+            let mut best = (f32::MAX, 0, 0);
+            for (x, &i) in gv.iter().enumerate() {
+                for &j in &gv[x + 1..] {
+                    let d = app.st.vd.verts[i].pos.distance(app.st.vd.verts[j].pos);
+                    if d < best.0 {
+                        best = (d, i, j);
+                    }
+                }
+            }
+            let r0 = app.st.doc.revision;
+            app.st.weld(best.1, best.2);
+            if let Some(c) = app.st.ui.confirm.take() {
+                eprintln!("weld asks for confirmation: {}", c.body);
+                app.st.apply(crate::jobs::with_confirmed(c.op));
+            }
+            report(&mut app, "weld", r0);
+        }
+        // Preview of everything.
+        app.st.mode = Mode::Object;
+        app.st.view.preview = true;
+        app.st.view.wireframe = true;
+        let issues = app
+            .st
+            .doc
+            .scene
+            .as_mut()
+            .map(|sc| sc.validate_all())
+            .unwrap_or_default();
+        eprintln!(
+            "filleted box after tools: {} validation issues",
+            issues.len()
+        );
+        for (_, i) in issues.iter().take(5) {
+            eprintln!("  issue: {}", newtopo_core::scene::issue_reason(i));
+        }
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(6),
+            &dir.join("16-filleted-box-tools-preview.png"),
+        )?;
+    }
+
+    // 3. Assembly: the import list.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        app.st.start_import(models.join("assembly.step"));
+        let ok = settle(&mut s, &ctx, &mut app, &mut t, |a| !a.st.busy(), 120.0);
+        anyhow::ensure!(ok, "assembly import timed out");
+        anyhow::ensure!(
+            app.st.ui.import_list.is_some(),
+            "assembly should open the import list"
+        );
+        if let Some(l) = &mut app.st.ui.import_list {
+            if let Some(r) = l.rows.get_mut(1) {
+                r.choice = crate::jobs::ImportChoice::Exclude;
+            }
+            if let Some(r) = l.rows.get_mut(0) {
+                r.selected = true;
+            }
+        }
+        s.shoot(&ctx, &mut app, frames(8), &dir.join("14-import-list.png"))?;
+        app.st.accept_import_list();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        app.st.ui.import_report = None;
+        app.st.set_mode(Mode::Object);
+        s.shoot(&ctx, &mut app, frames(6), &dir.join("15-assembly.png"))?;
     }
     Ok(())
 }

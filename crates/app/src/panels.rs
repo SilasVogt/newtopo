@@ -811,9 +811,10 @@ impl AppState {
                 scene.doc().phase_overrides.clone(),
             )
         });
-        let dormant: BTreeSet<u32> = guard(|| scene.dormant_edits())
+        let reasons: std::collections::BTreeMap<u32, String> = guard(|| scene.dormant_reasons())
             .map(|v| v.into_iter().collect())
             .unwrap_or_default();
+        let dormant: BTreeSet<u32> = reasons.keys().copied().collect();
         let (rules, edits, phase) = match data {
             Ok(d) => d,
             Err(e) => {
@@ -851,7 +852,7 @@ impl AppState {
                 }
             };
             let d = dormant.contains(&e.id);
-            history_row(
+            let r = history_row(
                 ui,
                 &pal,
                 icon,
@@ -859,6 +860,9 @@ impl AppState {
                 if d { S::HIST_DORMANT } else { "" },
                 d,
             );
+            if let Some(why) = reasons.get(&e.id) {
+                r.on_hover_text(why);
+            }
         }
         if !dormant.is_empty() {
             ui.add_space(4.0);

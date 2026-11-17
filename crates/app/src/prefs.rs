@@ -248,7 +248,7 @@ impl Prefs {
         let mut p: Prefs = load_json(paths.file("prefs.json").as_deref());
         p.radial.resize(RADIAL_SLOTS, None);
         if p.bridge.token.is_empty() {
-            p.bridge.token = random_token();
+            p.bridge.token = newtopo_core::bridge::generate_token();
         }
         p
     }
@@ -270,26 +270,6 @@ pub fn load_keymap(paths: &Paths) -> Keymap {
 
 pub fn save_keymap(paths: &Paths, k: &Keymap) {
     save_json(paths.file("keymap.json").as_deref(), k);
-}
-
-/// A per-install random token for the DCC bridge (SPEC §9.3). Uses the
-/// standard library's randomly seeded hasher as the entropy source.
-pub fn random_token() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut out = String::new();
-    for i in 0..2u64 {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u64(i);
-        h.write_u128(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
-        );
-        h.write_u32(std::process::id());
-        out.push_str(&format!("{:016x}", h.finish()));
-    }
-    out
 }
 
 #[cfg(test)]

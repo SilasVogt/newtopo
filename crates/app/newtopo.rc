@@ -1,0 +1,2 @@
+// Windows resources for newtopo.exe: the application icon (Explorer, taskbar).
+1 ICON "../../packaging/icons/newtopo.ico"
