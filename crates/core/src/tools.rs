@@ -152,7 +152,7 @@ impl Scene {
     /// Remove `patches` from every spread rule (takeover, SPEC §4.3). Body
     /// slices losing a patch are first converted to patch scope with frozen
     /// planes.
-    fn takeover(&self, doc: &mut Document, body: BodyId, patches: &[PatchId]) {
+    pub(crate) fn takeover(&self, doc: &mut Document, body: BodyId, patches: &[PatchId]) {
         let all = self.patches_of_doc(doc, body);
         let mut i = 0;
         while i < doc.rules.len() {
@@ -433,21 +433,7 @@ impl Scene {
         let mut out = Vec::new();
         let mut skipped = 0;
         for t in transforms {
-            let found = (|| {
-                let ia = nearest_vertex(m, t.transform_point3(pa), tol)?;
-                let ib = nearest_vertex(m, t.transform_point3(pb), tol)?;
-                let (lo, hi) = (ia.min(ib), ia.max(ib));
-                let qm = t.transform_point3(mid);
-                m.edges
-                    .iter()
-                    .filter(|e| e.a == lo && e.b == hi && e.key.is_some())
-                    .min_by(|x, y| {
-                        let d = |e: &crate::mesh::OutEdge| (e.path[e.path.len() / 2] - qm).length();
-                        d(x).total_cmp(&d(y))
-                    })
-                    .and_then(|e| e.key.clone())
-            })();
-            match found {
+            match match_edge(m, &t, pa, pb, mid, tol) {
                 Some(k) if k == *key || out.contains(&k) => {}
                 Some(k) => out.push(k),
                 None => skipped += 1,
@@ -1770,7 +1756,7 @@ fn same_transform(a: &DAffine3, b: &DAffine3, size: f64) -> bool {
 
 /// CAD faces of the polygons holding all the given output vertices (or,
 /// when no polygon holds them all, any of them).
-fn faces_around(m: &crate::mesh::OutputMesh, verts: &[u32]) -> Vec<FaceId> {
+pub(crate) fn faces_around(m: &crate::mesh::OutputMesh, verts: &[u32]) -> Vec<FaceId> {
     let pick = |all: bool| -> Vec<FaceId> {
         m.polygons
             .iter()
@@ -1794,7 +1780,7 @@ fn faces_around(m: &crate::mesh::OutputMesh, verts: &[u32]) -> Vec<FaceId> {
 }
 
 /// Output vertex nearest to `p`, if within `tol`.
-fn nearest_vertex(m: &crate::mesh::OutputMesh, p: DVec3, tol: f64) -> Option<u32> {
+pub(crate) fn nearest_vertex(m: &crate::mesh::OutputMesh, p: DVec3, tol: f64) -> Option<u32> {
     m.vertices
         .iter()
         .enumerate()
@@ -1802,6 +1788,29 @@ fn nearest_vertex(m: &crate::mesh::OutputMesh, p: DVec3, tol: f64) -> Option<u32
         .filter(|(_, d)| *d < tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i as u32)
+}
+
+/// The keyed output edge whose ends are the transformed `pa`, `pb` (nearest
+/// output vertices within `tol`), preferring the one whose middle is
+/// nearest the transformed `mid`.
+pub(crate) fn match_edge(
+    m: &crate::mesh::OutputMesh,
+    t: &DAffine3,
+    pa: DVec3,
+    pb: DVec3,
+    mid: DVec3,
+    tol: f64,
+) -> Option<EdgeKey> {
+    let ia = nearest_vertex(m, t.transform_point3(pa), tol)?;
+    let ib = nearest_vertex(m, t.transform_point3(pb), tol)?;
+    let (lo, hi) = (ia.min(ib), ia.max(ib));
+    let qm = t.transform_point3(mid);
+    let d = |e: &crate::mesh::OutEdge| (e.path[e.path.len() / 2] - qm).length();
+    m.edges
+        .iter()
+        .filter(|e| e.a == lo && e.b == hi && e.key.is_some())
+        .min_by(|x, y| d(x).total_cmp(&d(y)))
+        .and_then(|e| e.key.clone())
 }
 
 /// Outcome note for Link / symmetry copies.
