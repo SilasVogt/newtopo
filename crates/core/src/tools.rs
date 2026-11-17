@@ -402,7 +402,11 @@ impl Scene {
                 }
             }
             match crate::link::map_rule(rule, body, c, body, c, &map) {
-                Some(r) if r == *rule || out.contains(&r) => {}
+                // A transform taking the cut onto itself (or onto a copy
+                // already made) adds nothing.
+                Some(r)
+                    if same_cut(c, &r, rule, tol)
+                        || out.iter().any(|o| same_cut(c, &r, o, tol)) => {}
                 Some(r) => out.push(r),
                 None => skipped += 1,
             }
@@ -473,7 +477,14 @@ impl Scene {
                         m.vertices[a as usize].key.clone(),
                         m.vertices[b as usize].key.clone(),
                     );
-                    if (pair.0 != *from || pair.1 != *to) && !out.contains(&pair) {
+                    let same = |x: &(VertexKey, VertexKey), f: &VertexKey, t: &VertexKey| {
+                        (&x.0 == f && &x.1 == t) || (&x.0 == t && &x.1 == f)
+                    };
+                    if !same(&pair, from, to)
+                        && !out
+                            .iter()
+                            .any(|o: &(VertexKey, VertexKey)| same(&pair, &o.0, &o.1))
+                    {
                         out.push(pair);
                     }
                 }
@@ -1752,6 +1763,32 @@ fn same_transform(a: &DAffine3, b: &DAffine3, size: f64) -> bool {
         .iter()
         .all(|x| x.abs() < 1e-6);
     r && (a.translation - b.translation).length() < 1e-6 * size.max(1.0)
+}
+
+/// Two cuts through the same 3D points (in any order).
+fn same_cut(c: &BodyCtx, a: &Rule, b: &Rule, tol: f64) -> bool {
+    let pts = |r: &Rule| -> Vec<DVec3> {
+        let Rule::Cut { points, .. } = r else {
+            return vec![];
+        };
+        points
+            .iter()
+            .map(|p| match p {
+                CutPoint::Face { face, uv, .. } => c.point(*face, *uv),
+                CutPoint::CadEdge { edge, t, .. } => c.edge_point(*edge, *t),
+                CutPoint::Vertex {
+                    key: VertexKey::Cad(v),
+                    ..
+                } => c.topo.vertex(*v).point,
+                CutPoint::Vertex { .. } => DVec3::NAN,
+            })
+            .collect()
+    };
+    let (pa, pb) = (pts(a), pts(b));
+    pa.len() == pb.len()
+        && pa
+            .iter()
+            .all(|p| pb.iter().any(|q| (*p - *q).length() < tol))
 }
 
 /// CAD faces of the polygons holding all the given output vertices (or,
