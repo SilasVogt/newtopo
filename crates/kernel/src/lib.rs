@@ -341,3 +341,19 @@ impl Aabb {
         self.min.x > self.max.x
     }
 }
+
+/// The kernel this build ships with: Open CASCADE when the `occt` feature is
+/// on, otherwise the analytic mock (tests, OCCT-less dev builds).
+pub fn default_kernel() -> std::sync::Arc<dyn CadKernel> {
+    #[cfg(feature = "occt")]
+    {
+        std::sync::Arc::new(occt::OcctKernel::new())
+    }
+    #[cfg(not(feature = "occt"))]
+    {
+        std::sync::Arc::new(mock::MockKernel::new())
+    }
+}
+
+/// True when [`default_kernel`] can read STEP/IGES (via the import helper).
+pub const HAS_CAD_IMPORT: bool = cfg!(feature = "occt");
