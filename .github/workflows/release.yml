@@ -67,7 +67,8 @@ jobs:
           tar -xzf dist/*.tar.gz -C "$T"
           ldd "$T/$name/bin/newtopo" "$T/$name/bin/newtopo-cli" "$T/$name/bin/newtopo-import" | grep -E '^/|libTK|not found'
           "$S" cli "$M" "$T/w-tar" "$T/$name/bin/newtopo-cli"
-          "$S" gui "$T/w-tar-gui" "$T/$name/bin/newtopo"
+          # lavapipe (software Vulkan) is installed, so the GUI must render.
+          NEWTOPO_SMOKE_GPU=1 "$S" gui "$T/w-tar-gui" "$T/$name/bin/newtopo"
           echo "::endgroup::"
 
           echo "::group::AppImage (extracted, AppRun --cli)"
@@ -85,7 +86,7 @@ jobs:
           sudo apt-get install -y -qq "$PWD/$(ls dist/*.deb)"
           ls -l "$(command -v newtopo-cli)"
           "$S" cli "$M" "$T/w-deb" newtopo-cli
-          "$S" gui "$T/w-deb-gui" newtopo
+          NEWTOPO_SMOKE_GPU=1 "$S" gui "$T/w-deb-gui" newtopo
           sudo apt-get remove -y -qq newtopo
           [ ! -e /opt/newtopo ] || { echo "/opt/newtopo left behind"; ls -R /opt/newtopo; exit 1; }
           echo "::endgroup::"
@@ -194,7 +195,8 @@ jobs:
           for b in newtopo newtopo-cli newtopo-import; do echo "--- otool -L $b"; otool -L "$app/Contents/MacOS/$b"; done
           [ "$bad" = 0 ]
           "$S" cli "$M" "$T/w-dmg" "$app/Contents/MacOS/newtopo-cli"
-          "$S" gui "$T/w-gui" "$app/Contents/MacOS/newtopo"
+          # The runners' paravirtual Metal device renders the headless shots.
+          NEWTOPO_SMOKE_GPU=1 "$S" gui "$T/w-gui" "$app/Contents/MacOS/newtopo"
           hdiutil detach "$T/mnt"
       - uses: actions/upload-artifact@v7
         with:
