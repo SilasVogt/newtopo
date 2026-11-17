@@ -625,9 +625,42 @@ impl Scene {
         self.write_ntopo(path)
     }
 
+    /// Write the archive to a temporary sibling of `path`, sync it, then
+    /// rename it over `path`, so a failed save never destroys the previous
+    /// file. `persist` replaces an existing destination on every platform
+    /// (`rename(2)` on Unix, `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on
+    /// Windows). The temporary file is removed if anything fails.
     fn write_ntopo(&self, path: &Path) -> anyhow::Result<()> {
-        let file =
-            std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d,
+            _ => Path::new("."),
+        };
+        let name = path
+            .file_name()
+            .with_context(|| format!("{} is not a file path", path.display()))?;
+        let mut prefix = std::ffi::OsString::from(".");
+        prefix.push(name);
+        prefix.push(".");
+        let tmp = tempfile::Builder::new()
+            .prefix(&prefix)
+            .suffix(".tmp")
+            .tempfile_in(dir)
+            .with_context(|| format!("create a temporary file in {}", dir.display()))?;
+        let file = self.write_zip(tmp.reopen()?)?;
+        file.sync_all()
+            .with_context(|| format!("sync {}", tmp.path().display()))?;
+        drop(file);
+        tmp.persist(path)
+            .map_err(|e| e.error)
+            .with_context(|| format!("replace {}", path.display()))?;
+        #[cfg(unix)]
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    }
+
+    fn write_zip(&self, file: std::fs::File) -> anyhow::Result<std::fs::File> {
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -648,8 +681,7 @@ impl Scene {
         }
         zip.start_file("cad/source.sha256", opts)?;
         zip.write_all(shas.as_bytes())?;
-        zip.finish()?;
-        Ok(())
+        Ok(zip.finish()?)
     }
 
     /// Load a `.ntopo` into a fresh scene. Newer formats are refused.
