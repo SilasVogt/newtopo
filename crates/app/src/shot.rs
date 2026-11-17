@@ -372,6 +372,18 @@ fn settle(
     done: impl Fn(&App) -> bool,
     max_secs: f64,
 ) -> bool {
+    settle_ex(s, ctx, app, t, done, max_secs, true)
+}
+
+fn settle_ex(
+    s: &mut Shooter,
+    ctx: &egui::Context,
+    app: &mut App,
+    t: &mut f64,
+    done: impl Fn(&App) -> bool,
+    max_secs: f64,
+    upload: bool,
+) -> bool {
     let start = std::time::Instant::now();
     loop {
         s.clock += 0.05;
@@ -379,13 +391,14 @@ fn settle(
         let raw = s.raw(s.clock, vec![]);
         let mut out = ctx.run_ui(raw, |ui| app.frame(ui));
         // Textures (the font atlas) must reach the renderer even when this
-        // frame isn't drawn.
-        for (id, deltas) in &out.textures_delta.set {
+        // frame isn't drawn — but only for the context being rendered: the
+        // renderer keys textures by id, which every context reuses.
+        for (id, deltas) in out.textures_delta.set.iter().filter(|_| upload) {
             for d in deltas {
                 s.renderer.update_texture(&s.device, &s.queue, *id, d);
             }
         }
-        for id in &out.textures_delta.free {
+        for id in out.textures_delta.free.iter().filter(|_| upload) {
             s.renderer.free_texture(id);
         }
         out.textures_delta.clear();
@@ -506,7 +519,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         let before = app.st.doc.scene.as_mut().map(|s| s.stats());
         let (ctx2, mut app2, mut t2) = new_app();
         app2.st.open_scene(Some(p.clone()));
-        settle(&mut s, &ctx2, &mut app2, &mut t2, |_| true, 1.0);
+        settle_ex(&mut s, &ctx2, &mut app2, &mut t2, |_| true, 1.0, false);
         let after = app2.st.doc.scene.as_mut().map(|s| s.stats());
         anyhow::ensure!(
             before == after,
@@ -625,7 +638,35 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         )?;
         let b = first_body(&app);
         let planes = faces_of_kind(&app, b, newtopo_kernel::SurfaceKind::Plane);
-        let top = planes[0];
+        // Pick the planar faces the default iso camera sees: top, +X, -Y.
+        let normal_of = |app: &App, f: FaceId| -> glam::DVec3 {
+            app.st
+                .doc
+                .scene
+                .as_ref()
+                .and_then(|s| {
+                    s.body_view(b).and_then(|bv| {
+                        bv.face_meshes
+                            .get(f.idx())
+                            .and_then(|m| m.normals.first().copied())
+                    })
+                })
+                .unwrap_or_default()
+        };
+        let best = |app: &App, dir: glam::DVec3| {
+            *planes
+                .iter()
+                .max_by(|x, y| {
+                    normal_of(app, **x)
+                        .dot(dir)
+                        .total_cmp(&normal_of(app, **y).dot(dir))
+                })
+                .unwrap()
+        };
+        let top = best(&app, glam::DVec3::Z);
+        let side_x = best(&app, glam::DVec3::X);
+        let side_y = best(&app, glam::DVec3::NEG_Y);
+        let planes = [top, side_x, side_y];
         let report = |app: &mut App, what: &str, rev0: u64| {
             let last = app
                 .st

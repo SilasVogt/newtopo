@@ -70,6 +70,8 @@ pub struct BendArrow {
     pub normal: Vec3,
     pub a: Option<Vec3>,
     pub b: Option<Vec3>,
+    /// Size of the face (bounding-box diagonal) to scale the arrow.
+    pub size: f32,
 }
 
 /// Display settings that change what the base scene contains.
@@ -280,8 +282,42 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
             // Arrows: evaluate each patch's interior sample on the surface;
             // the A family spreads along u (OneU, Two) or v (OneV).
             use newtopo_core::eval::lines::Bend;
-            let records = guard(|| scene.patch_records(e.id)).unwrap_or_default();
+            // Sample point per face: the display-mesh vertex nearest the
+            // mesh centroid (on the surface, with its exact uv).
+            let samples: HashMap<FaceId, (glam::DVec3, f64)> = guard(|| {
+                scene
+                    .body_view(e.id)
+                    .map(|bv| {
+                        bv.face_meshes
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, fm)| !fm.positions.is_empty())
+                            .map(|(fi, fm)| {
+                                let c = fm.positions.iter().copied().sum::<glam::DVec3>()
+                                    / fm.positions.len() as f64;
+                                let k = (0..fm.positions.len())
+                                    .min_by(|&x, &y| {
+                                        (fm.positions[x] - c)
+                                            .length()
+                                            .total_cmp(&(fm.positions[y] - c).length())
+                                    })
+                                    .unwrap_or(0);
+                                let mut bb = newtopo_kernel::Aabb::EMPTY;
+                                fm.positions.iter().for_each(|p| bb.add(*p));
+                                (FaceId(fi as u32), (fm.positions[k], bb.diagonal()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
             let k = scene.kernel.clone();
+            // Kernel calls take the kernel's body handle, not the document's.
+            let Some(kb) = guard(|| scene.ctx(e.id).map(|c| c.kbody)).ok().flatten() else {
+                vd.patches.insert(e.id, p);
+                continue;
+            };
+            let mut done: BTreeSet<FaceId> = BTreeSet::new();
             for info in &p {
                 let (da, db) = match info.bend {
                     Bend::OneU => (Some(0), None),
@@ -290,13 +326,20 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                     Bend::Radial => (Some(0), None),
                     Bend::Flat => (None, None),
                 };
-                if da.is_none() {
+                if da.is_none() || !done.insert(info.face) {
                     continue;
                 }
-                let Some(rec) = records.iter().find(|r| r.id == info.id) else {
+                let Some((sp, size)) = samples.get(&info.face) else {
                     continue;
                 };
-                let Ok(Ok(ev)) = guard(|| k.face_eval(e.id, info.face, &[rec.sample])) else {
+                // Exact uv of the sample through the kernel.
+                let Ok(Ok(proj)) = guard(|| k.project_to_face(kb, info.face, &[*sp])) else {
+                    continue;
+                };
+                let Some(Some((uv, _))) = proj.first() else {
+                    continue;
+                };
+                let Ok(Ok(ev)) = guard(|| k.face_eval(kb, info.face, &[*uv])) else {
                     continue;
                 };
                 let Some(ev) = ev.first() else { continue };
@@ -313,6 +356,7 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                         normal: xn(&m, ev.n),
                         a: pick(da),
                         b: pick(db),
+                        size: *size as f32,
                     });
             }
             vd.patches.insert(e.id, p);

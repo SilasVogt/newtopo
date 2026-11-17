@@ -821,6 +821,7 @@ impl AppState {
             PasteRules => self.paste_rules(),
             Undo => self.undo(),
             Redo => self.redo(),
+            CheckMesh => self.check_mesh(),
             PurgeDormant => {
                 self.apply(Op::PurgeDormant);
             }
@@ -912,6 +913,32 @@ impl AppState {
             .scene
             .as_ref()
             .and_then(|s| crate::docstate::guard(|| s.doc().settings.clone()).ok())
+    }
+
+    /// Validate every body's output (SPEC §4.6 step 8) and report.
+    fn check_mesh(&mut self) {
+        let Some(scene) = self.doc.scene.as_mut() else {
+            self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
+            return;
+        };
+        match crate::docstate::guard(|| scene.validate_all()) {
+            Ok(v) if v.is_empty() => self.toast(
+                ToastKind::Info,
+                "Output mesh checks out: no problems found.",
+            ),
+            Ok(v) => {
+                let mut kinds: Vec<&str> = v
+                    .iter()
+                    .map(|(_, i)| newtopo_core::scene::issue_reason(i))
+                    .collect();
+                kinds.dedup();
+                self.toast(
+                    ToastKind::Warn,
+                    format!("{} problem(s): {}", v.len(), kinds.join("; ")),
+                );
+            }
+            Err(e) => self.toast(ToastKind::Error, e),
+        }
     }
 
     fn copy_rules(&mut self) {
@@ -1282,7 +1309,12 @@ impl AppState {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();
-                for c in [Cmd::CopyRules, Cmd::PasteRules, Cmd::PurgeDormant] {
+                for c in [
+                    Cmd::CopyRules,
+                    Cmd::PasteRules,
+                    Cmd::PurgeDormant,
+                    Cmd::CheckMesh,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
                 ui.separator();

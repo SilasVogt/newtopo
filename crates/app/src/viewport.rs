@@ -1006,9 +1006,9 @@ impl AppState {
         }
         if self.doc.has_scene() {
             let r = self.scene_sphere().1 as f32;
-            let len = r * 0.12;
             for key in &self.sel.faces {
                 for ar in self.vd.arrows.get(key).into_iter().flatten() {
+                    let len = (r * 0.12).min(ar.size * 0.35);
                     let o0 = ar.origin + ar.normal * r * 0.004;
                     if let Some(a) = ar.a {
                         o.add_arrow(

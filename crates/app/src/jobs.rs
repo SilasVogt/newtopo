@@ -22,6 +22,18 @@ pub type ExportItem = (String, String, Option<[f32; 3]>, glam::DMat4, OutputMesh
 
 pub const CAD_EXTS: [&str; 5] = ["step", "stp", "iges", "igs", "brep"];
 
+/// `name.ext` in `folder` — short enough for a toast.
+pub fn short_path(p: &Path) -> String {
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match p.parent().and_then(|d| d.file_name()) {
+        Some(d) => format!("{name} in {}", d.to_string_lossy()),
+        None => name,
+    }
+}
+
 pub fn is_cad(p: &Path) -> bool {
     p.extension()
         .and_then(|e| e.to_str())
@@ -322,7 +334,7 @@ impl AppState {
                     match r.and_then(|files| write_export(&job.path, files)) {
                         Ok(()) => self.toast(
                             ToastKind::Info,
-                            format!("{} {}", S::TOAST_EXPORTED, job.path.display()),
+                            format!("{} {}", S::TOAST_EXPORTED, short_path(&job.path)),
                         ),
                         Err(e) => self.toast(ToastKind::Error, e),
                     }
@@ -512,7 +524,7 @@ impl AppState {
                 self.dirty_settings = true;
                 self.toast(
                     ToastKind::Info,
-                    format!("{} {}", S::TOAST_SAVED, path.display()),
+                    format!("{} {}", S::TOAST_SAVED, short_path(&path)),
                 );
             }
             Err(e) => self.toast(ToastKind::Error, format!("Couldn't save: {e}")),

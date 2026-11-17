@@ -580,12 +580,20 @@ impl AppState {
         guard(|| scene.doc().body(body).map(|b| b.transform)).ok()?
     }
 
+    /// The kernel's handle for a document body (they differ: the kernel
+    /// numbers bodies per process, the document per scene).
+    pub fn kbody(&self, body: BodyId) -> Option<BodyId> {
+        let scene = self.doc.scene.as_ref()?;
+        guard(|| scene.ctx(body).map(|c| c.kbody)).ok()?
+    }
+
     /// Exact (u, v) on a face for a world point, through the kernel.
     pub fn face_uv(&self, body: BodyId, face: FaceId, world: DVec3) -> Option<DVec2> {
         let scene = self.doc.scene.as_ref()?;
         let p = self.to_body(body, world)?;
+        let kb = self.kbody(body)?;
         let k = scene.kernel.clone();
-        let r = guard(|| k.project_to_face(body, face, &[p])).ok()?.ok()?;
+        let r = guard(|| k.project_to_face(kb, face, &[p])).ok()?.ok()?;
         r.first().copied().flatten().map(|(uv, _)| uv)
     }
 
@@ -638,8 +646,9 @@ impl AppState {
             })
             .collect();
         let k = scene.kernel.clone();
-        let evals = guard(|| k.face_eval(body, face, &uvs)).ok()?.ok()?;
-        let classes = guard(|| k.face_classify_uv(body, face, &uvs)).ok()?.ok()?;
+        let kb = self.kbody(body)?;
+        let evals = guard(|| k.face_eval(kb, face, &uvs)).ok()?.ok()?;
+        let classes = guard(|| k.face_classify_uv(kb, face, &uvs)).ok()?.ok()?;
         // Keep the inside runs (a trimmed iso line can be several pieces).
         let mut pieces: Vec<Vec<Vec3>> = Vec::new();
         let mut cur: Vec<Vec3> = Vec::new();
@@ -728,7 +737,8 @@ impl AppState {
                         .to_body(e.body, world)
                         .and_then(|bp| self.doc.scene.as_ref().map(|s| (s.kernel.clone(), bp)))
                         .and_then(|(k, bp)| {
-                            guard(|| k.project_to_edge(e.body, edge, &[bp])).ok()?.ok()
+                            let kb = self.kbody(e.body)?;
+                            guard(|| k.project_to_edge(kb, edge, &[bp])).ok()?.ok()
                         })
                         .and_then(|v| v.first().copied().flatten());
                     let point = t.map(|t| CutPoint::CadEdge {
