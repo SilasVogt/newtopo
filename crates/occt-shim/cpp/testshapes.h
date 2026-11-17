@@ -1,6 +1,6 @@
 // Test-shape builder (feature `testshapes`); not part of the shim line budget.
 #pragma once
-#include "shim.h"
+#include "newtopo-occt-shim/cpp/shim.h"
 
 namespace ntshim {
 

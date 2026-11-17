@@ -1,6 +1,6 @@
 // Test-shape builder: primitives, fillets, chamfers, booleans, revolve,
 // prisms and an XCAF STEP writer. Only used to make the SPEC §11 models.
-#include "testshapes.h"
+#include "newtopo-occt-shim/cpp/testshapes.h"
 #include "newtopo-occt-shim/src/testshapes.rs.h"
 
 #include <BRepAlgoAPI_Common.hxx>
