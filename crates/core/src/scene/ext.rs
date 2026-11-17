@@ -2,14 +2,17 @@
 //! body replacement, camera, link/symmetry partners, copy rules.
 
 use super::{BodyCache, Scene};
-use crate::doc::{Camera, Document, IsoDir, PatchId, Rule};
+use crate::doc::{Camera, Document, Edit, IsoDir, PatchId, Rule};
 use crate::eval::lines::{Bend, bend_class};
 use crate::eval::{self, BodyCtx};
+use crate::keys::{EdgeKey, RuleId, VertexKey};
 use crate::link::{self, Clipboard, FaceMap, LinkSets};
+use crate::mesh::OutputMesh;
 use crate::select::Adjacency;
 use anyhow::Context;
 use glam::{DAffine3, DVec2, DVec3};
 use newtopo_kernel::{BodyAttributes, BodyId, FaceId, HealReport};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// One bend direction of a patch, for drawing an arrow (body coordinates).
@@ -305,6 +308,7 @@ impl Scene {
                 split_lines: vec![],
                 phase_overrides: vec![],
                 edits: 0,
+                edit_list: vec![],
             };
         };
         let rules = self
@@ -326,6 +330,13 @@ impl Scene {
                 .map(|(k, v)| (*k, *v))
                 .collect(),
             edits: self.doc.edits.iter().filter(|e| e.edit.body() == body).count(),
+            edit_list: self
+                .doc
+                .edits
+                .iter()
+                .filter(|e| e.edit.body() == body)
+                .map(|e| e.edit.clone())
+                .collect(),
         }
     }
 
@@ -434,85 +445,349 @@ impl Scene {
         Ok(report)
     }
 
-    /// Map a clipboard's rules onto `target` (paste). Returns the new
-    /// document and a message; refuses when nothing matches.
+    /// Map a clipboard's rules onto `target` (paste, SPEC §6.13). Split
+    /// lines are pasted first so patches they bound can be mapped; spread
+    /// rules take their patches over (SPEC §4.3); Join rules and edits are
+    /// mapped by geometry on the outputs. Returns a message saying what was
+    /// pasted and what could not be mapped; refuses when no face matches.
     pub(crate) fn paste_into(
         &mut self,
         doc: &mut Document,
         clip: &Clipboard,
         target: BodyId,
     ) -> Result<String, crate::ops::Refusal> {
+        use crate::doc::SliceScope;
         use crate::ops::Refusal;
-        let ca = &self
-            .bodies
-            .get(&clip.source)
-            .ok_or_else(|| Refusal::new("the copied body is no longer in the scene"))?
-            .ctx;
-        let cb = &self
-            .bodies
-            .get(&target)
-            .ok_or_else(|| Refusal::new(format!("there is no body {target}")))?
-            .ctx;
-        let mut src_faces: Vec<FaceId> = Vec::new();
-        for r in &clip.rules {
-            src_faces.extend(eval::rule_faces(r, clip.source, ca));
+        if !self.bodies.contains_key(&clip.source) {
+            return Err(Refusal::new("the copied body is no longer in the scene"));
         }
-        src_faces.extend(clip.split_lines.iter().map(|s| s.face));
-        src_faces.sort();
-        src_faces.dedup();
-        // A body transform estimate from the attributes, then per-face matches.
-        let wa = doc
-            .body(clip.source)
-            .map(|b| b.transform)
-            .unwrap_or_default();
-        let wb = doc.body(target).map(|b| b.transform).unwrap_or_default();
-        let body_xf = DAffine3::from_mat4(wb.inverse() * wa);
-        let (map, unmatched_faces) =
-            link::match_bodies(ca, &src_faces, cb, &[body_xf, DAffine3::IDENTITY]);
-        let unmatched = unmatched_faces.len();
-        if map.is_empty() {
-            return Err(Refusal::new("no face of the copied body matches this body"));
+        if !self.bodies.contains_key(&target) {
+            return Err(Refusal::new(format!("there is no body {target}")));
         }
-        let mut pasted = 0;
-        for r in &clip.rules {
-            if let Some(nr) = link::map_rule(r, clip.source, ca, target, cb, &map) {
-                // Pasting replaces spread rules on the same patches.
-                let patches: Vec<PatchId> = match &nr {
+        let src = clip.source;
+        let (map, unmatched, mut pasted, mut skipped) = {
+            let ca = &self.bodies[&src].ctx;
+            let cb = &self.bodies[&target].ctx;
+            let mut src_faces: Vec<FaceId> = Vec::new();
+            for r in &clip.rules {
+                if !matches!(r, Rule::Join { .. }) {
+                    src_faces.extend(eval::rule_faces(r, src, ca));
+                }
+            }
+            src_faces.extend(clip.split_lines.iter().map(|s| s.face));
+            src_faces.sort();
+            src_faces.dedup();
+            // A body transform estimate from the attributes, then per-face matches.
+            let wa = doc.body(src).map(|b| b.transform).unwrap_or_default();
+            let wb = doc.body(target).map(|b| b.transform).unwrap_or_default();
+            let body_xf = DAffine3::from_mat4(wb.inverse() * wa);
+            let (map, unmatched_faces) =
+                link::match_bodies(ca, &src_faces, cb, &[body_xf, DAffine3::IDENTITY]);
+            if map.is_empty() {
+                return Err(Refusal::new("no face of the copied body matches this body"));
+            }
+            // Split lines first: patches bounded by them map onto the
+            // target's new patches.
+            let group = doc.fresh_id();
+            for s in &clip.split_lines {
+                let id = crate::keys::SplitId(doc.fresh_id());
+                if let Some(ns) = link::map_split(s, ca, target, cb, &map, id, group) {
+                    doc.split_lines.push(ns);
+                }
+            }
+            let split_patches = map_split_patches(ca, src, clip, cb, target, doc, &map);
+            let mp = |p: &PatchId| -> Option<PatchId> {
+                if link::is_whole(p) {
+                    link::map_patch(p, target, &map)
+                } else {
+                    split_patches.get(p).copied()
+                }
+            };
+            let mut pasted = 0;
+            let mut skipped = 0;
+            for r in &clip.rules {
+                if matches!(r, Rule::Join { .. }) {
+                    continue;
+                }
+                let Some(nr) = link::map_rule_with(r, src, ca, target, cb, &map, &mp) else {
+                    skipped += 1;
+                    continue;
+                };
+                // Pasting takes over the patches the new rule owns.
+                let owned: Vec<PatchId> = match &nr {
                     Rule::Connect { patches, .. } => patches.clone(),
                     Rule::Grid { patch, .. } => vec![*patch],
                     Rule::Slice {
-                        scope: crate::doc::SliceScope::Patches(l),
+                        scope: SliceScope::Patches(l),
                         ..
                     } => l.clone(),
+                    Rule::Slice {
+                        scope: SliceScope::Body(_),
+                        ..
+                    } => self
+                        .patches_cached(doc, target)
+                        .iter()
+                        .map(|p| p.id)
+                        .collect(),
                     _ => vec![],
                 };
-                for p in &patches {
-                    doc.rules
-                        .retain(|x| !super::rule_owns(&x.rule, p) || !x.rule.is_spread());
+                if !owned.is_empty() {
+                    self.takeover(doc, target, &owned);
                 }
-                let id = crate::keys::RuleId(doc.fresh_id());
-                let ordinal = doc.rules.iter().map(|r| r.ordinal).max().unwrap_or(0) + 1;
-                doc.rules.push(crate::doc::RuleEntry {
-                    id,
-                    ordinal,
-                    rule: nr,
-                    link_group: None,
-                });
+                push_rule(doc, nr);
                 pasted += 1;
             }
+            link::map_phases(doc, src, ca, target, &map);
+            (map, unmatched_faces.len(), pasted, skipped)
+        };
+
+        // Join rules and edits: their keys name generated vertices and
+        // edges, so they are mapped by position between the source output
+        // (without its edits) and the target output.
+        let joins: Vec<&Rule> = clip
+            .rules
+            .iter()
+            .filter(|r| matches!(r, Rule::Join { .. }))
+            .collect();
+        let mut pasted_edits = 0;
+        if !joins.is_empty() || !clip.edit_list.is_empty() {
+            let mut sdoc = (*self.doc).clone();
+            sdoc.edits.retain(|e| e.edit.body() != src);
+            let ms = self
+                .eval_doc(&sdoc, src)
+                .ok_or_else(|| Refusal::new("the copied body has no CAD data"))?
+                .mesh;
+            let tol = 1e-4 * self.bodies[&target].ctx.size.max(1e-9);
+            let mut new_joins: Vec<RuleId> = Vec::new();
+            if !joins.is_empty() {
+                let mt = self
+                    .eval_doc(doc, target)
+                    .ok_or_else(|| Refusal::new("body has no CAD data"))?
+                    .mesh;
+                for r in joins {
+                    let Rule::Join { a, b, .. } = r else { continue };
+                    match (
+                        map_vertex_key(&ms, &mt, &map, tol, a),
+                        map_vertex_key(&ms, &mt, &map, tol, b),
+                    ) {
+                        (Some(a), Some(b)) if a != b => {
+                            new_joins.push(push_rule(doc, Rule::Join { body: target, a, b }));
+                        }
+                        _ => skipped += 1,
+                    }
+                }
+            }
+            let mut new_edits: Vec<u32> = Vec::new();
+            if !clip.edit_list.is_empty() {
+                let mt = self
+                    .eval_doc(doc, target)
+                    .ok_or_else(|| Refusal::new("body has no CAD data"))?
+                    .mesh;
+                let ca = &self.bodies[&src].ctx;
+                let cb = &self.bodies[&target].ctx;
+                for e in &clip.edit_list {
+                    let ek = |k: &EdgeKey| map_edge_key(&ms, &mt, &map, tol, k);
+                    let vk = |k: &VertexKey| map_vertex_key(&ms, &mt, &map, tol, k);
+                    let mapped = match e {
+                        Edit::RemoveEdge { edge, .. } => {
+                            ek(edge).map(|edge| Edit::RemoveEdge { body: target, edge })
+                        }
+                        Edit::Collapse { edge, .. } => {
+                            ek(edge).map(|edge| Edit::Collapse { body: target, edge })
+                        }
+                        Edit::SetHard { edge, hard, .. } => ek(edge).map(|edge| Edit::SetHard {
+                            body: target,
+                            edge,
+                            hard: *hard,
+                        }),
+                        Edit::Weld { from, to, .. } => match (vk(from), vk(to)) {
+                            (Some(from), Some(to)) if from != to => Some(Edit::Weld {
+                                body: target,
+                                from,
+                                to,
+                            }),
+                            _ => None,
+                        },
+                        Edit::RemoveCadEdge { edge, .. } => {
+                            let (lo, hi) = ca.topo.edge(*edge).t_range;
+                            link::map_edge_point(ca, *edge, 0.5 * (lo + hi), cb, &map)
+                                .map(|(edge, _)| Edit::RemoveCadEdge { body: target, edge })
+                        }
+                    };
+                    match mapped {
+                        Some(edit) => {
+                            let id = doc.fresh_id();
+                            doc.edits.push(crate::doc::EditEntry { id, edit });
+                            new_edits.push(id);
+                        }
+                        None => skipped += 1,
+                    }
+                }
+            }
+            // Mapped joins that make no line and edits that go dormant on
+            // the target are dropped and reported.
+            let ev = self
+                .eval_doc(doc, target)
+                .ok_or_else(|| Refusal::new("body has no CAD data"))?;
+            let dead_joins: Vec<RuleId> = new_joins
+                .iter()
+                .copied()
+                .filter(|id| !ev.lines_per_rule.contains_key(id))
+                .collect();
+            let dead_edits: Vec<u32> = new_edits
+                .iter()
+                .copied()
+                .filter(|id| ev.dormant.contains(id))
+                .collect();
+            doc.rules.retain(|r| !dead_joins.contains(&r.id));
+            doc.edits.retain(|e| !dead_edits.contains(&e.id));
+            skipped += dead_joins.len() + dead_edits.len();
+            pasted += new_joins.len() - dead_joins.len();
+            pasted_edits = new_edits.len() - dead_edits.len();
         }
-        let group = doc.fresh_id();
-        for s in &clip.split_lines {
-            let id = crate::keys::SplitId(doc.fresh_id());
-            if let Some(ns) = link::map_split(s, ca, target, cb, &map, id, group) {
-                doc.split_lines.push(ns);
+        let mut msg = format!(
+            "pasted {pasted} rule(s) and {pasted_edits} edit(s) onto body {target}; {unmatched} face(s) had no match"
+        );
+        if skipped > 0 {
+            msg.push_str(&format!(
+                "; {skipped} rule(s) or edit(s) could not be mapped and were skipped"
+            ));
+        }
+        Ok(msg)
+    }
+}
+
+fn push_rule(doc: &mut Document, rule: Rule) -> RuleId {
+    let id = RuleId(doc.fresh_id());
+    let ordinal = doc.rules.iter().map(|r| r.ordinal).max().unwrap_or(0) + 1;
+    doc.rules.push(crate::doc::RuleEntry {
+        id,
+        ordinal,
+        rule,
+        link_group: None,
+    });
+    id
+}
+
+/// Map the clipboard's patches bounded by split lines onto the target:
+/// each source patch's sample point, transformed, lands in one patch of the
+/// mapped face (with the pasted split lines already in `doc`).
+fn map_split_patches(
+    ca: &BodyCtx,
+    src: BodyId,
+    clip: &Clipboard,
+    cb: &BodyCtx,
+    target: BodyId,
+    doc: &Document,
+    map: &link::FaceMap,
+) -> HashMap<PatchId, PatchId> {
+    let mut want: Vec<PatchId> = Vec::new();
+    for r in &clip.rules {
+        match r {
+            Rule::Connect {
+                patches, flipped, ..
+            } => want.extend(patches.iter().chain(flipped)),
+            Rule::Grid { patch, .. } => want.push(*patch),
+            Rule::Slice {
+                scope: crate::doc::SliceScope::Patches(l),
+                ..
+            } => want.extend(l),
+            _ => {}
+        }
+    }
+    want.retain(|p| p.body == src && !link::is_whole(p) && map.contains_key(&p.face));
+    want.sort();
+    want.dedup();
+    let mut out = HashMap::new();
+    let mut faces: Vec<FaceId> = want.iter().map(|p| p.face).collect();
+    faces.dedup();
+    for fa in faces {
+        let (fb, t) = map[&fa];
+        let sa: Vec<_> = clip
+            .split_lines
+            .iter()
+            .filter(|s| s.body == src && s.face == fa)
+            .collect();
+        let sb: Vec<_> = doc
+            .split_lines
+            .iter()
+            .filter(|s| s.body == target && s.face == fb)
+            .collect();
+        let s1a = eval::face::stage1(ca, src, ca.face(fa), &sa);
+        let s1b = eval::face::stage1(cb, target, cb.face(fb), &sb);
+        for p in want.iter().filter(|p| p.face == fa) {
+            // An interior point of the patch (a cell sample; the patch's
+            // own `sample` lies on its boundary).
+            let Some(inner) = s1a
+                .patches
+                .iter()
+                .find(|r| r.id == *p)
+                .and_then(|r| r.cells.first())
+                .map(|c| s1a.arr.cells[*c].sample)
+            else {
+                continue;
+            };
+            let q = t.transform_point3(ca.point(fa, inner));
+            let Ok(v) = cb.kernel.project_to_face(cb.kbody, fb, &[q]) else {
+                continue;
+            };
+            let Some(Some((uv, _))) = v.into_iter().next() else {
+                continue;
+            };
+            if let Some(i) = s1b.locate(cb.face(fb), uv)
+                && let Some(pb) = s1b.patches.iter().find(|r| r.index == i)
+            {
+                out.insert(*p, pb.id);
             }
         }
-        link::map_phases(doc, clip.source, ca, target, &map);
-        Ok(format!(
-            "pasted {pasted} rule(s) onto body {target}; {unmatched} face(s) had no match"
-        ))
     }
+    out
+}
+
+/// Transform for a generated vertex: that of the first mapped face its
+/// polygons lie on.
+fn vertex_transform(m: &OutputMesh, map: &link::FaceMap, v: u32) -> Option<DAffine3> {
+    crate::tools::faces_around(m, &[v])
+        .iter()
+        .find_map(|f| map.get(f).map(|(_, t)| *t))
+}
+
+/// Map a vertex key from one output to another by position.
+fn map_vertex_key(
+    ms: &OutputMesh,
+    mt: &OutputMesh,
+    map: &link::FaceMap,
+    tol: f64,
+    k: &VertexKey,
+) -> Option<VertexKey> {
+    let i = ms.vertices.iter().position(|v| &v.key == k)? as u32;
+    let t = vertex_transform(ms, map, i)?;
+    let j = crate::tools::nearest_vertex(
+        mt,
+        t.transform_point3(ms.vertices[i as usize].position),
+        tol,
+    )?;
+    Some(mt.vertices[j as usize].key.clone())
+}
+
+/// Map an edge key from one output to another by its ends and middle.
+fn map_edge_key(
+    ms: &OutputMesh,
+    mt: &OutputMesh,
+    map: &link::FaceMap,
+    tol: f64,
+    k: &EdgeKey,
+) -> Option<EdgeKey> {
+    let e = ms.edges.iter().find(|e| e.key.as_ref() == Some(k))?;
+    let t = vertex_transform(ms, map, e.a).or_else(|| vertex_transform(ms, map, e.b))?;
+    crate::tools::match_edge(
+        mt,
+        &t,
+        ms.vertices[e.a as usize].position,
+        ms.vertices[e.b as usize].position,
+        e.path[e.path.len() / 2],
+        tol,
+    )
 }
 
 /// Iso piece → body-space polylines (all trimmed components, or the one

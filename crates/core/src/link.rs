@@ -30,9 +30,12 @@ pub struct Clipboard {
     pub rules: Vec<Rule>,
     pub split_lines: Vec<SplitLine>,
     pub phase_overrides: Vec<(PhaseTarget, DVec3)>,
-    /// Edits are copied for the record but not pasted (their keys name
-    /// source-body topology).
+    /// Number of edits copied (`edit_list.len()`).
     pub edits: usize,
+    /// The source body's edits, in order. Pasting maps their keys onto the
+    /// target's output by geometry; ones that cannot be mapped are reported.
+    #[serde(default)]
+    pub edit_list: Vec<crate::doc::Edit>,
 }
 
 /// Coarse signature used to bucket faces before the transform test.
@@ -426,7 +429,7 @@ pub fn symmetry_partners(ctx: &BodyCtx, refl: &DAffine3) -> HashMap<FaceId, (Fac
 /// Face mapping from one body (or face set) to another.
 pub type FaceMap = HashMap<FaceId, (FaceId, DAffine3)>;
 
-fn is_whole(p: &PatchId) -> bool {
+pub(crate) fn is_whole(p: &PatchId) -> bool {
     p.u_lo == PatchBound::FaceBoundary
         && p.u_hi == PatchBound::FaceBoundary
         && p.v_lo == PatchBound::FaceBoundary
@@ -434,7 +437,7 @@ fn is_whole(p: &PatchId) -> bool {
         && p.region == 0
 }
 
-fn map_patch(p: &PatchId, to: BodyId, map: &FaceMap) -> Option<PatchId> {
+pub(crate) fn map_patch(p: &PatchId, to: BodyId, map: &FaceMap) -> Option<PatchId> {
     if !is_whole(p) {
         return None;
     }
@@ -509,6 +512,20 @@ pub fn map_rule(
     cb: &BodyCtx,
     map: &FaceMap,
 ) -> Option<Rule> {
+    map_rule_with(rule, a, ca, b, cb, map, &|p| map_patch(p, b, map))
+}
+
+/// [`map_rule`] with a caller-supplied patch mapping (used by paste to map
+/// patches bounded by split lines).
+pub fn map_rule_with(
+    rule: &Rule,
+    a: BodyId,
+    ca: &BodyCtx,
+    b: BodyId,
+    cb: &BodyCtx,
+    map: &FaceMap,
+    mp: &dyn Fn(&PatchId) -> Option<PatchId>,
+) -> Option<Rule> {
     match rule {
         Rule::Connect {
             patches,
@@ -520,15 +537,12 @@ pub fn map_rule(
             let ps: Vec<PatchId> = patches
                 .iter()
                 .filter(|p| p.body == a)
-                .filter_map(|p| map_patch(p, b, map))
+                .filter_map(mp)
                 .collect();
             if ps.is_empty() {
                 return None;
             }
-            let fl: Vec<PatchId> = flipped
-                .iter()
-                .filter_map(|p| map_patch(p, b, map))
-                .collect();
+            let fl: Vec<PatchId> = flipped.iter().filter_map(mp).collect();
             Some(Rule::Connect {
                 patches: ps,
                 count_a: *count_a,
@@ -549,7 +563,7 @@ pub fn map_rule(
             }
             // Grid U/V follow the target's own parameter directions; swap
             // when the mapping exchanges them.
-            let pb = map_patch(patch, b, map)?;
+            let pb = mp(patch)?;
             let (fb, t) = map[&patch.face];
             let swap = map_iso(ca, patch.face, IsoDir::U, 0.5, None, cb, fb, &t)
                 .is_some_and(|(d, _, _)| d == IsoDir::V);
@@ -589,11 +603,8 @@ pub fn map_rule(
                 SliceScope::Body(x) if *x == a => SliceScope::Body(b),
                 SliceScope::Body(_) => return None,
                 SliceScope::Patches(l) => {
-                    let ps: Vec<PatchId> = l
-                        .iter()
-                        .filter(|p| p.body == a)
-                        .filter_map(|p| map_patch(p, b, map))
-                        .collect();
+                    let ps: Vec<PatchId> =
+                        l.iter().filter(|p| p.body == a).filter_map(mp).collect();
                     if ps.is_empty() {
                         return None;
                     }
@@ -648,28 +659,7 @@ pub fn map_rule(
                         }
                     }
                     CutPoint::CadEdge { body, edge, t: te } if *body == a => {
-                        let f = ca
-                            .topo
-                            .edge(*edge)
-                            .faces
-                            .iter()
-                            .find(|f| map.contains_key(f))?;
-                        let (fb, t) = map[f];
-                        let q = t.transform_point3(ca.edge_point(*edge, *te));
-                        let mut best: Option<(f64, EdgeId, f64)> = None;
-                        for w in &cb.topo.face(fb).wires {
-                            for c in &w.coedges {
-                                if let Ok(v) = cb.kernel.project_to_edge(cb.kbody, c.edge, &[q])
-                                    && let Some(tt) = v[0]
-                                {
-                                    let d = (cb.edge_point(c.edge, tt) - q).length();
-                                    if best.is_none_or(|x| d < x.0) {
-                                        best = Some((d, c.edge, tt));
-                                    }
-                                }
-                            }
-                        }
-                        let (_, e, tt) = best?;
+                        let (e, tt) = map_edge_point(ca, *edge, *te, cb, map)?;
                         CutPoint::CadEdge {
                             body: b,
                             edge: e,
@@ -702,6 +692,39 @@ pub fn map_rule(
         }
         Rule::Join { .. } => None,
     }
+}
+
+/// Map a point on a CAD edge (edge, parameter) through a face mapping: the
+/// nearest edge of the mapped face to the transformed point.
+pub fn map_edge_point(
+    ca: &BodyCtx,
+    edge: EdgeId,
+    te: f64,
+    cb: &BodyCtx,
+    map: &FaceMap,
+) -> Option<(EdgeId, f64)> {
+    let f = ca
+        .topo
+        .edge(edge)
+        .faces
+        .iter()
+        .find(|f| map.contains_key(f))?;
+    let (fb, t) = map[f];
+    let q = t.transform_point3(ca.edge_point(edge, te));
+    let mut best: Option<(f64, EdgeId, f64)> = None;
+    for w in &cb.topo.face(fb).wires {
+        for c in &w.coedges {
+            if let Ok(v) = cb.kernel.project_to_edge(cb.kbody, c.edge, &[q])
+                && let Some(tt) = v[0]
+            {
+                let d = (cb.edge_point(c.edge, tt) - q).length();
+                if best.is_none_or(|x| d < x.0) {
+                    best = Some((d, c.edge, tt));
+                }
+            }
+        }
+    }
+    best.map(|(_, e, tt)| (e, tt))
 }
 
 /// The phase reference of a face (override or default).

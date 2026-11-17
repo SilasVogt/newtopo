@@ -317,6 +317,42 @@ pub enum PhaseTarget {
     Edge(BodyId, EdgeId),
 }
 
+/// Serde adapter: `BTreeMap<PhaseTarget, DVec3>` as a list of records.
+/// Reading also accepts a JSON object, which is how an empty map was written
+/// before this adapter existed.
+mod phase_records {
+    use super::PhaseTarget;
+    use glam::DVec3;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S: Serializer>(
+        m: &BTreeMap<PhaseTarget, DVec3>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        m.iter().collect::<Vec<_>>().serialize(s)
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        List(Vec<(PhaseTarget, DVec3)>),
+        Empty(BTreeMap<String, serde::de::IgnoredAny>),
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<PhaseTarget, DVec3>, D::Error> {
+        match Repr::deserialize(d)? {
+            Repr::List(l) => Ok(l.into_iter().collect()),
+            Repr::Empty(m) if m.is_empty() => Ok(BTreeMap::new()),
+            Repr::Empty(_) => Err(serde::de::Error::custom(
+                "phase_overrides must be a list of [target, point] records",
+            )),
+        }
+    }
+}
+
 /// Viewport camera saved with the scene.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Camera {
@@ -349,6 +385,9 @@ pub struct Document {
     pub split_lines: Vec<SplitLine>,
     pub rules: Vec<RuleEntry>,
     pub edits: Vec<EditEntry>,
+    /// Stored in `scene.json` as a list of `[target, point]` records: JSON
+    /// object keys must be strings and `PhaseTarget` is a tuple enum.
+    #[serde(with = "phase_records")]
     pub phase_overrides: BTreeMap<PhaseTarget, DVec3>,
     pub camera: Camera,
     pub next_id: u32,

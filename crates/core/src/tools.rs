@@ -10,7 +10,7 @@ use crate::keys::{EdgeKey, RuleId, VertexKey};
 use crate::mesh::Anchor;
 use crate::ops::{Op, OpOutcome, PatchSel, Refusal};
 use crate::scene::{Scene, rule_owns};
-use glam::DVec2;
+use glam::{DAffine3, DVec2, DVec3};
 use newtopo_kernel::{BodyId, EdgeId, FaceId};
 
 type R<T> = Result<T, Refusal>;
@@ -33,6 +33,12 @@ fn add_rule(doc: &mut Document, rule: Rule) -> RuleId {
         rule,
         link_group: None,
     });
+    id
+}
+
+fn push_edit(doc: &mut Document, edit: Edit) -> u32 {
+    let id = doc.fresh_id();
+    doc.edits.push(EditEntry { id, edit });
     id
 }
 
@@ -146,7 +152,7 @@ impl Scene {
     /// Remove `patches` from every spread rule (takeover, SPEC §4.3). Body
     /// slices losing a patch are first converted to patch scope with frozen
     /// planes.
-    fn takeover(&self, doc: &mut Document, body: BodyId, patches: &[PatchId]) {
+    pub(crate) fn takeover(&self, doc: &mut Document, body: BodyId, patches: &[PatchId]) {
         let all = self.patches_of_doc(doc, body);
         let mut i = 0;
         while i < doc.rules.len() {
@@ -314,6 +320,218 @@ impl Scene {
             }
         }
         out
+    }
+
+    /// Distinct transforms taking `faces` onto partner features under Link
+    /// and symmetry (SPEC §6.11, §6.12).
+    fn partner_transforms(&mut self, body: BodyId, faces: &[FaceId]) -> Vec<DAffine3> {
+        if !self.doc().settings.link && !self.doc().settings.symmetry {
+            return vec![];
+        }
+        let size = self.ctx(body).map_or(1.0, |c| c.size);
+        let mut out: Vec<DAffine3> = Vec::new();
+        for f in faces {
+            for (_, t) in self.tool_partners(body, *f) {
+                if !out.iter().any(|u| same_transform(u, &t, size)) {
+                    out.push(t);
+                }
+            }
+        }
+        out
+    }
+
+    /// Link / symmetry copies of a cut (SPEC §6.11, §6.12): one mapped cut
+    /// per partner transform. A face of the cut with no partner under a
+    /// transform maps to itself when the transformed points stay on it (a
+    /// cut from a hole wall onto the plate around it). Returns the mapped
+    /// cuts and the number of partners that could not be mapped.
+    fn partner_cuts(&mut self, body: BodyId, rule: &Rule) -> (Vec<Rule>, usize) {
+        let Rule::Cut { points, .. } = rule else {
+            return (vec![], 0);
+        };
+        let Some(c) = self.ctx(body) else {
+            return (vec![], 0);
+        };
+        let mut faces: Vec<FaceId> = Vec::new();
+        for p in points {
+            match p {
+                CutPoint::Face { face, .. } => faces.push(*face),
+                CutPoint::CadEdge { edge, .. } => faces.extend(c.topo.edge(*edge).faces.iter()),
+                CutPoint::Vertex { .. } => {}
+            }
+        }
+        faces.sort();
+        faces.dedup();
+        let transforms = self.partner_transforms(body, &faces);
+        let partners: Vec<(FaceId, Vec<(FaceId, DAffine3)>)> = faces
+            .iter()
+            .map(|f| (*f, self.tool_partners(body, *f)))
+            .collect();
+        let c = self.ctx(body).expect("checked above");
+        let tol = 1e-4 * c.size.max(1e-9);
+        // 3D points of the cut on each face (for the self-mapping test).
+        let on_face = |f: FaceId| -> Vec<DVec3> {
+            points
+                .iter()
+                .filter_map(|p| match p {
+                    CutPoint::Face { face, uv, .. } if *face == f => Some(c.point(f, *uv)),
+                    CutPoint::CadEdge { edge, t, .. } if c.topo.edge(*edge).faces.contains(&f) => {
+                        Some(c.edge_point(*edge, *t))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut out = Vec::new();
+        let mut skipped = 0;
+        for t in transforms {
+            let mut map = crate::link::FaceMap::new();
+            for (f, ps) in &partners {
+                if let Some((g, _)) = ps.iter().find(|(_, u)| same_transform(u, &t, c.size)) {
+                    map.insert(*f, (*g, t));
+                    continue;
+                }
+                let q: Vec<DVec3> = on_face(*f).iter().map(|p| t.transform_point3(*p)).collect();
+                let stays = c.kernel.project_to_face(c.kbody, *f, &q).is_ok_and(|v| {
+                    v.iter()
+                        .zip(&q)
+                        .all(|(r, p)| r.is_some_and(|(_, x)| (x - *p).length() < tol))
+                });
+                if stays {
+                    map.insert(*f, (*f, t));
+                }
+            }
+            match crate::link::map_rule(rule, body, c, body, c, &map) {
+                // A transform taking the cut onto itself (or onto a copy
+                // already made) adds nothing.
+                Some(r)
+                    if same_cut(c, &r, rule, tol)
+                        || out.iter().any(|o| same_cut(c, &r, o, tol)) => {}
+                Some(r) => out.push(r),
+                None => skipped += 1,
+            }
+        }
+        (out, skipped)
+    }
+
+    /// Link / symmetry copies of an output edge, matched by geometry on the
+    /// current output: the edge's ends and middle, transformed, must land
+    /// on an output edge. Returns the partner keys and the number of
+    /// partners without a matching edge.
+    fn partner_edges(&mut self, body: BodyId, key: &EdgeKey) -> (Vec<EdgeKey>, usize) {
+        let Some(m) = self.output_of(body) else {
+            return (vec![], 0);
+        };
+        let Some(e) = m.edges.iter().find(|e| e.key.as_ref() == Some(key)) else {
+            return (vec![], 0);
+        };
+        let (pa, pb) = (
+            m.vertices[e.a as usize].position,
+            m.vertices[e.b as usize].position,
+        );
+        let mid = e.path[e.path.len() / 2];
+        let faces = faces_around(m, &[e.a, e.b]);
+        let transforms = self.partner_transforms(body, &faces);
+        let tol = 1e-4 * self.ctx(body).map_or(1.0, |c| c.size);
+        let m = self.output_of(body).expect("evaluated above");
+        let mut out = Vec::new();
+        let mut skipped = 0;
+        for t in transforms {
+            match match_edge(m, &t, pa, pb, mid, tol) {
+                Some(k) if k == *key || out.contains(&k) => {}
+                Some(k) => out.push(k),
+                None => skipped += 1,
+            }
+        }
+        (out, skipped)
+    }
+
+    /// Link / symmetry copies of a vertex pair (for Weld), matched by
+    /// geometry on the current output.
+    fn partner_vertex_pairs(
+        &mut self,
+        body: BodyId,
+        from: &VertexKey,
+        to: &VertexKey,
+    ) -> (Vec<(VertexKey, VertexKey)>, usize) {
+        let Some(m) = self.output_of(body) else {
+            return (vec![], 0);
+        };
+        let find = |k: &VertexKey| m.vertices.iter().position(|v| &v.key == k);
+        let (Some(i), Some(j)) = (find(from), find(to)) else {
+            return (vec![], 0);
+        };
+        let (pf, pt) = (m.vertices[i].position, m.vertices[j].position);
+        let faces = faces_around(m, &[i as u32, j as u32]);
+        let transforms = self.partner_transforms(body, &faces);
+        let tol = 1e-4 * self.ctx(body).map_or(1.0, |c| c.size);
+        let m = self.output_of(body).expect("evaluated above");
+        let mut out = Vec::new();
+        let mut skipped = 0;
+        for t in transforms {
+            let a = nearest_vertex(m, t.transform_point3(pf), tol);
+            let b = nearest_vertex(m, t.transform_point3(pt), tol);
+            match (a, b) {
+                (Some(a), Some(b)) if a != b => {
+                    let pair = (
+                        m.vertices[a as usize].key.clone(),
+                        m.vertices[b as usize].key.clone(),
+                    );
+                    let same = |x: &(VertexKey, VertexKey), f: &VertexKey, t: &VertexKey| {
+                        (&x.0 == f && &x.1 == t) || (&x.0 == t && &x.1 == f)
+                    };
+                    if !same(&pair, from, to)
+                        && !out
+                            .iter()
+                            .any(|o: &(VertexKey, VertexKey)| same(&pair, &o.0, &o.1))
+                    {
+                        out.push(pair);
+                    }
+                }
+                _ => skipped += 1,
+            }
+        }
+        (out, skipped)
+    }
+
+    /// Check new edits: each `required` edit must apply (not go dormant);
+    /// `optional` ones (Link / symmetry copies) that go dormant are dropped.
+    /// Returns how many were dropped.
+    fn check_edits(
+        &mut self,
+        doc: &mut Document,
+        body: BodyId,
+        required: &[u32],
+        optional: &[u32],
+    ) -> R<usize> {
+        let ev = self
+            .eval_doc(doc, body)
+            .ok_or_else(|| Refusal::new("body has no CAD data"))?;
+        if let Some((_, reason)) = ev
+            .dormant_reasons
+            .iter()
+            .find(|(id, _)| required.contains(id))
+        {
+            return Err(Refusal::new(format!("can't do that: {reason}")));
+        }
+        let drop: Vec<u32> = ev
+            .dormant_reasons
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| optional.contains(id))
+            .collect();
+        if drop.is_empty() {
+            self.stash_eval(doc, body, ev);
+            return Ok(0);
+        }
+        doc.edits.retain(|e| !drop.contains(&e.id));
+        let n = drop.len();
+        let rest: Vec<u32> = optional
+            .iter()
+            .copied()
+            .filter(|i| !drop.contains(i))
+            .collect();
+        Ok(n + self.check_edits(doc, body, required, &rest)?)
     }
 
     /// Run one op against the current document.
@@ -570,6 +788,40 @@ impl Scene {
                     ));
                 }
                 out.lines_added = ev.lines_per_rule[&id];
+                let rule = Rule::Cut {
+                    points: points.clone(),
+                    closed: *closed,
+                };
+                let (cuts, mut skipped) = self.partner_cuts(body, &rule);
+                if !cuts.is_empty() {
+                    let group = doc.fresh_id();
+                    let mut ids = vec![];
+                    for r in cuts {
+                        ids.push(add_rule(&mut doc, r));
+                    }
+                    for r in doc.rules.iter_mut() {
+                        if r.id == id || ids.contains(&r.id) {
+                            r.link_group = Some(group);
+                        }
+                    }
+                    let ev = self
+                        .eval_doc(&doc, body)
+                        .ok_or_else(|| Refusal::new("body has no CAD data"))?;
+                    let dead: Vec<RuleId> = ids
+                        .iter()
+                        .copied()
+                        .filter(|i| !ev.lines_per_rule.contains_key(i))
+                        .collect();
+                    out.lines_added += ids
+                        .iter()
+                        .filter_map(|i| ev.lines_per_rule.get(i))
+                        .sum::<u32>();
+                    doc.rules.retain(|r| !dead.contains(&r.id));
+                    skipped += dead.len();
+                    out.message = partner_note(ids.len() - dead.len(), skipped);
+                } else {
+                    out.message = partner_note(0, skipped);
+                }
             }
             Op::Join { body, a, b } => {
                 let bd = self.body_or_first(*body)?;
@@ -631,7 +883,13 @@ impl Scene {
                                 edge: edge.clone(),
                             },
                         });
-                        self.check_edit(&doc, b, id)?;
+                        let (keys, skipped) = self.partner_edges(b, edge);
+                        let extra: Vec<u32> = keys
+                            .into_iter()
+                            .map(|k| push_edit(&mut doc, Edit::RemoveEdge { body: b, edge: k }))
+                            .collect();
+                        let dropped = self.check_edits(&mut doc, b, &[id], &extra)?;
+                        out.message = partner_note(extra.len() - dropped, skipped + dropped);
                     }
                 }
             }
@@ -641,6 +899,9 @@ impl Scene {
                     return Err(Refusal::new("select one or more edges first"));
                 }
                 let mut ids = Vec::new();
+                let mut extra = Vec::new();
+                let mut skipped = 0;
+                let n0 = doc.edits.len();
                 for edge in edges {
                     match edge {
                         EdgeKey::Cad { .. } => {
@@ -663,12 +924,25 @@ impl Scene {
                                 },
                             });
                             ids.push(id);
+                            let (keys, sk) = self.partner_edges(b, edge);
+                            skipped += sk;
+                            for k in keys {
+                                let dup = edges.contains(&k)
+                                    || doc.edits[n0..].iter().any(|e| {
+                                        matches!(&e.edit, Edit::RemoveEdge { edge: x, .. } if *x == k)
+                                    });
+                                if !dup {
+                                    extra.push(push_edit(
+                                        &mut doc,
+                                        Edit::RemoveEdge { body: b, edge: k },
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
-                for id in ids {
-                    self.check_edit(&doc, b, id)?;
-                }
+                let dropped = self.check_edits(&mut doc, b, &ids, &extra)?;
+                out.message = partner_note(extra.len() - dropped, skipped + dropped);
             }
             Op::RemoveCadEdge {
                 body,
@@ -733,7 +1007,13 @@ impl Scene {
                         edge: edge.clone(),
                     },
                 });
-                self.check_edit(&doc, b, id)?;
+                let (keys, skipped) = self.partner_edges(b, edge);
+                let extra: Vec<u32> = keys
+                    .into_iter()
+                    .map(|k| push_edit(&mut doc, Edit::Collapse { body: b, edge: k }))
+                    .collect();
+                let dropped = self.check_edits(&mut doc, b, &[id], &extra)?;
+                out.message = partner_note(extra.len() - dropped, skipped + dropped);
             }
             Op::Weld {
                 body,
@@ -763,7 +1043,22 @@ impl Scene {
                         to: to.clone(),
                     },
                 });
-                self.check_edit(&doc, b, id)?;
+                let (pairs, skipped) = self.partner_vertex_pairs(b, from, to);
+                let extra: Vec<u32> = pairs
+                    .into_iter()
+                    .map(|(f, t)| {
+                        push_edit(
+                            &mut doc,
+                            Edit::Weld {
+                                body: b,
+                                from: f,
+                                to: t,
+                            },
+                        )
+                    })
+                    .collect();
+                let dropped = self.check_edits(&mut doc, b, &[id], &extra)?;
+                out.message = partner_note(extra.len() - dropped, skipped + dropped);
             }
             Op::SetHard { body, edge, hard } => {
                 let b = self.body_or_first(*body)?;
@@ -1459,4 +1754,109 @@ pub fn iso_walk_within(
 /// Faces of a CAD edge (helper for UIs).
 pub fn edge_faces(ctx: &BodyCtx, e: EdgeId) -> Vec<FaceId> {
     ctx.topo.edge(e).faces.clone()
+}
+
+/// Two transforms agree (rotation entries and translation within tolerance).
+fn same_transform(a: &DAffine3, b: &DAffine3, size: f64) -> bool {
+    let r = (a.matrix3 - b.matrix3)
+        .to_cols_array()
+        .iter()
+        .all(|x| x.abs() < 1e-6);
+    r && (a.translation - b.translation).length() < 1e-6 * size.max(1.0)
+}
+
+/// Two cuts through the same 3D points (in any order).
+fn same_cut(c: &BodyCtx, a: &Rule, b: &Rule, tol: f64) -> bool {
+    let pts = |r: &Rule| -> Vec<DVec3> {
+        let Rule::Cut { points, .. } = r else {
+            return vec![];
+        };
+        points
+            .iter()
+            .map(|p| match p {
+                CutPoint::Face { face, uv, .. } => c.point(*face, *uv),
+                CutPoint::CadEdge { edge, t, .. } => c.edge_point(*edge, *t),
+                CutPoint::Vertex {
+                    key: VertexKey::Cad(v),
+                    ..
+                } => c.topo.vertex(*v).point,
+                CutPoint::Vertex { .. } => DVec3::NAN,
+            })
+            .collect()
+    };
+    let (pa, pb) = (pts(a), pts(b));
+    pa.len() == pb.len()
+        && pa
+            .iter()
+            .all(|p| pb.iter().any(|q| (*p - *q).length() < tol))
+}
+
+/// CAD faces of the polygons holding all the given output vertices (or,
+/// when no polygon holds them all, any of them).
+pub(crate) fn faces_around(m: &crate::mesh::OutputMesh, verts: &[u32]) -> Vec<FaceId> {
+    let pick = |all: bool| -> Vec<FaceId> {
+        m.polygons
+            .iter()
+            .filter(|p| {
+                if all {
+                    verts.iter().all(|v| p.verts.contains(v))
+                } else {
+                    verts.iter().any(|v| p.verts.contains(v))
+                }
+            })
+            .map(|p| p.face)
+            .collect()
+    };
+    let mut f = pick(true);
+    if f.is_empty() {
+        f = pick(false);
+    }
+    f.sort();
+    f.dedup();
+    f
+}
+
+/// Output vertex nearest to `p`, if within `tol`.
+pub(crate) fn nearest_vertex(m: &crate::mesh::OutputMesh, p: DVec3, tol: f64) -> Option<u32> {
+    m.vertices
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (i, (v.position - p).length()))
+        .filter(|(_, d)| *d < tol)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i as u32)
+}
+
+/// The keyed output edge whose ends are the transformed `pa`, `pb` (nearest
+/// output vertices within `tol`), preferring the one whose middle is
+/// nearest the transformed `mid`.
+pub(crate) fn match_edge(
+    m: &crate::mesh::OutputMesh,
+    t: &DAffine3,
+    pa: DVec3,
+    pb: DVec3,
+    mid: DVec3,
+    tol: f64,
+) -> Option<EdgeKey> {
+    let ia = nearest_vertex(m, t.transform_point3(pa), tol)?;
+    let ib = nearest_vertex(m, t.transform_point3(pb), tol)?;
+    let (lo, hi) = (ia.min(ib), ia.max(ib));
+    let qm = t.transform_point3(mid);
+    let d = |e: &crate::mesh::OutEdge| (e.path[e.path.len() / 2] - qm).length();
+    m.edges
+        .iter()
+        .filter(|e| e.a == lo && e.b == hi && e.key.is_some())
+        .min_by(|x, y| d(x).total_cmp(&d(y)))
+        .and_then(|e| e.key.clone())
+}
+
+/// Outcome note for Link / symmetry copies.
+fn partner_note(copies: usize, skipped: usize) -> Option<String> {
+    match (copies, skipped) {
+        (0, 0) => None,
+        (c, 0) => Some(format!("applied to {c} linked or mirrored partner(s)")),
+        (c, s) => Some(format!(
+            "applied to {c} linked or mirrored partner(s); {s} partner(s) skipped: no matching geometry there"
+        )),
+    }
 }

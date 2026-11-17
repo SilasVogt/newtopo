@@ -442,3 +442,118 @@ fn occt_property_all_models() {
     }
     eprintln!("occt property: accepted {acc}, refused {refused}");
 }
+
+/// Line edges lying on face `w` (by the polygons using them).
+fn line_edges_on(m: &OutputMesh, w: FaceId) -> Vec<usize> {
+    m.edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e.kind, OutEdgeKind::Line(_)))
+        .filter(|(_, e)| {
+            m.polygons
+                .iter()
+                .any(|p| p.face == w && p.verts.contains(&e.a) && p.verts.contains(&e.b))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// §6.11 (review round 3, finding 5): a Cut on one hole wall of
+/// plate_holes with Link on puts a cut on all 16 walls, as one undo step.
+#[test]
+fn occt_plate_link_cut() {
+    use newtopo_core::doc::CutPoint;
+    let (mut s, b) = occt_scene("plate_holes");
+    let walls = faces_of(&s, b, SurfaceKind::Cylinder);
+    s.apply(Op::SetLink { on: true }).unwrap();
+    let t = s.ctx(b).unwrap().topo.clone();
+    // The wall's two rim circles (non-seam edges).
+    let rims: Vec<_> = t
+        .face(walls[0])
+        .wires
+        .iter()
+        .flat_map(|w| w.coedges.iter().map(|c| c.edge))
+        .filter(|e| !t.edge(*e).seam && !t.edge(*e).degenerate)
+        .collect();
+    assert_eq!(rims.len(), 2, "{rims:?}");
+    let mid = |e: newtopo_kernel::EdgeId| {
+        let (a, z) = t.edge(e).t_range;
+        0.5 * (a + z)
+    };
+    let out = s
+        .apply(Op::Cut {
+            points: vec![
+                CutPoint::CadEdge {
+                    body: b,
+                    edge: rims[0],
+                    t: mid(rims[0]),
+                },
+                CutPoint::CadEdge {
+                    body: b,
+                    edge: rims[1],
+                    t: mid(rims[1]),
+                },
+            ],
+            closed: false,
+        })
+        .unwrap();
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("15 linked"),
+        "{:?}",
+        out.message
+    );
+    assert_eq!(
+        s.doc()
+            .rules
+            .iter()
+            .filter(|r| matches!(r.rule, Rule::Cut { .. }))
+            .count(),
+        16
+    );
+    assert_valid(&mut s, b, "linked cut");
+    let m = s.output_of(b).unwrap().clone();
+    for w in &walls {
+        assert_eq!(line_edges_on(&m, *w).len(), 1, "wall {w}");
+    }
+    assert!(s.undo());
+    assert!(s.doc().rules.is_empty(), "one undo step removes all 16");
+}
+
+/// §6.11 (review round 3, finding 5): RemoveEdge on one linked wall removes
+/// the matching edge on every wall.
+#[test]
+fn occt_plate_link_remove_edge() {
+    let (mut s, b) = occt_scene("plate_holes");
+    let walls = faces_of(&s, b, SurfaceKind::Cylinder);
+    s.apply(Op::SetLink { on: true }).unwrap();
+    s.apply(Op::Connect {
+        patches: PatchSel {
+            body: Some(b),
+            faces: vec![walls[0].0],
+            ..Default::default()
+        },
+        a: 8,
+        b: 0,
+        start_on_seam: false,
+    })
+    .unwrap();
+    let m = s.output_of(b).unwrap().clone();
+    let e = line_edges_on(&m, walls[0])[0];
+    let out = s
+        .apply(Op::RemoveEdge {
+            body: Some(b),
+            edge: m.edges[e].key.clone().unwrap(),
+        })
+        .unwrap();
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("15 linked"),
+        "{:?}",
+        out.message
+    );
+    assert_eq!(s.doc().edits.len(), 16);
+    assert_valid(&mut s, b, "linked remove");
+    let m = s.output_of(b).unwrap().clone();
+    for w in &walls {
+        assert_eq!(line_edges_on(&m, *w).len(), 7, "wall {w}");
+    }
+}

@@ -29,7 +29,9 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+mod check;
 mod ext;
+pub use check::MAX_RULE_COUNT;
 pub use ext::{BendArrow, BendInfo, ReplaceReport};
 
 /// Undo depth (SPEC §4.7).
@@ -625,9 +627,42 @@ impl Scene {
         self.write_ntopo(path)
     }
 
+    /// Write the archive to a temporary sibling of `path`, sync it, then
+    /// rename it over `path`, so a failed save never destroys the previous
+    /// file. `persist` replaces an existing destination on every platform
+    /// (`rename(2)` on Unix, `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on
+    /// Windows). The temporary file is removed if anything fails.
     fn write_ntopo(&self, path: &Path) -> anyhow::Result<()> {
-        let file =
-            std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d,
+            _ => Path::new("."),
+        };
+        let name = path
+            .file_name()
+            .with_context(|| format!("{} is not a file path", path.display()))?;
+        let mut prefix = std::ffi::OsString::from(".");
+        prefix.push(name);
+        prefix.push(".");
+        let tmp = tempfile::Builder::new()
+            .prefix(&prefix)
+            .suffix(".tmp")
+            .tempfile_in(dir)
+            .with_context(|| format!("create a temporary file in {}", dir.display()))?;
+        let file = self.write_zip(tmp.reopen()?)?;
+        file.sync_all()
+            .with_context(|| format!("sync {}", tmp.path().display()))?;
+        drop(file);
+        tmp.persist(path)
+            .map_err(|e| e.error)
+            .with_context(|| format!("replace {}", path.display()))?;
+        #[cfg(unix)]
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    }
+
+    fn write_zip(&self, file: std::fs::File) -> anyhow::Result<std::fs::File> {
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -648,19 +683,36 @@ impl Scene {
         }
         zip.start_file("cad/source.sha256", opts)?;
         zip.write_all(shas.as_bytes())?;
-        zip.finish()?;
-        Ok(())
+        Ok(zip.finish()?)
     }
 
-    /// Load a `.ntopo` into a fresh scene. Newer formats are refused.
+    /// Load a `.ntopo` into a fresh scene. Newer formats are refused, and
+    /// so are archives over the default [`LoadLimits`] and scenes whose
+    /// references do not match their CAD data.
     pub fn load(kernel: Arc<dyn CadKernel>, path: &Path) -> anyhow::Result<Scene> {
+        Self::load_with_limits(kernel, path, &LoadLimits::default())
+    }
+
+    /// [`Scene::load`] with explicit size limits for untrusted archives.
+    pub fn load_with_limits(
+        kernel: Arc<dyn CadKernel>,
+        path: &Path,
+        limits: &LoadLimits,
+    ) -> anyhow::Result<Scene> {
         let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
         let mut zip = zip::ZipArchive::new(file).context("not a .ntopo archive")?;
-        let mut json = String::new();
-        zip.by_name("scene.json")
-            .context("scene.json missing")?
-            .read_to_string(&mut json)?;
+        if zip.len() > limits.max_entries {
+            bail!(
+                "the archive has {} entries (at most {} allowed)",
+                zip.len(),
+                limits.max_entries
+            );
+        }
+        let mut budget = limits.max_total;
+        let json = read_entry(&mut zip, "scene.json", limits.max_scene_json, &mut budget)?;
+        let json = String::from_utf8(json).context("scene.json is not UTF-8")?;
         let raw: serde_json::Value = serde_json::from_str(&json)?;
+        drop(json);
         let ver = raw
             .get("format_version")
             .and_then(|v| v.as_u64())
@@ -675,14 +727,20 @@ impl Scene {
         let mut scene = Scene::new(kernel);
         let mut remap: BTreeMap<BodyId, BodyId> = BTreeMap::new();
         for b in &doc.bodies {
-            let mut bytes = Vec::new();
-            zip.by_name(&format!("cad/{}.bbrep", b.id.0))
-                .with_context(|| format!("cad/{}.bbrep missing", b.id.0))?
-                .read_to_end(&mut bytes)?;
+            if remap.contains_key(&b.id) {
+                bail!("body {} is listed twice", b.id.0);
+            }
+            let bytes = read_entry(
+                &mut zip,
+                &format!("cad/{}.bbrep", b.id.0),
+                limits.max_brep,
+                &mut budget,
+            )?;
             let kbody = scene
                 .kernel
                 .load_brep(&bytes)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            drop(bytes);
             let ctx =
                 BodyCtx::build(scene.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
             let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
@@ -698,15 +756,39 @@ impl Scene {
         if remap.iter().any(|(a, b)| a != b) {
             doc.remap_bodies(&remap);
         }
+        scene
+            .check_document(&doc)
+            .context("the scene does not match its CAD data")?;
         scene.doc = Arc::new(doc);
         scene.saved = Some(scene.doc.clone());
         Ok(scene)
     }
 
+    /// Check that every body, face, edge and vertex a document names exists
+    /// in this scene's CAD data.
+    pub fn check_document(&self, doc: &Document) -> anyhow::Result<()> {
+        check::check_document(doc, |b| self.bodies.get(&b).map(|c| &c.ctx.topo))
+    }
+
     /// Replace the document wholesale as one undo step (used by import
-    /// replace flows and scripts). Bodies must already be known.
+    /// replace flows and scripts). Bodies must already be known. Only for
+    /// documents built in-process; use [`Scene::try_set_document`] for
+    /// anything read from outside.
     pub fn set_document(&mut self, doc: Document) {
+        debug_assert!(
+            self.check_document(&doc).is_ok(),
+            "set_document: {:?}",
+            self.check_document(&doc)
+        );
         self.commit(doc);
+    }
+
+    /// [`Scene::set_document`] for untrusted documents: refuses one whose
+    /// references do not match the loaded CAD data.
+    pub fn try_set_document(&mut self, doc: Document) -> anyhow::Result<()> {
+        self.check_document(&doc)?;
+        self.commit(doc);
+        Ok(())
     }
 
     /// Bodies known to the scene (document order).
@@ -720,6 +802,65 @@ impl Scene {
             .map(|e| e.lines_per_rule.clone())
             .unwrap_or_default()
     }
+}
+
+/// Size limits for reading a `.ntopo` (an untrusted zip archive).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadLimits {
+    /// Entries in the archive.
+    pub max_entries: usize,
+    /// Decompressed bytes of `scene.json`.
+    pub max_scene_json: u64,
+    /// Decompressed bytes of each `cad/<body>.bbrep`.
+    pub max_brep: u64,
+    /// Decompressed bytes read in all.
+    pub max_total: u64,
+}
+
+impl Default for LoadLimits {
+    fn default() -> Self {
+        LoadLimits {
+            max_entries: 4096,
+            max_scene_json: 64 << 20,
+            max_brep: 1 << 30,
+            max_total: 4 << 30,
+        }
+    }
+}
+
+/// Read one archive entry, refusing it once it decompresses past `limit` or
+/// past what is left of the shared `budget`. The size the archive declares
+/// is only used to refuse early; the read itself is bounded.
+fn read_entry(
+    zip: &mut zip::ZipArchive<std::fs::File>,
+    name: &str,
+    limit: u64,
+    budget: &mut u64,
+) -> anyhow::Result<Vec<u8>> {
+    let cap = limit.min(*budget);
+    let entry = zip
+        .by_name(name)
+        .with_context(|| format!("{name} missing"))?;
+    let too_big = || {
+        if cap < limit {
+            anyhow::anyhow!("the archive decompresses to more than {} bytes", *budget)
+        } else {
+            anyhow::anyhow!("{name} is larger than {limit} bytes")
+        }
+    };
+    if entry.size() > cap {
+        return Err(too_big());
+    }
+    let mut out = Vec::with_capacity(entry.size().min(64 << 20) as usize);
+    entry
+        .take(cap + 1)
+        .read_to_end(&mut out)
+        .with_context(|| format!("read {name}"))?;
+    if out.len() as u64 > cap {
+        return Err(too_big());
+    }
+    *budget -= out.len() as u64;
+    Ok(out)
 }
 
 /// Older formats → current (SPEC §8.2). Format 1 is current.

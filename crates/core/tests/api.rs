@@ -463,3 +463,152 @@ fn copy_paste_rules() {
         b: newtopo_core::keys::VertexKey::Pole(FaceId(0), 1),
     },);
 }
+
+/// Review round 3, finding 5: Collapse and Weld on one linked hole wall are
+/// applied to every wall.
+#[test]
+fn link_collapse_and_weld() {
+    use newtopo_core::doc::Edit;
+    use newtopo_core::keys::VertexKey;
+    let (mut s, b) = scene_with(MockBody::plate_with_holes(2, 2));
+    let walls: Vec<u32> = s.link_set(b, FaceId(6)).iter().map(|f| f.0).collect();
+    assert_eq!(walls.len(), 4);
+    s.apply(Op::SetLink { on: true }).unwrap();
+    s.apply(grid(6, 8, 3)).unwrap();
+    assert_valid(&mut s, b, "linked grid");
+    // Line segments inside a wall, between two line crossings.
+    let inner = |m: &OutputMesh, w: u32| -> Vec<usize> {
+        m.edges
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.kind, OutEdgeKind::Line(_)))
+            .filter(|(_, e)| {
+                [e.a, e.b]
+                    .iter()
+                    .all(|v| matches!(m.vertices[*v as usize].key, VertexKey::Crossing { .. }))
+            })
+            .filter(|(_, e)| {
+                m.polygons.iter().any(|p| {
+                    p.face == FaceId(w) && p.verts.contains(&e.a) && p.verts.contains(&e.b)
+                })
+            })
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let m = s.output_of(b).unwrap().clone();
+    let counts: Vec<usize> = walls.iter().map(|w| inner(&m, *w).len()).collect();
+    assert!(
+        counts.iter().all(|c| *c == counts[0] && *c >= 4),
+        "{counts:?}"
+    );
+    let n =
+        |s: &Scene, f: &dyn Fn(&Edit) -> bool| s.doc().edits.iter().filter(|e| f(&e.edit)).count();
+    let e = inner(&m, 6)[0];
+    let out = s
+        .apply(Op::Collapse {
+            body: Some(b),
+            edge: m.edges[e].key.clone().unwrap(),
+            confirmed: false,
+        })
+        .unwrap();
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("3 linked"),
+        "{:?}",
+        out.message
+    );
+    assert_eq!(n(&s, &|e| matches!(e, Edit::Collapse { .. })), 4);
+    assert_valid(&mut s, b, "linked collapse");
+    let m2 = s.output_of(b).unwrap().clone();
+    let after: Vec<usize> = walls.iter().map(|w| inner(&m2, *w).len()).collect();
+    assert!(
+        after.iter().all(|c| *c == after[0] && *c < counts[0]),
+        "{after:?}"
+    );
+    // Weld the two ends of another inner segment, away from the collapse.
+    let e = *inner(&m2, 6).last().unwrap();
+    let (from, to) = (
+        m2.vertices[m2.edges[e].a as usize].key.clone(),
+        m2.vertices[m2.edges[e].b as usize].key.clone(),
+    );
+    let out = s
+        .apply(Op::Weld {
+            body: Some(b),
+            from,
+            to,
+            confirmed: false,
+        })
+        .unwrap();
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("3 linked"),
+        "{:?}",
+        out.message
+    );
+    assert_eq!(n(&s, &|e| matches!(e, Edit::Weld { .. })), 4);
+    assert_valid(&mut s, b, "linked weld");
+    let m3 = s.output_of(b).unwrap().clone();
+    let welded: Vec<usize> = walls.iter().map(|w| inner(&m3, *w).len()).collect();
+    assert!(
+        welded.iter().all(|c| *c == welded[0] && *c < after[0]),
+        "{welded:?}"
+    );
+    // Link off: one wall only.
+    s.apply(Op::SetLink { on: false }).unwrap();
+    let e = inner(&m3, 6)[0];
+    let out = s
+        .apply(Op::Collapse {
+            body: Some(b),
+            edge: m3.edges[e].key.clone().unwrap(),
+            confirmed: false,
+        })
+        .unwrap();
+    assert!(out.message.is_none(), "{:?}", out.message);
+    assert_eq!(n(&s, &|e| matches!(e, Edit::Collapse { .. })), 5);
+}
+
+/// Review round 3, finding 5: a Cut on the left boss is mirrored onto the
+/// right one with symmetry on.
+#[test]
+fn symmetry_cut() {
+    use newtopo_core::doc::CutPoint;
+    let (mut s, b) = scene_with(MockBody::symmetric_part());
+    s.apply(Op::SetSymmetry {
+        on: true,
+        axes: vec![Axis::X],
+    })
+    .unwrap();
+    let t = s.ctx(b).unwrap().topo.clone();
+    let rims: Vec<_> = t
+        .face(FaceId(8))
+        .wires
+        .iter()
+        .flat_map(|w| w.coedges.iter().map(|c| c.edge))
+        .filter(|e| !t.edge(*e).seam && !t.edge(*e).degenerate)
+        .collect();
+    assert!(rims.len() >= 2, "{rims:?}");
+    let pt = |e: newtopo_kernel::EdgeId| {
+        let (a, z) = t.edge(e).t_range;
+        CutPoint::CadEdge {
+            body: b,
+            edge: e,
+            t: 0.5 * (a + z),
+        }
+    };
+    let out = s
+        .apply(Op::Cut {
+            points: vec![pt(rims[0]), pt(rims[1])],
+            closed: false,
+        })
+        .unwrap();
+    assert!(
+        out.message
+            .as_deref()
+            .unwrap_or("")
+            .contains("1 linked or mirrored"),
+        "{:?}",
+        out.message
+    );
+    assert_valid(&mut s, b, "mirrored cut");
+    let m = s.output_of(b).unwrap().clone();
+    assert_eq!(lines_on_face(&m, 8), 1);
+    assert_eq!(lines_on_face(&m, 6), 1);
+}
