@@ -163,14 +163,21 @@ impl DocState {
         }
     }
 
-    /// Start a group of ops that becomes one undo step (closes any open
-    /// gesture first).
-    pub fn begin_group(&mut self) {
-        if let Some(scene) = self.scene.as_mut() {
-            let _ = guard(|| {
-                scene.end_coalesce();
-                scene.begin_coalesce();
-            });
+    /// Several ops as one undo step, all or nothing.
+    pub fn apply_all(&mut self, ops: Vec<Op>) -> Result<Vec<OpOutcome>, ApplyError> {
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(ApplyError::NoScene);
+        };
+        match guard(|| scene.apply_all(ops)) {
+            Ok(Ok(o)) => {
+                self.bump();
+                Ok(o)
+            }
+            Ok(Err(r)) => Err(ApplyError::Refused(r)),
+            Err(e) => {
+                self.bump();
+                Err(ApplyError::Engine(e))
+            }
         }
     }
 
@@ -211,7 +218,14 @@ impl DocState {
         let Some(scene) = self.scene.as_mut() else {
             return Err(crate::strings::TOAST_NO_SCENE.into());
         };
-        guard(|| scene.save(path))?.map_err(|e| format!("{e:#}"))
+        guard(|| scene.save_copy(path))?.map_err(|e| format!("{e:#}"))
+    }
+
+    /// Store the viewport camera in the document (not an undo step).
+    pub fn set_camera(&mut self, c: newtopo_core::doc::Camera) {
+        if let Some(scene) = self.scene.as_mut() {
+            let _ = guard(|| scene.set_camera(c));
+        }
     }
 
     pub fn open(&mut self, path: &Path) -> Result<(), String> {

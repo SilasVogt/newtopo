@@ -145,7 +145,8 @@ pub enum PendingAfterPrompt {
 pub struct Confirm {
     pub title: String,
     pub body: String,
-    pub op: Op,
+    /// Re-applied with `confirmed: true` (as one step when several).
+    pub ops: Vec<Op>,
 }
 
 #[derive(Default)]
@@ -199,6 +200,10 @@ pub struct AppState {
     pub overlay_rev: u64,
     pub hover: Option<crate::viewport::Hover>,
     pub ui_pointer: Option<egui::Pos2>,
+    /// Rules copied with Ctrl+C (SPEC §6.13).
+    pub clipboard: Option<newtopo_core::link::Clipboard>,
+    /// Bodies that can't be selected (see [`AppState::is_locked`]).
+    pub locked: BTreeSet<BodyId>,
     /// Selection before the last key command (double-press support).
     pub sel_before_key: Option<Selection>,
     pub drag: Option<crate::viewport::DragState>,
@@ -277,6 +282,8 @@ impl App {
             hover: None,
             ui_pointer: None,
             sel_before_key: None,
+            clipboard: None,
+            locked: BTreeSet::new(),
             drag: None,
             jobs: Default::default(),
             time: 0.0,
@@ -565,8 +572,14 @@ impl AppState {
     pub fn effective_hidden(&self) -> BTreeSet<BodyId> {
         let mut h = self.view.hidden.clone();
         h.extend(self.local.body_hidden_demo.iter().copied());
+        let hidden_layers: BTreeSet<LayerId> = self
+            .layer_rows()
+            .into_iter()
+            .filter(|l| !l.visible)
+            .map(|l| l.id)
+            .collect();
         for b in self.body_rows() {
-            if self.local.layer_hidden.contains(&b.layer) {
+            if hidden_layers.contains(&b.layer) || !b.visible {
                 h.insert(b.id);
             }
         }
@@ -584,16 +597,29 @@ impl AppState {
         h
     }
 
+    /// Locked objects (own lock or a locked layer); cached per frame
+    /// because picking asks once per triangle.
     pub fn is_locked(&self, body: BodyId) -> bool {
-        self.local.body_locked.contains(&body)
-            || self
-                .body_rows()
-                .iter()
-                .any(|b| b.id == body && self.local.layer_locked.contains(&b.layer))
+        self.locked.contains(&body)
+    }
+
+    fn compute_locked(&self) -> BTreeSet<BodyId> {
+        let locked_layers: BTreeSet<LayerId> = self
+            .layer_rows()
+            .into_iter()
+            .filter(|l| l.locked)
+            .map(|l| l.id)
+            .collect();
+        self.body_rows()
+            .into_iter()
+            .filter(|b| b.locked || locked_layers.contains(&b.layer))
+            .map(|b| b.id)
+            .collect()
     }
 
     /// Rebuild view data if the document or display settings changed.
     pub fn ensure_view_data(&mut self) {
+        self.locked = self.compute_locked();
         let params = DisplayParams {
             preview: self.view.preview,
             wireframe: self.view.wireframe,
@@ -648,17 +674,41 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             return (0, 0);
         }
-        self.doc.begin_group();
-        let mut n = 0;
-        let mut lines = 0;
-        for op in ops {
-            if let Some(o) = self.apply(op) {
-                n += 1;
-                lines += o.lines_added;
+        match ops.len() {
+            0 => return (0, 0),
+            1 => {
+                let op = ops.into_iter().next().expect("one op");
+                return self.apply(op).map(|o| (1, o.lines_added)).unwrap_or((0, 0));
+            }
+            _ => {}
+        }
+        // All or nothing, one undo step.
+        self.doc.end_gesture();
+        match self.doc.apply_all(ops.clone()) {
+            Ok(outs) => {
+                for m in outs.iter().filter_map(|o| o.message.clone()) {
+                    self.toast(ToastKind::Info, m);
+                }
+                (outs.len(), outs.iter().map(|o| o.lines_added).sum())
+            }
+            Err(ApplyError::Refused(r)) if r.needs_confirmation => {
+                self.ui.confirm = Some(Confirm {
+                    title: S::DLG_CONFIRM.into(),
+                    body: r.reason.clone(),
+                    ops,
+                });
+                (0, 0)
+            }
+            Err(e) => {
+                let kind = if matches!(e, ApplyError::Engine(_)) {
+                    ToastKind::Error
+                } else {
+                    ToastKind::Warn
+                };
+                self.toast(kind, e.message());
+                (0, 0)
             }
         }
-        self.doc.end_gesture();
-        (n, lines)
     }
 
     fn apply_ex(&mut self, op: Op, coalesced: bool) -> Option<newtopo_core::ops::OpOutcome> {
@@ -682,7 +732,7 @@ impl AppState {
                 self.ui.confirm = Some(Confirm {
                     title: S::DLG_CONFIRM.into(),
                     body: r.reason.clone(),
-                    op,
+                    ops: vec![op],
                 });
                 None
             }
@@ -941,24 +991,63 @@ impl AppState {
         }
     }
 
-    fn copy_rules(&mut self) {
-        // SPEC §6.13: copy split lines, rules and edits of the selected object.
-        // The facade has no copy/paste op yet (see docs/notes/app.md).
-        if self.sel.objects.len() != 1 {
+    /// SPEC §6.13: Ctrl+C on one object copies its split lines and rules.
+    pub fn copy_rules(&mut self) {
+        if self.is_demo() {
+            self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
+            return;
+        }
+        let objs: Vec<BodyId> = self.sel.bodies(self.mode).into_iter().collect();
+        let [body] = objs.as_slice() else {
             self.toast(
                 ToastKind::Info,
                 "Select exactly one object to copy its rules.",
             );
             return;
+        };
+        let Some(scene) = self.doc.scene.as_ref() else {
+            return;
+        };
+        match crate::docstate::guard(|| scene.copy_rules(*body)) {
+            Ok(clip) => {
+                let msg = format!(
+                    "Copied {} rule(s) and {} split line(s){}",
+                    clip.rules.len(),
+                    clip.split_lines.len(),
+                    if clip.edits > 0 {
+                        format!("; {} edit(s) stay behind", clip.edits)
+                    } else {
+                        String::new()
+                    }
+                );
+                self.clipboard = Some(clip);
+                self.toast(ToastKind::Info, msg);
+            }
+            Err(e) => self.toast(ToastKind::Error, e),
         }
-        self.toast(ToastKind::Warn, format!("{}: copy rules", S::TOAST_NOT_YET));
     }
 
-    fn paste_rules(&mut self) {
-        self.toast(
-            ToastKind::Warn,
-            format!("{}: paste rules", S::TOAST_NOT_YET),
-        );
+    /// Ctrl+V on one or more other objects maps the rules through face
+    /// congruence; unmatched faces are reported by the engine.
+    pub fn paste_rules(&mut self) {
+        let Some(clip) = self.clipboard.clone() else {
+            self.toast(ToastKind::Info, "Copy an object's rules first (Ctrl+C).");
+            return;
+        };
+        let targets: Vec<BodyId> = self
+            .sel
+            .bodies(self.mode)
+            .into_iter()
+            .filter(|b| *b != clip.source)
+            .collect();
+        if targets.is_empty() {
+            self.toast(ToastKind::Info, "Select the objects to paste onto.");
+            return;
+        }
+        self.apply(Op::PasteRules {
+            clipboard: clip,
+            targets,
+        });
     }
 
     pub fn request(&mut self, what: PendingAfterPrompt) {

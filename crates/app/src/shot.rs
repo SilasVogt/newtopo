@@ -798,7 +798,8 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             app.st.weld(best.1, best.2);
             if let Some(c) = app.st.ui.confirm.take() {
                 eprintln!("weld asks for confirmation: {}", c.body);
-                app.st.apply(crate::jobs::with_confirmed(c.op));
+                app.st
+                    .apply_group(c.ops.into_iter().map(crate::jobs::with_confirmed).collect());
             }
             report(&mut app, "weld", r0);
         }
@@ -852,6 +853,198 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         app.st.ui.import_report = None;
         app.st.set_mode(Mode::Object);
         s.shoot(&ctx, &mut app, frames(6), &dir.join("15-assembly.png"))?;
+    }
+
+    // 4. Link on the plate: Connect on one hole wall reaches all 16.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("plate_holes.step"),
+        )?;
+        let b = first_body(&app);
+        let walls = faces_of_kind(&app, b, newtopo_kernel::SurfaceKind::Cylinder);
+        app.st.apply(newtopo_core::ops::Op::SetLink { on: true });
+        app.st.mode = Mode::Face;
+        app.st.sel.faces.insert((b, walls[0]));
+        app.st.tool.seg.a = 8;
+        app.st.activate_tool(Tool::Connect);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        let lines = app
+            .st
+            .vd
+            .edges
+            .iter()
+            .filter(|e| e.kind == crate::viewdata::EdgeKind::Line)
+            .count();
+        let partners = app.st.partner_faces().len();
+        eprintln!(
+            "link: Connect on 1 wall → {lines} generated edges; {partners} linked walls tinted"
+        );
+        anyhow::ensure!(
+            partners == walls.len() - 1,
+            "link set should cover every hole wall"
+        );
+        app.st.view.camera.pitch = 0.62;
+        app.st.view.camera.yaw += 0.25;
+        s.shoot(&ctx, &mut app, frames(6), &dir.join("17-plate-link.png"))?;
+        // Tab flips A/B on the hovered patch (FlipConnect).
+        let c = app.st.vd.face_centers[&newtopo_render::pick::FaceRef {
+            body: b.0,
+            face: walls[0].0,
+        }];
+        app.st.hover = Some(crate::viewport::Hover::Face(
+            newtopo_render::pick::FaceRef {
+                body: b.0,
+                face: walls[0].0,
+            },
+            c.as_dvec3(),
+        ));
+        let r0 = app.st.doc.revision;
+        app.st.tool_key(egui::Key::Tab, egui::Modifiers::NONE);
+        eprintln!(
+            "flip A/B: {}",
+            if app.st.doc.revision != r0 {
+                "applied"
+            } else {
+                "not applied"
+            }
+        );
+        // Layer ops: create, move, hide, then undo them.
+        let r0 = app.st.doc.revision;
+        let id = app
+            .st
+            .apply(newtopo_core::ops::Op::CreateLayer {
+                name: "Holes".into(),
+            })
+            .and_then(|o| o.created);
+        if let Some(id) = id {
+            let l = newtopo_core::doc::LayerId(id);
+            app.st
+                .apply(newtopo_core::ops::Op::MoveBodyToLayer { body: b, layer: l });
+            app.st.apply(newtopo_core::ops::Op::SetLayerVisible {
+                layer: l,
+                visible: false,
+            });
+            app.st.ensure_view_data();
+            let hidden = app.st.effective_hidden().contains(&b);
+            eprintln!("layers: created {id}, moved, hidden → body hidden: {hidden}");
+            for _ in 0..3 {
+                app.st.undo();
+            }
+        }
+        eprintln!("layers: revision {r0} → {} after undo", app.st.doc.revision);
+    }
+
+    // 5. Copy/paste rules between the two posts of the assembly; Replace.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("assembly.step"),
+        )?;
+        let bodies: Vec<(String, BodyId)> = app
+            .st
+            .doc
+            .scene
+            .as_ref()
+            .map(|s| {
+                s.doc()
+                    .bodies
+                    .iter()
+                    .map(|b| (b.name.clone(), b.id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let id = |n: &str| bodies.iter().find(|b| b.0 == n).map(|b| b.1);
+        let (Some(left), Some(right)) = (id("Post left"), id("Post right")) else {
+            anyhow::bail!("assembly posts not found: {bodies:?}");
+        };
+        let walls = faces_of_kind(&app, left, newtopo_kernel::SurfaceKind::Cylinder);
+        app.st.mode = Mode::Face;
+        app.st.sel.faces = walls.iter().map(|f| (left, *f)).collect();
+        app.st.tool.seg.a = 12;
+        app.st.activate_tool(Tool::Connect);
+        app.st.tool.active = Tool::Select;
+        app.st.sel.faces.clear();
+        app.st.mode = Mode::Object;
+        app.st.sel.objects = [left].into();
+        app.st.copy_rules();
+        app.st.sel.objects = [right].into();
+        let r0 = app.st.doc.revision;
+        app.st.paste_rules();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        let lines_on = |app: &App, b: BodyId| {
+            app.st
+                .vd
+                .edges
+                .iter()
+                .filter(|e| e.body == b && e.kind == crate::viewdata::EdgeKind::Line)
+                .count()
+        };
+        eprintln!(
+            "paste: revision {r0} → {}; generated edges left {} right {}; last toast: {:?}",
+            app.st.doc.revision,
+            lines_on(&app, left),
+            lines_on(&app, right),
+            app.st.toasts.items.last().map(|t| t.text.clone())
+        );
+        anyhow::ensure!(
+            lines_on(&app, right) > 0 && lines_on(&app, right) == lines_on(&app, left),
+            "paste should copy the posts' lines"
+        );
+        app.st.sel.objects = [left, right].into();
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(6),
+            &dir.join("18-assembly-paste.png"),
+        )?;
+        // Re-import with Replace (the default for same-named objects).
+        app.st.start_import(models.join("assembly.step"));
+        settle(&mut s, &ctx, &mut app, &mut t, |a| !a.st.busy(), 120.0);
+        let all_replace = app.st.ui.import_list.as_ref().is_some_and(|l| {
+            l.rows
+                .iter()
+                .all(|r| r.choice == crate::jobs::ImportChoice::Replace)
+        });
+        app.st.accept_import_list();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        let report = app.st.ui.import_report.take();
+        eprintln!(
+            "replace: list defaulted to Replace: {all_replace}; report: {:?}",
+            report.map(|r| (r.bodies, r.errors, r.warnings))
+        );
+        let n = app
+            .st
+            .doc
+            .scene
+            .as_ref()
+            .map(|s| s.doc().bodies.len())
+            .unwrap_or(0);
+        eprintln!(
+            "replace: {n} bodies after re-import; right post lines {}",
+            lines_on(
+                &app,
+                app.st
+                    .doc
+                    .scene
+                    .as_ref()
+                    .and_then(|s| s
+                        .doc()
+                        .bodies
+                        .iter()
+                        .find(|b| b.name == "Post right")
+                        .map(|b| b.id))
+                    .unwrap_or_default()
+            )
+        );
     }
     Ok(())
 }

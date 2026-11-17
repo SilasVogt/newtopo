@@ -70,6 +70,8 @@ pub struct BendArrow {
     pub normal: Vec3,
     pub a: Option<Vec3>,
     pub b: Option<Vec3>,
+    pub a_origin: Option<Vec3>,
+    pub b_origin: Option<Vec3>,
     /// Size of the face (bounding-box diagonal) to scale the arrow.
     pub size: f32,
 }
@@ -279,84 +281,52 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
     }
     for e in &entries {
         if let Ok(p) = guard(|| scene.patches(e.id)) {
-            // Arrows: evaluate each patch's interior sample on the surface;
-            // the A family spreads along u (OneU, Two) or v (OneV).
-            use newtopo_core::eval::lines::Bend;
-            // Sample point per face: the display-mesh vertex nearest the
-            // mesh centroid (on the surface, with its exact uv).
-            let samples: HashMap<FaceId, (glam::DVec3, f64)> = guard(|| {
+            // Connect arrows (SPEC §5.2, §6.2) from the engine's bend info;
+            // scaled by the face's size.
+            let sizes: HashMap<FaceId, f64> = guard(|| {
                 scene
                     .body_view(e.id)
                     .map(|bv| {
                         bv.face_meshes
                             .iter()
                             .enumerate()
-                            .filter(|(_, fm)| !fm.positions.is_empty())
                             .map(|(fi, fm)| {
-                                let c = fm.positions.iter().copied().sum::<glam::DVec3>()
-                                    / fm.positions.len() as f64;
-                                let k = (0..fm.positions.len())
-                                    .min_by(|&x, &y| {
-                                        (fm.positions[x] - c)
-                                            .length()
-                                            .total_cmp(&(fm.positions[y] - c).length())
-                                    })
-                                    .unwrap_or(0);
                                 let mut bb = newtopo_kernel::Aabb::EMPTY;
-                                fm.positions.iter().for_each(|p| bb.add(*p));
-                                (FaceId(fi as u32), (fm.positions[k], bb.diagonal()))
+                                fm.positions.iter().for_each(|q| bb.add(*q));
+                                (FaceId(fi as u32), bb.diagonal())
                             })
                             .collect()
                     })
                     .unwrap_or_default()
             })
             .unwrap_or_default();
-            let k = scene.kernel.clone();
-            // Kernel calls take the kernel's body handle, not the document's.
-            let Some(kb) = guard(|| scene.ctx(e.id).map(|c| c.kbody)).ok().flatten() else {
-                vd.patches.insert(e.id, p);
-                continue;
-            };
-            let mut done: BTreeSet<FaceId> = BTreeSet::new();
+            let m = e.transform;
             for info in &p {
-                let (da, db) = match info.bend {
-                    Bend::OneU => (Some(0), None),
-                    Bend::OneV => (Some(1), None),
-                    Bend::Two => (Some(0), Some(1)),
-                    Bend::Radial => (Some(0), None),
-                    Bend::Flat => (None, None),
-                };
-                if da.is_none() || !done.insert(info.face) {
-                    continue;
-                }
-                let Some((sp, size)) = samples.get(&info.face) else {
+                let Ok(Some(bi)) = guard(|| scene.bend_info(&info.id)) else {
                     continue;
                 };
-                // Exact uv of the sample through the kernel.
-                let Ok(Ok(proj)) = guard(|| k.project_to_face(kb, info.face, &[*sp])) else {
+                let arrow = |a: &newtopo_core::scene::BendArrow| {
+                    (xf(&m, a.point), xn(&m, a.spread_dir), xn(&m, a.line_dir))
+                };
+                let (pa, pb) = (bi.a.as_ref().map(arrow), bi.b.as_ref().map(arrow));
+                let Some(origin) = pa.or(pb).map(|x| x.0) else {
                     continue;
                 };
-                let Some(Some((uv, _))) = proj.first() else {
-                    continue;
-                };
-                let Ok(Ok(ev)) = guard(|| k.face_eval(kb, info.face, &[*uv])) else {
-                    continue;
-                };
-                let Some(ev) = ev.first() else { continue };
-                let m = e.transform;
-                let pick = |d: Option<usize>| {
-                    d.map(|d| xn(&m, if d == 0 { ev.du } else { ev.dv }))
-                        .filter(|v| *v != Vec3::ZERO)
-                };
+                // Surface normal from the two directions on the surface.
+                let normal = pa
+                    .map(|x| x.1.cross(x.2).normalize_or_zero())
+                    .unwrap_or(Vec3::Z);
                 vd.arrows
                     .entry((e.id, info.face))
                     .or_default()
                     .push(BendArrow {
-                        origin: xf(&m, ev.p),
-                        normal: xn(&m, ev.n),
-                        a: pick(da),
-                        b: pick(db),
-                        size: *size as f32,
+                        origin,
+                        normal,
+                        a: pa.map(|x| x.1),
+                        b: pb.map(|x| x.1),
+                        a_origin: pa.map(|x| x.0),
+                        b_origin: pb.map(|x| x.0),
+                        size: sizes.get(&info.face).copied().unwrap_or(1.0) as f32,
                     });
             }
             vd.patches.insert(e.id, p);

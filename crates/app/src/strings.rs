@@ -59,6 +59,7 @@ pub const OUTLINER_SEARCH: &str = "Filter objects  (Ctrl+F)";
 pub const OUTLINER_NEW_LAYER: &str = "New layer";
 pub const OUTLINER_DELETE_LAYER: &str = "Delete layer";
 pub const OUTLINER_RENAME: &str = "Rename";
+pub const OUTLINER_SET_ACTIVE: &str = "Make active layer";
 pub const OUTLINER_EXPAND_ALL: &str = "Expand all";
 pub const OUTLINER_COLLAPSE_ALL: &str = "Collapse all";
 pub const OUTLINER_ACTIVE_TIP: &str = "Active layer: imported objects without a layer land here";
@@ -85,6 +86,7 @@ pub const HIST_PHASE: &str = "Phase overrides";
 pub const HIST_DORMANT: &str = "dormant";
 pub const HIST_PURGE: &str = "Purge dormant";
 pub const HIST_DELETE_RULE: &str = "Delete rule";
+pub const HIST_DELETE_EDIT: &str = "Delete edit";
 
 // Tool panel
 pub const SEG_TITLE: &str = "Segments";
@@ -144,10 +146,7 @@ pub const TOAST_ENGINE_MISSING: &str = "This part of the engine isn't available 
 pub const TOAST_NO_CAD_IMPORT: &str = "This build has no CAD import (built without OCCT).";
 pub const TOAST_KERNEL_MISSING: &str =
     "No CAD kernel in this build, so imported geometry can't be loaded.";
-pub const TOAST_NOT_YET: &str = "Not available yet in this build";
 pub const TOAST_COPIED: &str = "Copied";
-pub const TOAST_REPLACE_UNSUPPORTED: &str =
-    "Replace isn't supported by the engine yet; imported as a new object instead.";
 
 // Dialogs
 pub const DLG_CANCEL: &str = "Cancel";

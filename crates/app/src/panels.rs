@@ -68,8 +68,8 @@ impl AppState {
             return layers
                 .into_iter()
                 .map(|l| LayerRow {
-                    visible: l.visible && !self.local.layer_hidden.contains(&l.id),
-                    locked: l.locked || self.local.layer_locked.contains(&l.id),
+                    visible: l.visible,
+                    locked: l.locked,
                     active: l.id == active,
                     id: l.id,
                     name: l.name,
@@ -101,7 +101,7 @@ impl AppState {
                 .into_iter()
                 .map(|b| BodyRow {
                     visible: b.visible && !self.view.hidden.contains(&b.id),
-                    locked: b.locked || self.local.body_locked.contains(&b.id),
+                    locked: b.locked,
                     id: b.id,
                     name: b.name,
                     layer: b.layer,
@@ -170,10 +170,7 @@ impl AppState {
             }
             return;
         }
-        self.toast(
-            ToastKind::Warn,
-            format!("{}: rename layer", S::TOAST_NOT_YET),
-        );
+        self.apply(Op::RenameLayer { layer: id, name });
     }
 
     fn create_layer(&mut self) {
@@ -184,10 +181,15 @@ impl AppState {
             demo.layers.push((format!("Layer {}", id.0 + 1), id));
             return;
         }
-        self.toast(
-            ToastKind::Warn,
-            format!("{}: create layer", S::TOAST_NOT_YET),
-        );
+        let n = self.layer_rows().len() + 1;
+        if let Some(o) = self.apply(Op::CreateLayer {
+            name: format!("Layer {n}"),
+        }) && let Some(id) = o.created
+        {
+            // Start renaming the new layer right away.
+            self.ui.outliner.renaming =
+                Some((RenameTarget::Layer(LayerId(id)), format!("Layer {n}")));
+        }
     }
 
     fn delete_layer(&mut self, id: LayerId) {
@@ -208,10 +210,7 @@ impl AppState {
             self.invalidate_view();
             return;
         }
-        self.toast(
-            ToastKind::Warn,
-            format!("{}: delete layer", S::TOAST_NOT_YET),
-        );
+        self.apply(Op::DeleteLayer { layer: id });
     }
 
     fn move_body_to_layer(&mut self, body: BodyId, layer: LayerId) {
@@ -232,10 +231,7 @@ impl AppState {
             self.invalidate_view();
             return;
         }
-        self.toast(
-            ToastKind::Warn,
-            format!("{}: move to layer", S::TOAST_NOT_YET),
-        );
+        self.apply(Op::MoveBodyToLayer { body, layer });
     }
 
     // ------------------------------------------------------------ outliner
@@ -329,6 +325,35 @@ impl AppState {
                 OutlinerAction::ToggleCollapse(id) => {
                     if !self.ui.outliner.collapsed.remove(&id) {
                         self.ui.outliner.collapsed.insert(id);
+                    }
+                }
+                OutlinerAction::LayerVisible(id, v) if self.doc.has_scene() => {
+                    self.apply(Op::SetLayerVisible {
+                        layer: id,
+                        visible: v,
+                    });
+                }
+                OutlinerAction::LayerLocked(id, v) if self.doc.has_scene() => {
+                    self.apply(Op::SetLayerLocked {
+                        layer: id,
+                        locked: v,
+                    });
+                }
+                OutlinerAction::BodyLocked(id, v) if self.doc.has_scene() => {
+                    if self
+                        .apply(Op::SetBodyLocked {
+                            body: id,
+                            locked: v,
+                        })
+                        .is_some()
+                        && v
+                    {
+                        self.sel.objects.remove(&id);
+                    }
+                }
+                OutlinerAction::SetActive(id) => {
+                    if self.doc.has_scene() {
+                        self.apply(Op::SetActiveLayer { layer: id });
                     }
                 }
                 OutlinerAction::LayerVisible(id, v) => {
@@ -513,6 +538,13 @@ impl AppState {
             );
         }
         resp.context_menu(|ui| {
+            if ui
+                .add_enabled(!l.active, egui::Button::new(S::OUTLINER_SET_ACTIVE))
+                .clicked()
+            {
+                actions.push(OutlinerAction::SetActive(l.id));
+                ui.close();
+            }
             if ui.button(S::OUTLINER_RENAME).clicked() {
                 self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
                 ui.close();
@@ -828,6 +860,7 @@ impl AppState {
             return;
         }
         let mut delete_rule = None;
+        let mut delete_edit = None;
         section(ui, &pal, S::HIST_RULES, rules.len());
         for r in &rules {
             let (icon, detail) = rule_summary(&r.rule);
@@ -860,9 +893,16 @@ impl AppState {
                 if d { S::HIST_DORMANT } else { "" },
                 d,
             );
-            if let Some(why) = reasons.get(&e.id) {
-                r.on_hover_text(why);
-            }
+            let r = match reasons.get(&e.id) {
+                Some(why) => r.on_hover_text(why),
+                None => r,
+            };
+            r.context_menu(|ui| {
+                if ui.button(S::HIST_DELETE_EDIT).clicked() {
+                    delete_edit = Some(e.id);
+                    ui.close();
+                }
+            });
         }
         if !dormant.is_empty() {
             ui.add_space(4.0);
@@ -886,6 +926,9 @@ impl AppState {
         }
         if let Some(id) = delete_rule {
             self.apply(Op::DeleteRule { rule: id });
+        }
+        if let Some(id) = delete_edit {
+            self.apply(Op::DeleteEdit { edit: id });
         }
     }
 
@@ -1131,6 +1174,7 @@ impl AppState {
 }
 
 enum OutlinerAction {
+    SetActive(LayerId),
     ToggleCollapse(LayerId),
     LayerVisible(LayerId, bool),
     LayerLocked(LayerId, bool),

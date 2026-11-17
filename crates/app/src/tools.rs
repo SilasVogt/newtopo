@@ -11,7 +11,7 @@ use egui::{Key, Modifiers, Pos2};
 use glam::{DVec2, DVec3, Vec3};
 use newtopo_core::doc::{CutPoint, IsoDir, PatchId, Rule, SliceScope, Spacing};
 use newtopo_core::ops::{Op, PatchSel};
-use newtopo_kernel::{BodyId, EdgeId, FaceId, UvClass};
+use newtopo_kernel::{BodyId, EdgeId, FaceId};
 use newtopo_render::OverlayColors;
 use newtopo_render::pick::FaceRef;
 use newtopo_render::scene::{RenderScene, with_alpha};
@@ -532,6 +532,7 @@ impl AppState {
             }
             (Tool::Iso, Key::A) => {
                 self.tool.iso_through = !self.tool.iso_through;
+                self.on_hover_changed();
                 true
             }
             (Tool::Slice, Key::A) => {
@@ -550,8 +551,32 @@ impl AppState {
                 true
             }
             (Tool::Connect, Key::Tab) => {
-                // Flip A/B on the hovered patch: the facade has no flip op yet.
-                self.toast(ToastKind::Warn, format!("{}: flip A/B", S::TOAST_NOT_YET));
+                // Flip A/B on the hovered patch (SPEC §6.2).
+                match self.hover {
+                    Some(Hover::Face(f, _)) => {
+                        let (b, face) = (BodyId(f.body), FaceId(f.face));
+                        let ops: Vec<Op> = self
+                            .vd
+                            .patches
+                            .get(&b)
+                            .map(|ps| {
+                                ps.iter()
+                                    .filter(|p| p.face == face)
+                                    .map(|p| Op::FlipConnect { patch: p.id })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if ops.is_empty() {
+                            self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
+                        } else {
+                            self.apply_group(ops);
+                        }
+                    }
+                    _ => self.toast(
+                        ToastKind::Info,
+                        "Hover a patch with Connect lines, then press Tab.",
+                    ),
+                }
                 true
             }
             (Tool::Cut, Key::Enter) => {
@@ -607,21 +632,19 @@ impl AppState {
         };
     }
 
-    fn iso_preview_for(&self, f: FaceRef, p: DVec3) -> Option<IsoPreview> {
+    fn iso_preview_for(&mut self, f: FaceRef, p: DVec3) -> Option<IsoPreview> {
         let (body, face) = (BodyId(f.body), FaceId(f.face));
         let uv = self.face_uv(body, face, p)?;
-        let scene = self.doc.scene.as_ref()?;
+        let m = self.body_transform(body)?;
+        let dir = self.tool.iso_dir.core();
+        let through = self.tool.iso_through;
+        let scene = self.doc.scene.as_mut()?;
         let surface = guard(|| {
             scene
                 .body_view(body)
                 .map(|bv| bv.topology.face(face).surface.clone())
         })
         .ok()??;
-        let m = self.body_transform(body)?;
-        let (value, seed, range) = match self.tool.iso_dir {
-            IsoDirSel::U => (uv.x, uv.y, surface.v_range),
-            IsoDirSel::V => (uv.y, uv.x, surface.u_range),
-        };
         // The op takes the value and seed normalised to the face's
         // parameter range (0..1).
         let norm = |x: f64, r: (f64, f64)| {
@@ -631,46 +654,22 @@ impl AppState {
                 0.5
             }
         };
-        let (value_n, seed_n) = match self.tool.iso_dir {
-            IsoDirSel::U => (norm(value, surface.u_range), norm(seed, surface.v_range)),
-            IsoDirSel::V => (norm(value, surface.v_range), norm(seed, surface.u_range)),
+        let (value, seed) = match self.tool.iso_dir {
+            IsoDirSel::U => (norm(uv.x, surface.u_range), norm(uv.y, surface.v_range)),
+            IsoDirSel::V => (norm(uv.y, surface.v_range), norm(uv.x, surface.u_range)),
         };
-        let n = 96;
-        let uvs: Vec<DVec2> = (0..=n)
-            .map(|i| {
-                let t = range.0 + (range.1 - range.0) * i as f64 / n as f64;
-                match self.tool.iso_dir {
-                    IsoDirSel::U => DVec2::new(value, t),
-                    IsoDirSel::V => DVec2::new(t, value),
-                }
-            })
+        let lines =
+            guard(|| scene.iso_preview(body, face, dir, value, Some(seed), through)).ok()?;
+        let pts = lines
+            .iter()
+            .map(|l| l.iter().map(|q| m.transform_point3(*q).as_vec3()).collect())
             .collect();
-        let k = scene.kernel.clone();
-        let kb = self.kbody(body)?;
-        let evals = guard(|| k.face_eval(kb, face, &uvs)).ok()?.ok()?;
-        let classes = guard(|| k.face_classify_uv(kb, face, &uvs)).ok()?.ok()?;
-        // Keep the inside runs (a trimmed iso line can be several pieces).
-        let mut pieces: Vec<Vec<Vec3>> = Vec::new();
-        let mut cur: Vec<Vec3> = Vec::new();
-        for (e, c) in evals.iter().zip(&classes) {
-            if *c == UvClass::Out {
-                if cur.len() > 1 {
-                    pieces.push(std::mem::take(&mut cur));
-                }
-                cur.clear();
-            } else {
-                cur.push(m.transform_point3(e.p).as_vec3());
-            }
-        }
-        if cur.len() > 1 {
-            pieces.push(cur);
-        }
         Some(IsoPreview {
             body,
             face,
-            value: value_n,
-            seed: seed_n,
-            pts: pieces,
+            value,
+            seed,
+            pts,
         })
     }
 
@@ -906,29 +905,31 @@ impl AppState {
         for (b, k) in generated {
             by_body.entry(b).or_default().push(k);
         }
-        let ops: Vec<(BodyId, Vec<newtopo_core::keys::EdgeKey>)> = by_body.into_iter().collect();
-        if ops.len() > 1 {
-            self.doc.begin_group();
-        }
-        for (b, edges) in ops {
-            let op = if edges.len() == 1 {
-                Op::RemoveEdge {
-                    body: Some(b),
-                    edge: edges[0].clone(),
+        let removed: Vec<(BodyId, Vec<newtopo_core::keys::EdgeKey>)> =
+            by_body.into_iter().collect();
+        let ops: Vec<Op> = removed
+            .iter()
+            .map(|(b, edges)| {
+                if edges.len() == 1 {
+                    Op::RemoveEdge {
+                        body: Some(*b),
+                        edge: edges[0].clone(),
+                    }
+                } else {
+                    Op::RemoveEdges {
+                        body: Some(*b),
+                        edges: edges.clone(),
+                    }
                 }
-            } else {
-                Op::RemoveEdges {
-                    body: Some(b),
-                    edges: edges.clone(),
-                }
-            };
-            if self.apply(op).is_some() {
+            })
+            .collect();
+        if !ops.is_empty() && self.apply_group(ops).0 > 0 {
+            for (b, edges) in removed {
                 for k in edges {
                     self.sel.edges.remove(&EdgeSel::Key(b, k));
                 }
             }
         }
-        self.doc.end_gesture();
         if !cad.is_empty() {
             let sels: Vec<EdgeSel> = cad.iter().map(|c| c.2.clone()).collect();
             let armed = self
@@ -947,7 +948,7 @@ impl AppState {
                 self.ui.confirm = Some(crate::app::Confirm {
                     title: S::DLG_CAD_EDGE_TITLE.into(),
                     body: S::DLG_CAD_EDGE_BODY.into(),
-                    op,
+                    ops: vec![op],
                 });
                 if cad.len() > 1 {
                     self.toast(

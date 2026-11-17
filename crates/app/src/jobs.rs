@@ -278,13 +278,28 @@ impl AppState {
                     match r {
                         Ok(file) => {
                             if file.bodies.len() > 1 {
+                                let existing_names: Vec<String> = self
+                                    .doc
+                                    .scene
+                                    .as_ref()
+                                    .and_then(|s| {
+                                        guard(|| {
+                                            s.doc().bodies.iter().map(|b| b.name.clone()).collect()
+                                        })
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
                                 let rows = file
                                     .bodies
                                     .iter()
                                     .map(|b| ImportRow {
                                         name: b.attrs.name.clone(),
                                         layer: b.attrs.layer.clone(),
-                                        choice: ImportChoice::Keep,
+                                        choice: if existing_names.contains(&b.attrs.name) {
+                                            ImportChoice::Replace
+                                        } else {
+                                            ImportChoice::Keep
+                                        },
                                         selected: false,
                                     })
                                     .collect();
@@ -371,9 +386,6 @@ impl AppState {
         if choices.iter().all(|c| *c == ImportChoice::Exclude) {
             return;
         }
-        if choices.contains(&ImportChoice::Replace) {
-            self.toast(ToastKind::Warn, S::TOAST_REPLACE_UNSUPPORTED);
-        }
         if let Err(e) = self.doc.ensure_scene() {
             report.errors.push(e);
             self.ui.import_report = Some(report);
@@ -381,6 +393,15 @@ impl AppState {
         }
         self.demo = None;
         let scene = self.doc.scene.as_mut().expect("scene");
+        let existing: Vec<(String, newtopo_kernel::BodyId)> = guard(|| {
+            scene
+                .doc()
+                .bodies
+                .iter()
+                .map(|b| (b.name.clone(), b.id))
+                .collect()
+        })
+        .unwrap_or_default();
         for (b, c) in file.bodies.into_iter().zip(choices) {
             if c == ImportChoice::Exclude {
                 continue;
@@ -389,10 +410,39 @@ impl AppState {
             report.failed_faces += b.heal.failed_faces.len();
             report.fixes.extend(b.heal.fixes.iter().cloned());
             let name = b.attrs.name.clone();
-            match guard(|| scene.add_body(&b.brep, b.attrs, b.heal)) {
-                Ok(Ok(_)) => report.bodies += 1,
-                Ok(Err(e)) => report.errors.push(format!("{name}: {e:#}")),
-                Err(e) => report.errors.push(format!("{name}: {e}")),
+            // Replace: swap the same-named object, carrying rules where faces
+            // still match (SPEC §8.1).
+            let old = (c == ImportChoice::Replace)
+                .then(|| existing.iter().find(|(n, _)| *n == name).map(|x| x.1))
+                .flatten();
+            if c == ImportChoice::Replace && old.is_none() {
+                report.warnings.push(format!(
+                    "{name}: nothing with that name to replace; imported as a new object"
+                ));
+            }
+            match old {
+                Some(old) => {
+                    match guard(|| scene.replace_body_with_report(old, &b.brep, b.attrs, b.heal)) {
+                        Ok(Ok(r)) => {
+                            report.bodies += 1;
+                            report.warnings.push(format!(
+                            "{name}: replaced; {} faces matched, {} unmatched, {} rules kept, {} dropped, {} edits dropped",
+                            r.matched,
+                            r.unmatched.len(),
+                            r.rules_kept,
+                            r.rules_dropped,
+                            r.edits_dropped
+                        ));
+                        }
+                        Ok(Err(e)) => report.errors.push(format!("{name}: {e:#}")),
+                        Err(e) => report.errors.push(format!("{name}: {e}")),
+                    }
+                }
+                None => match guard(|| scene.add_body(&b.brep, b.attrs, b.heal)) {
+                    Ok(Ok(_)) => report.bodies += 1,
+                    Ok(Err(e)) => report.errors.push(format!("{name}: {e:#}")),
+                    Err(e) => report.errors.push(format!("{name}: {e}")),
+                },
             }
         }
         self.doc.bump();
@@ -517,6 +567,7 @@ impl AppState {
             }
         };
         let old_autosave = autosave_path(&self.paths, self.doc.path.as_deref());
+        self.doc.set_camera(self.view.camera.to_doc());
         match self.doc.save(&path) {
             Ok(()) => {
                 if let Some(a) = old_autosave {
@@ -555,6 +606,7 @@ impl AppState {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+        self.doc.set_camera(self.view.camera.to_doc());
         match self.doc.save_copy(&p) {
             Ok(()) => log::info!("autosaved to {}", p.display()),
             Err(e) => log::warn!("autosave failed: {e}"),
@@ -723,7 +775,12 @@ impl AppState {
             });
             if ok {
                 self.ui.confirm = None;
-                self.apply(with_confirmed(c.op));
+                let ops: Vec<Op> = c.ops.into_iter().map(with_confirmed).collect();
+                if ops.len() == 1 {
+                    self.apply(ops.into_iter().next().expect("op"));
+                } else {
+                    self.apply_group(ops);
+                }
             } else if close {
                 self.ui.confirm = None;
             }

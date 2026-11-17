@@ -671,7 +671,29 @@ impl AppState {
                     })
                     .min_by(|a, b| a.1.total_cmp(&b.1));
                 if let Some((pi, _)) = best {
-                    let strip = bt.mesh.face_strip(pi as u32);
+                    // Real scenes: the engine's face loop (`Scene::face_strip`
+                    // wraps the same `select::Adjacency::face_loop`).
+                    let core_strip =
+                        self.vd
+                            .outputs
+                            .iter()
+                            .find(|o| o.body == body)
+                            .and_then(|mesh| {
+                                let poly = mesh.polygons.get(pi)?;
+                                if poly.verts.len() != 4 {
+                                    return None;
+                                }
+                                let adj = newtopo_core::select::Adjacency::new(mesh);
+                                let (a, b) = (poly.verts[1], poly.verts[2]);
+                                let e = *adj.edge_of.get(&(a.min(b), a.max(b)))?;
+                                Some(
+                                    adj.face_loop(pi, e)
+                                        .into_iter()
+                                        .map(|x| x as u32)
+                                        .collect::<Vec<u32>>(),
+                                )
+                            });
+                    let strip = core_strip.unwrap_or_else(|| bt.mesh.face_strip(pi as u32));
                     let faces: BTreeSet<(BodyId, FaceId)> = strip
                         .iter()
                         .filter_map(|&q| bt.poly_face.get(q as usize))
@@ -688,10 +710,12 @@ impl AppState {
     /// Loop or ring through view edge `i`, optionally every other.
     fn loop_from(&self, i: usize, ring: bool, alternate: bool) -> Vec<EdgeSel> {
         let e = &self.vd.edges[i];
-        // Real scenes: the core's walks (SPEC §6.14) over the output mesh.
+        // Real scenes: the engine's walks (SPEC §6.14) over the output mesh.
         if let (Some(oi), Some(mesh)) = (e.out, self.vd.outputs.iter().find(|o| o.body == e.body)) {
-            let adj = newtopo_core::select::Adjacency::new(mesh);
             let oi = oi as usize;
+            // Same walk as `Scene::edge_loop/edge_ring` (which wrap
+            // `select::Adjacency`), run on the cached output so `&self` suffices.
+            let adj = newtopo_core::select::Adjacency::new(mesh);
             let mut seq = if ring {
                 adj.edge_ring(oi)
             } else {
@@ -898,10 +922,39 @@ impl AppState {
         format!("{:?}", self.hover).hash(&mut h);
         self.tool.signature().hash(&mut h);
         self.scene_toggles()
-            .map(|s| (s.symmetry, format!("{:?}", s.symmetry_axes)))
+            .map(|s| (s.symmetry, s.link, format!("{:?}", s.symmetry_axes)))
             .hash(&mut h);
         self.prefs.show_symmetry_planes.hash(&mut h);
         h.finish()
+    }
+
+    /// Faces that follow the selected ones through Link and Symmetry.
+    pub fn partner_faces(&mut self) -> BTreeSet<(BodyId, FaceId)> {
+        let mut out = BTreeSet::new();
+        let Some(st) = self.scene_toggles() else {
+            return out;
+        };
+        if !(st.link || st.symmetry) || self.sel.faces.is_empty() {
+            return out;
+        }
+        let sel = self.sel.faces.clone();
+        let Some(scene) = self.doc.scene.as_mut() else {
+            return out;
+        };
+        for (b, f) in &sel {
+            if st.link
+                && let Ok(v) = crate::docstate::guard(|| scene.link_set(*b, *f))
+            {
+                out.extend(v.into_iter().map(|x| (*b, x)));
+            }
+            if st.symmetry
+                && let Ok(v) = crate::docstate::guard(|| scene.symmetry_partners(*b, *f))
+            {
+                out.extend(v.into_iter().map(|x| (*b, x)));
+            }
+        }
+        out.retain(|x| !sel.contains(x));
+        out
     }
 
     fn rebuild_overlay(&mut self) {
@@ -911,6 +964,11 @@ impl AppState {
         }
         self.overlay_sig = sig;
         self.overlay_rev = newtopo_render::egui_viewport::next_revision();
+        let partners = if self.mode == Mode::Face {
+            self.partner_faces()
+        } else {
+            BTreeSet::new()
+        };
         let c = self.colors();
         let mut o = RenderScene::default();
         let tint =
@@ -940,6 +998,18 @@ impl AppState {
                 }
             }
             Mode::Face => {
+                // Link sets and symmetry partners of the selection (SPEC §6.11-6.12).
+                for (b, f) in &partners {
+                    tint(
+                        &mut o,
+                        FaceRef {
+                            body: b.0,
+                            face: f.0,
+                        },
+                        c.linked_tint,
+                        &self.vd,
+                    );
+                }
                 for (b, f) in &self.sel.faces {
                     tint(
                         &mut o,
@@ -1008,9 +1078,10 @@ impl AppState {
             let r = self.scene_sphere().1 as f32;
             for key in &self.sel.faces {
                 for ar in self.vd.arrows.get(key).into_iter().flatten() {
-                    let len = (r * 0.12).min(ar.size * 0.35);
-                    let o0 = ar.origin + ar.normal * r * 0.004;
+                    let len = (r * 0.12).min(ar.size * 0.6).max(r * 0.03);
+                    let lift = ar.normal * r * 0.004;
                     if let Some(a) = ar.a {
+                        let o0 = ar.a_origin.unwrap_or(ar.origin) + lift;
                         o.add_arrow(
                             o0 - a * len * 0.5,
                             a,
@@ -1021,6 +1092,7 @@ impl AppState {
                         );
                     }
                     if let Some(b) = ar.b {
+                        let o0 = ar.b_origin.unwrap_or(ar.origin) + lift;
                         o.add_arrow(
                             o0 - b * len * 0.5,
                             b,

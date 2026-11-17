@@ -175,35 +175,51 @@ command degrades gracefully with no scene.
     Not built on Windows from here — please check it in Windows CI.
 32. **Check output mesh** (Edit menu / palette) runs `Scene::validate_all`
     and toasts the problem kinds; History tooltips show `dormant_reasons`.
-26. **Copy/paste rules** (Ctrl+C/V) and **Connect Tab flip** toast "not
+26. (Superseded in round 3: copy/paste and Tab flip are wired.) **Copy/paste rules** (Ctrl+C/V) and **Connect Tab flip** used to toast "not
     available yet" (no ops).
 
-## API requests (engine facade, `crates/core/src/scene.rs` and `ops.rs`)
+## API requests (engine facade)
 
-Round 2 wired: `default_kernel`, `HAS_CAD_IMPORT`, coalescing, `patches` /
-`patch_records`, `select`, `Op::RemoveEdges`, `validate_all`,
-`dormant_reasons`, `issue_reason`, `core::rename`, `core::bridge`. Still
-open (workaround in brackets):
+Round 3 wired everything that was open:
 
-1. Several ops as one step: `Scene::apply_all(ops)`. [grouped with
-   `begin_coalesce`/`end_coalesce`; fine unless a later op is refused, which
-   leaves the earlier ones applied within the step.]
-2. Layer and lock ops: `SetBodyLocked`, `SetLayerVisible`, `SetLayerLocked`,
-   `CreateLayer`, `DeleteLayer`, `RenameLayer`, `MoveBodyToLayer`,
-   `SetActiveLayer`. [app-side overrides / toasts.]
-3. Selection in the document (`Op::SetSelection`). [app-side.]
-4. Copy/paste rules, `Op::FlipConnect`, `Op::DeleteEdit`. [toasts.]
-5. `Scene::replace_body(...)`. [Replace imports as new.]
-6. `Scene::save_copy(path)`. [autosave uses `save`; app tracks dirty.]
-7. `Scene::set_camera(Camera)`. [camera read on open, never written.]
-8. `Scene::iso_preview(...)` with through mode. [kernel sampling, no through.]
-9. `Scene::bend_info(patch)` with origin/directions/warn flag. [derived from
-   `PatchInfo::bend` + kernel; no warning tint.]
-10. `Scene::link_set(body, face)` for the linked tint. [none.]
-11. `Scene::patch_at(body, face, uv) -> Option<PatchId>` to pick one piece of
-    a split face. [whole face.]
-12. A public `Scene::kernel_body(body) -> Option<BodyId>` would be clearer
-    than reaching through `ctx(body).kbody`.
+| Was | Now |
+| --- | --- |
+| grouped ops via `begin/end_coalesce` | `Scene::apply_all` (one step, all or nothing); a refusal that needs confirmation re-applies the whole group with `confirmed: true` |
+| arrows from `PatchInfo::bend` + kernel sampling | `Scene::bend_info` (A/B arrows at the engine's points, flipped handled by the engine) |
+| iso preview by kernel sampling, no through | `Scene::iso_preview` (through mode included; refreshed on Tab/A) |
+| `Op::FlipConnect` missing | Tab in Connect flips every patch of the hovered face |
+| History couldn't delete edits | right-click an edit → `Op::DeleteEdit` |
+| layer/lock overrides in the app | `SetLayerVisible`, `SetLayerLocked`, `SetBodyLocked`, `CreateLayer` (then rename in place), `DeleteLayer`, `RenameLayer`, `MoveBodyToLayer` (drag in the outliner), `SetActiveLayer` (layer context menu) |
+| Ctrl+C/V toasts | `Scene::copy_rules` → app clipboard → `Op::PasteRules { clipboard, targets }` on the selected objects |
+| Replace imported as new | `replace_body_with_report`; the import list defaults to Replace for same-named objects; the report lists matched/unmatched faces and kept/dropped rules |
+| autosave via `save` | `Scene::save_copy` |
+| camera never written | `Scene::set_camera` before every save and autosave |
+| no linked tint | `link_set` / `symmetry_partners` tint the faces that follow the selection (linked colour) when Link / Symmetry is on |
+
+Loops, rings and face strips call `select::Adjacency` on the cached output
+mesh — the same walk `Scene::edge_loop/edge_ring/face_strip` wrap — so they
+work from `&self`. Kernel calls still go through `ctx(body).kbody` (now equal
+to the document id; kept as the explicit mapping).
+
+Still missing (nothing blocks):
+
+1. A per-patch "direction disagrees with selected neighbours" flag for the
+   Connect warning tint (SPEC §6.2); `BendInfo` has none.
+2. `patch_at(body, face, uv)` to pick one piece of a split face (face mode
+   still selects whole faces and applies to all their patches).
+3. Link/symmetry don't add partners to the *selection* (they are tinted;
+   the engine applies rules to them anyway) — a UI choice, easy to change.
+4. Selection stays UI state (`Op::SetSelection` deliberately skipped).
+
+## Engine notes from the round-3 run
+
+`newtopo --shot <dir> --models <dir>` additionally checks: Link on
+plate_holes (Connect A=8 on one hole wall → 128 lines on all 16 walls, 15
+partners tinted), FlipConnect, layer create/move/hide then undo, copy/paste
+from "Post left" to "Post right" of the assembly (12 = 12 generated edges),
+and re-importing the assembly with Replace (5 bodies replaced, Connect rules
+kept). No engine bugs found. Cosmetic: the PasteRules message names the body
+by id ("onto body 12").
 
 ## Engine notes from the round-2 run
 
