@@ -24,6 +24,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 - **Connect** doesn't yet flag patches whose direction disagrees with their selected neighbours (the warning tint).
 - **Picking** is CPU ray casting, not the GPU id buffer of §5.2.
 - **Quick UV unwrap (§9.2)** and xatlas binding: not started. Exports carry no UVs.
+- **In-process CAD loading:** STEP/IGES files are read in the crash-isolated import helper, but the healed B-rep inside a `.ntopo` is loaded by OCCT inside the app process (SPEC §14 allows this). Scene JSON is size-limited and every reference is validated before use.
 - **Fuzzing** of the STEP/IGES path (§11) is covered by malformed-file tests, not a fuzzer.
 - **Perf regressions in CI** (criterion, §11): benches exist, the 20% regression gate doesn't.
 - **Visual tests** (§11 render diffs): `newtopo-cli render` works; no perceptual-diff suite yet.
@@ -33,7 +34,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 
 ## Test inventory
 
-`cargo test --workspace` (with `OCCT_DIR` set): 218 passing, 5 ignored
+`cargo test --workspace` (with `OCCT_DIR` set): 220 passing, 5 ignored
 opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`, and perf timings).
 
 - Engine ACs (§4.6), tool ACs (§6.2–§6.14), API tests (Link 4×4 holes,
