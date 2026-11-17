@@ -6,6 +6,7 @@ pub mod eval;
 pub mod export;
 pub mod fill;
 pub mod keys;
+pub mod link;
 pub mod mesh;
 pub mod ops;
 pub mod rename;

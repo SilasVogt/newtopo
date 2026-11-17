@@ -248,6 +248,15 @@ fn run_case(model: usize, steps: &[A]) -> Result<(), TestCaseError> {
             }
         }
     }
+    // The cached (incremental) output equals a from-scratch evaluation.
+    {
+        let fresh = newtopo_core::eval::evaluate(s.ctx(b).unwrap(), s.doc(), b);
+        let cached = s.output_of(b).unwrap().clone();
+        prop_assert!(
+            same_output(&cached, &fresh.mesh),
+            "model {model}: incremental output differs from a full evaluation"
+        );
+    }
     // Save → load → evaluate gives the same output.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.ntopo");

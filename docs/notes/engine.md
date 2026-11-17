@@ -66,3 +66,64 @@ For the lead to fold into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
   vertices end up collinear), split-through iso on a torus, removing a
   meridian edge on a bare torus.
 - Link, symmetry and copy/paste rules (§6.11–§6.13) are not implemented.
+
+## Round 2
+
+### Confirmations for the app
+- `IsoDir::U` is the line of **constant u**: `value` is the u position
+  (normalised 0..1 over the face's `SurfaceInfo::u_range`), `seed` is the v
+  position of the click (normalised over `v_range`). `IsoDir::V` likewise.
+- The document `BodyId` **equals** the kernel `BodyId`: `add_body` /
+  `add_kernel_body` use the kernel's id, `Scene::load` remaps the saved ids
+  to the freshly loaded kernel ids (`Document::remap_bodies`), and
+  `replace_body` gives the new body its kernel id. So
+  `scene.kernel.project_to_face(body, …)` with a document id is correct.
+- `Op::SetSelection` was skipped: selection lives in the app, and making
+  it an undo step would put UI state in the document snapshots. The app can
+  keep its own selection history.
+
+### Decisions
+| # | Question | Decision |
+| --- | --- | --- |
+| 28 | Link / symmetry for edits (Remove, Collapse, Weld). | Not mirrored: edit keys name generated topology of one face; mapping them needs key-level correspondence. Rules (Connect, Grid, Slice on patches, Iso, Cut) and split lines are mirrored/linked. |
+| 29 | Link / symmetry on split patches. | Only whole-face patches are expanded to partners. |
+| 30 | Grid mapped to a face whose UV axes are swapped by the mapping. | Counts are swapped; a planar face whose UV axes are rotated (not swapped) gets its own grid in its own UV axes. |
+| 31 | Congruence. | Same surface kind and parameters, wire/edge counts, area (0.2 %), sorted edge lengths (0.1 %), and a rigid transform verified by projecting sampled surface points (1e-4 × size) and boundary samples onto the other face both ways. Candidates: preferred transforms (body transform, transforms already found for other faces), a pure translation, PCA-aligned rotations with all sign flips (reflections included). |
+| 32 | Copy/paste across bodies. | One consistent transform is preferred for the whole body (`link::match_bodies`); pasted spread rules replace spread rules on the same target patches; phase references follow the mapping (§4.1). |
+| 33 | `replace_body`. | Faces matched like paste (identity preferred); rules whose faces all fail to match are dropped; edits are dropped (keyed by the old topology); the old body stays in the kernel so undo works. |
+| 34 | Mock `face_classify_uv` "On" band. | 2e-4 × the UV span (the loops are 256-point polylines); needed so boundary points of other parameterisations project exactly. |
+| 35 | Connect chains (§6.2) on selections spanning faces. | Each patch's A lines are walked across tangent (G1) shared edges into the other selected faces (`lines::connect_chain`, the through-iso walk restricted to the selection); faces reached take their A lines from the walk, so lines join end to end. Directions are matched in 3D (15°), so no A/B reconciliation is needed. |
+| 36 | Polygons whose straight-edge vertex polygon has no area although the curved boundary does (half annulus, cap segment cut by a tangent line). | The most curved edges are split at their midpoint before bridging (`HMesh::split_degenerate_walks`, placeholder keys `i ≥ 120000`). |
+| 37 | Slice planes containing a CAD edge or touching a pole line. | Section pieces lying along the face boundary are dropped (they would duplicate boundary curves). |
+| 38 | Implicit grid on a closed face cut by split lines (meridian split on a torus, equator split on a sphere). | The implicit grid still applies (`Patch::closed_patch` ignores split bounds). |
+| 39 | Bridging join chords. | After Kruskal joins every loop, a second chord per joined pair (different endpoints) splits the region in the same pass (SPEC §4.6 step 6 wording); ranked by metric-UV distance with exact 3D lengths per window of 64. |
+
+### Incremental evaluation (SPEC §4.6 budgets)
+
+Content-keyed caches per body (`eval::cache::EvalCache`, owned by the
+Scene): stage 1 (patches) per face keyed by its split lines; stage 3
+(arrangement + seam gluing) per face keyed by its patches and generated
+lines; bridging + fill per region keyed by the region's canonical walks
+(vertex keys, owners, UV paths) and the edges joining its vertices. A hit is
+always exact (keys hash the full inputs). Kernel calls in emission and
+anchor validation are batched per face. The property test checks that the
+cached output equals a full evaluation.
+
+Release timings (one-patch change = Connect/Grid count change through
+`Scene::apply`, validation gate included):
+
+| Body | Faces | Full | One-patch change, before → after |
+| --- | --- | --- | --- |
+| mock plate 2×2 holes | 10 | 8 ms | 9 → 4 ms |
+| mock plate 5×5 holes | 31 | 45 ms | 70 → 21 ms |
+| mock plate 10×10 holes | 106 | 199 ms | 467 → 92 ms |
+| OCCT filleted_box | 26 | 5.5 ms | 3.4–4.1 ms |
+| OCCT plate_holes (4×4) | 22 | 29 ms | 92 → 18 ms |
+| OCCT flange | 13 | 21 ms | 11 ms |
+
+The remaining cost on the mock 10×10 plate is the top and bottom faces,
+each one region with 100 holes that is re-bridged when any hole rim
+changes (~25 ms each), plus assembly (15 ms) and emission (8 ms), which
+are still per body. No 2,000-face reference body exists yet to measure
+the 300 ms full-rebuild budget; extrapolating the mock plates it holds for
+bodies with few holes per face and not for faces with hundreds of holes.

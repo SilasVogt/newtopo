@@ -399,3 +399,75 @@ impl Document {
 
 /// Re-exported for convenience in rule code.
 pub type Line = LineKey;
+
+impl Document {
+    /// Rename body ids everywhere in the document (rules, splits, edits,
+    /// phase overrides). Used to keep document ids equal to kernel ids after
+    /// a load or a body replacement.
+    pub fn remap_bodies(&mut self, map: &BTreeMap<BodyId, BodyId>) {
+        let m = |b: &mut BodyId| {
+            if let Some(n) = map.get(b) {
+                *b = *n;
+            }
+        };
+        let mp = |p: &mut PatchId| {
+            if let Some(n) = map.get(&p.body) {
+                p.body = *n;
+            }
+        };
+        for b in &mut self.bodies {
+            m(&mut b.id);
+        }
+        for s in &mut self.split_lines {
+            m(&mut s.body);
+        }
+        for r in &mut self.rules {
+            match &mut r.rule {
+                Rule::Connect {
+                    patches, flipped, ..
+                } => {
+                    patches.iter_mut().for_each(mp);
+                    flipped.iter_mut().for_each(mp);
+                }
+                Rule::Grid { patch, .. } => mp(patch),
+                Rule::Slice { scope, orient, .. } => {
+                    match scope {
+                        SliceScope::Body(b) => m(b),
+                        SliceScope::Patches(l) => l.iter_mut().for_each(mp),
+                    }
+                    if let SliceOrient::GuideEdge(b, _) = orient {
+                        m(b);
+                    }
+                }
+                Rule::Iso { pieces, .. } => pieces.iter_mut().for_each(|p| m(&mut p.body)),
+                Rule::Cut { points, .. } => {
+                    for p in points {
+                        match p {
+                            CutPoint::Face { body, .. }
+                            | CutPoint::CadEdge { body, .. }
+                            | CutPoint::Vertex { body, .. } => m(body),
+                        }
+                    }
+                }
+                Rule::Join { body, .. } => m(body),
+            }
+        }
+        for e in &mut self.edits {
+            match &mut e.edit {
+                Edit::RemoveEdge { body, .. }
+                | Edit::RemoveCadEdge { body, .. }
+                | Edit::Collapse { body, .. }
+                | Edit::Weld { body, .. }
+                | Edit::SetHard { body, .. } => m(body),
+            }
+        }
+        let po = std::mem::take(&mut self.phase_overrides);
+        for (k, v) in po {
+            let k = match k {
+                PhaseTarget::Face(b, f) => PhaseTarget::Face(*map.get(&b).unwrap_or(&b), f),
+                PhaseTarget::Edge(b, e) => PhaseTarget::Edge(*map.get(&b).unwrap_or(&b), e),
+            };
+            self.phase_overrides.insert(k, v);
+        }
+    }
+}
