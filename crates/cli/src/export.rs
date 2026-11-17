@@ -1,9 +1,10 @@
-//! `newtopo-cli export in.ntopo --format fbx -o out.fbx [--triangulate] [--up y]`.
+//! `newtopo-cli export in.ntopo --format fbx -o out.fbx [--triangulate] [--up y]
+//! [--units mm|cm|m|in] [--scale s]`.
 
 use crate::scene_io::{self, LoadArgs};
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
-use newtopo_core::export::{ExportObject, ExportOptions, ExportUp, Format, export};
+use newtopo_core::export::{ExportObject, ExportOptions, ExportUp, Format, export, unit_metres};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -11,6 +12,25 @@ pub enum FormatArg {
     Fbx,
     Obj,
     Glb,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum UnitArg {
+    Mm,
+    Cm,
+    M,
+    In,
+}
+
+impl UnitArg {
+    fn name(self) -> &'static str {
+        match self {
+            UnitArg::Mm => "mm",
+            UnitArg::Cm => "cm",
+            UnitArg::M => "m",
+            UnitArg::In => "in",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -31,6 +51,11 @@ pub struct ExportArgs {
     pub triangulate: bool,
     #[arg(long, value_enum, default_value = "y")]
     pub up: UpArg,
+    /// Export unit; defaults to the scene's units. FBX declares it, glTF
+    /// converts to metres, OBJ writes coordinates in it.
+    #[arg(long, value_enum)]
+    pub units: Option<UnitArg>,
+    /// Extra scale on top of the unit conversion.
     #[arg(long, default_value_t = 1.0)]
     pub scale: f64,
     /// Don't turn layers into hierarchy.
@@ -75,9 +100,17 @@ pub fn run(a: &ExportArgs) -> Result<()> {
             mesh: m,
         });
     }
+    let scene_units = doc.settings.units.as_str();
+    let scene_m = unit_metres(scene_units)
+        .with_context(|| format!("scene units {scene_units:?} are not mm, cm, m or in"))?;
+    let export_m = match a.units {
+        Some(u) => unit_metres(u.name()).expect("known unit"),
+        None => scene_m,
+    };
     let opts = ExportOptions {
         triangulate: a.triangulate,
-        scale: a.scale,
+        scale: a.scale * scene_m / export_m,
+        unit_metres: export_m,
         up: match a.up {
             UpArg::Y => ExportUp::Y,
             UpArg::Z => ExportUp::Z,

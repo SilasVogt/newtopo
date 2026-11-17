@@ -1,7 +1,7 @@
 //! Export tests (SPEC §8.3): normals, transforms, golden files, read-back.
 
 use super::prep::{TransformMode, prepare};
-use super::samples::{SampleScene, build, cube, ngon, strip};
+use super::samples::{self, SampleScene, build, cube, ngon, strip};
 use super::*;
 use glam::{DQuat, DVec3};
 use std::io::Read;
@@ -635,4 +635,138 @@ fn obj_names_are_sanitised() {
     .unwrap();
     assert!(text.contains("o Bracket _3_x\n"), "{text}");
     assert!(text.contains("g Layer_A\n"), "{text}");
+}
+
+// ---- Units: declared unit vs coordinates (one test per format) -----------
+
+/// A 100 mm cube in a millimetre scene, exported in `unit` ("mm", "cm",
+/// "m", "in") the way the app and CLI call it.
+fn cube_100mm_opts(unit: &str) -> ExportOptions {
+    let unit_m = unit_metres(unit).unwrap();
+    ExportOptions {
+        scale: unit_metres("mm").unwrap() / unit_m,
+        unit_metres: unit_m,
+        ..Default::default()
+    }
+}
+
+fn extent(points: impl Iterator<Item = DVec3>) -> DVec3 {
+    let (mut lo, mut hi) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
+    for p in points {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    hi - lo
+}
+
+#[test]
+fn units_obj_writes_coordinates_in_the_export_unit() {
+    let m = samples::cuboid(DVec3::splat(100.0));
+    for (unit, want) in [
+        ("mm", 100.0),
+        ("cm", 10.0),
+        ("m", 0.1),
+        ("in", 100.0 / 25.4),
+    ] {
+        let o = ExportObject {
+            name: "Box",
+            layer: "L",
+            color: None,
+            transform: DMat4::IDENTITY,
+            mesh: &m,
+        };
+        let text = String::from_utf8(
+            export(Format::Obj, &[o], &cube_100mm_opts(unit))
+                .unwrap()
+                .main,
+        )
+        .unwrap();
+        let pts = text.lines().filter_map(|l| l.strip_prefix("v ")).map(|l| {
+            let v: Vec<f64> = l.split_whitespace().map(|x| x.parse().unwrap()).collect();
+            DVec3::new(v[0], v[1], v[2])
+        });
+        let e = extent(pts);
+        assert!(
+            (e.x - want).abs() < 1e-6 && (e.y - want).abs() < 1e-6,
+            "{unit}: {e}"
+        );
+    }
+}
+
+#[test]
+fn units_glb_is_metres() {
+    let m = samples::cuboid(DVec3::splat(100.0));
+    for unit in ["mm", "cm", "m", "in"] {
+        // A translated node checks that node translations convert too.
+        let o = ExportObject {
+            name: "Box",
+            layer: "L",
+            color: None,
+            transform: DMat4::from_translation(DVec3::new(1000.0, 0.0, 0.0)),
+            mesh: &m,
+        };
+        let (json, _) = parse_glb(
+            &export(Format::Glb, &[o], &cube_100mm_opts(unit))
+                .unwrap()
+                .main,
+        );
+        let acc = &json["accessors"][json["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+            .as_u64()
+            .unwrap() as usize];
+        let size = acc["max"][0].as_f64().unwrap() - acc["min"][0].as_f64().unwrap();
+        assert!((size - 0.1).abs() < 1e-6, "{unit}: {size} m");
+        let node = json["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["name"] == "Box")
+            .unwrap();
+        assert!(
+            (node["translation"][0].as_f64().unwrap() - 1.0).abs() < 1e-9,
+            "{unit}: {node}"
+        );
+    }
+}
+
+#[test]
+fn units_fbx_declares_the_export_unit() {
+    let m = samples::cuboid(DVec3::splat(100.0));
+    for (unit, factor, coords) in [
+        ("mm", 0.1, 100.0),
+        ("cm", 1.0, 10.0),
+        ("m", 100.0, 0.1),
+        ("in", 2.54, 100.0 / 25.4),
+    ] {
+        let o = ExportObject {
+            name: "Box",
+            layer: "L",
+            color: None,
+            transform: DMat4::IDENTITY,
+            mesh: &m,
+        };
+        let bytes = export(Format::Fbx, &[o], &cube_100mm_opts(unit))
+            .unwrap()
+            .main;
+        let dump = dump_fbx(&bytes);
+        assert!(
+            dump.contains(&format!(
+                "P: \"UnitScaleFactor\" \"double\" \"Number\" \"\" {factor}\n"
+            )),
+            "{unit}:\n{dump}"
+        );
+        let raw = ufbx::load_memory(&bytes, ufbx::LoadOpts::default()).unwrap();
+        assert!(
+            (raw.settings.unit_meters - factor / 100.0).abs() < 1e-12,
+            "{unit}: {}",
+            raw.settings.unit_meters
+        );
+        let mesh = raw.meshes.iter().next().unwrap();
+        let e = extent(mesh.vertices.iter().map(|v| DVec3::new(v.x, v.y, v.z)));
+        assert!((e.x - coords).abs() < 1e-6, "{unit}: file coords {e}");
+        // Declared unit x coordinates = the real size.
+        assert!(
+            (e.x * raw.settings.unit_meters - 0.1).abs() < 1e-9,
+            "{unit}"
+        );
+    }
 }

@@ -98,6 +98,10 @@ pub struct AckObject {
     pub name: String,
     /// Name the host gave it (differs when the host made it unique).
     pub actual: String,
+    /// Something the host couldn't represent exactly (e.g. 3ds Max running
+    /// out of smoothing groups), for the app to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 impl Ack {

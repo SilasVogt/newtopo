@@ -21,11 +21,20 @@ For merging into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
 
 ## Decisions (questions the spec doesn't answer)
 
-1. **Export units.** Coordinates are scene units × `ExportOptions::scale`
-   and every format declares metres (FBX `UnitScaleFactor = 100`; glTF by
-   definition; OBJ by convention). The app chooses `scale` (e.g. 0.001 for
-   a millimetre scene). All three formats then import into Blender at the
-   same size (verified).
+1. **Export units.** The caller picks an export unit (mm, cm, m, in;
+   default: the scene's units) and passes `scale` = scene unit -> export
+   unit (times any user scale) and `ExportOptions::unit_metres` = the export
+   unit in metres (default 1.0). OBJ writes coordinates in the export unit
+   (it has no unit metadata). FBX writes them in the export unit and
+   declares it: `UnitScaleFactor` = `OriginalUnitScaleFactor` =
+   unit_metres x 100 (centimetres per unit: 0.1 for mm, 100 for m). GLB
+   multiplies by unit_metres, because glTF is metres by definition. A
+   100 mm cube in a mm scene exported with the defaults imports into
+   Blender as 0.1 m from FBX (both importers) and GLB; from OBJ it arrives
+   as 100 Blender units, the file's numbers (verified headless). The app's
+   export dialog and `newtopo-cli export --units mm|cm|m|in` pass both
+   values. Earlier builds declared metres while writing scene units, so a
+   100 mm part imported as 100 m (Codex review of PR #2).
 2. **glTF up axis.** glTF is +Y up by definition, so `.glb` is always Y-up;
    `ExportOptions::up` applies to OBJ and FBX only.
 3. **Transforms.** OBJ bakes the body transform. glTF and FBX keep it on the
@@ -48,6 +57,11 @@ For merging into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
    No `mtllib` is written when there are no materials.
 7. **Smoothing groups (`s`).** Connected components across non-hard edges;
    polygons with no smooth neighbour get `s off`.
+   3ds Max gets per-face smoothing-group bitmasks from the hard edges:
+   faces across each smooth edge share a bit, faces across each hard edge
+   share none, even when they also connect around through smooth edges (a
+   tube with one hard seam). Greedy within 32 bits; pairs that can't be
+   honoured are reported in the ack's `warning` rather than dropped.
 8. **Material names and colours.** One material per distinct CAD colour,
    named `ntopo_rrggbb`. CAD colours are treated as display (sRGB) values:
    glTF `baseColorFactor` and the Blender bridge convert to linear; FBX

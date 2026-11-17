@@ -196,7 +196,13 @@ fn layer_element_ref(ty: &str) -> Node {
         .c(Node::leaf("TypedIndex", Prop::I32(0)))
 }
 
-fn global_settings(up: ExportUp) -> Node {
+/// Centimetres per file unit for `unit_metres` (FBX's unit is the cm).
+pub fn unit_scale_factor(unit_metres: f64) -> f64 {
+    // Round away float noise (0.001 * 100 = 0.1, not 0.10000000000000002).
+    (unit_metres * 100.0 * 1e12).round() / 1e12
+}
+
+fn global_settings(up: ExportUp, unit_metres: f64) -> Node {
     // Axis convention: right-handed. Y-up: up +Y, front +Z, coord +X.
     // Z-up: up +Z, front -Y, coord +X.
     let (up_axis, front, front_sign) = match up {
@@ -216,9 +222,12 @@ fn global_settings(up: ExportUp) -> Node {
             .c(int("CoordAxisSign", 1))
             .c(int("OriginalUpAxis", up_axis))
             .c(int("OriginalUpAxisSign", 1))
-            // 1 file unit = 1 metre (the unit is centimetres, factor 100).
-            .c(dbl("UnitScaleFactor", 100.0))
-            .c(dbl("OriginalUnitScaleFactor", 100.0))
+            // Centimetres per file unit: 0.1 for mm, 100 for m.
+            .c(dbl("UnitScaleFactor", unit_scale_factor(unit_metres)))
+            .c(dbl(
+                "OriginalUnitScaleFactor",
+                unit_scale_factor(unit_metres),
+            ))
             .c(p70(
                 "AmbientColor",
                 "ColorRGB",
@@ -422,6 +431,7 @@ pub fn scene_nodes(
     objects: &[Prepared],
     mats: &[Material],
     up: ExportUp,
+    unit_metres: f64,
     layers_as_nodes: bool,
 ) -> Vec<Node> {
     let mut next_id = 1_000_000i64;
@@ -508,7 +518,7 @@ pub fn scene_nodes(
         Node::leaf("FileId", Prop::Raw(b"newtopo-fbx-7400".to_vec())),
         Node::leaf("CreationTime", s("2026-01-01 00:00:00:000")),
         Node::leaf("Creator", s(concat!("newtopo ", env!("CARGO_PKG_VERSION")))),
-        global_settings(up),
+        global_settings(up, unit_metres),
         Node::new("Documents")
             .c(Node::leaf("Count", Prop::I32(1)))
             .c(Node::new("Document")
@@ -530,7 +540,14 @@ pub fn write_fbx(
     objects: &[Prepared],
     mats: &[Material],
     up: ExportUp,
+    unit_metres: f64,
     layers_as_nodes: bool,
 ) -> Vec<u8> {
-    encode(&scene_nodes(objects, mats, up, layers_as_nodes))
+    encode(&scene_nodes(
+        objects,
+        mats,
+        up,
+        unit_metres,
+        layers_as_nodes,
+    ))
 }
