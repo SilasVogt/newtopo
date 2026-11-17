@@ -127,3 +127,48 @@ changes (~25 ms each), plus assembly (15 ms) and emission (8 ms), which
 are still per body. No 2,000-face reference body exists yet to measure
 the 300 ms full-rebuild budget; extrapolating the mock plates it holds for
 bodies with few holes per face and not for faces with hundreds of holes.
+
+## Round 3 (review fixes)
+
+40. `Document::phase_overrides` is written to `scene.json` as a list of
+    `[target, point]` records (serde adapter `doc::phase_records`); an
+    empty JSON object still reads. FORMAT_VERSION stays 1.
+41. Saving writes a temporary sibling (`.<name>.<random>.tmp`), syncs it,
+    and renames it over the destination (`tempfile::persist`: `rename(2)`
+    on Unix, `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on Windows). `save`
+    and `save_copy` share the path.
+42. Loading is bounded: `LoadLimits` (default 4096 entries, 64 MiB
+    `scene.json`, 1 GiB per `.bbrep`, 4 GiB total); reads go through
+    `take()`, and declared sizes are only used to refuse early.
+43. Loaded documents are checked against the CAD topology
+    (`Scene::check_document`): every body, face, edge and vertex id in
+    rules, split lines, edits, generated keys and phase overrides; duplicate
+    bodies or rules; missing layers; non-finite numbers; counts above
+    `MAX_RULE_COUNT` (100 000). Rule and split ids inside keys are not
+    checked (a dangling one makes an edit dormant, not invalid).
+    `try_set_document` applies the same check; `set_document` stays for
+    in-process documents and debug-asserts it.
+44. Link / symmetry for Cut: one mapped cut per partner transform, through
+    `link::map_rule`. A face of the cut without a partner under that
+    transform maps to itself when the transformed points stay on it.
+45. Link / symmetry for RemoveEdge, Collapse and Weld: keys are mapped by
+    geometry on the current output (the transformed ends and middle must
+    land on a keyed output edge / vertices), not by rewriting key fields:
+    line keys encode faces in `sub` differently per rule kind, so a
+    symbolic mapping would be fragile. The transforms come from the link
+    sets / mirror maps of the faces of the polygons around the edge (or
+    both vertices). An edge on a CAD edge belongs to both faces, so e.g. a
+    rim edge also maps through the plate face's own link partner.
+    Partners that do not map, or whose copy goes dormant, are skipped and
+    counted in the outcome message. Everything is one undo step.
+46. Paste takes patches over with the tools' takeover (`Scene::takeover`),
+    including Body → Patches conversion with frozen planes; a pasted body
+    Slice takes every target patch.
+47. Paste maps patches bounded by split lines: split lines are pasted
+    first, then each source patch's interior point (a cell sample; the
+    patch `sample` lies on its boundary) is transformed and located among
+    the target face's new patches.
+48. The clipboard keeps the source edits (`Clipboard::edit_list`, the
+    `edits` count stays). Join rules and edits are mapped by position
+    between the source output (without its edits) and the target output
+    (after the pasted rules). Unmapped or dormant ones are reported.
