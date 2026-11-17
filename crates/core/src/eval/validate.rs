@@ -2,7 +2,7 @@
 
 use super::ctx::BodyCtx;
 use crate::mesh::{Anchor, OutEdgeKind, OutputMesh};
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use newtopo_kernel::{BodyTopology, UvClass};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -252,24 +252,65 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
 /// Anchor checks against the kernel: positions match their anchors and
 /// face anchors lie inside their face's trims.
 pub fn validate_anchors(mesh: &OutputMesh, ctx: &BodyCtx, tol: f64) -> Vec<Issue> {
+    use std::collections::BTreeMap;
     let mut issues = Vec::new();
+    let mut pos = vec![DVec3::ZERO; mesh.vertices.len()];
+    let mut by_face: BTreeMap<newtopo_kernel::FaceId, Vec<usize>> = BTreeMap::new();
+    let mut by_edge: BTreeMap<newtopo_kernel::EdgeId, Vec<usize>> = BTreeMap::new();
     for (i, v) in mesh.vertices.iter().enumerate() {
-        let p = match v.anchor {
-            Anchor::CadVertex { vertex } => ctx.topo.vertex(vertex).point,
-            Anchor::CadEdge { edge, t } => ctx.edge_point(edge, t),
-            Anchor::Face { face, uv } => {
-                if let Ok(c) = ctx.kernel.face_classify_uv(ctx.kbody, face, &[uv])
-                    && c[0] == UvClass::Out
-                {
-                    issues.push(Issue {
-                        vertices: vec![i as u32],
-                        ..Issue::new(IssueKind::AnchorOff, "face anchor outside its face")
-                    });
+        match v.anchor {
+            Anchor::CadVertex { vertex } => pos[i] = ctx.topo.vertex(vertex).point,
+            Anchor::CadEdge { edge, .. } => by_edge.entry(edge).or_default().push(i),
+            Anchor::Face { face, .. } => by_face.entry(face).or_default().push(i),
+        }
+    }
+    for (e, list) in &by_edge {
+        let ts: Vec<f64> = list
+            .iter()
+            .map(|&i| {
+                if let Anchor::CadEdge { t, .. } = mesh.vertices[i].anchor {
+                    t
+                } else {
+                    0.0
                 }
-                ctx.point(face, uv)
+            })
+            .collect();
+        if let Ok(ps) = ctx.kernel.edge_eval(ctx.kbody, *e, &ts) {
+            for (k, &i) in list.iter().enumerate() {
+                pos[i] = ps[k];
             }
-        };
-        if (p - v.position).length() > tol {
+        }
+    }
+    for (f, list) in &by_face {
+        let uvs: Vec<DVec2> = list
+            .iter()
+            .map(|&i| {
+                if let Anchor::Face { uv, .. } = mesh.vertices[i].anchor {
+                    uv
+                } else {
+                    DVec2::ZERO
+                }
+            })
+            .collect();
+        let ev = ctx.face_eval(*f, &uvs);
+        let cls = ctx
+            .kernel
+            .face_classify_uv(ctx.kbody, *f, &uvs)
+            .unwrap_or_default();
+        for (k, &i) in list.iter().enumerate() {
+            if let Some(e) = ev.get(k) {
+                pos[i] = e.p;
+            }
+            if cls.get(k) == Some(&UvClass::Out) {
+                issues.push(Issue {
+                    vertices: vec![i as u32],
+                    ..Issue::new(IssueKind::AnchorOff, "face anchor outside its face")
+                });
+            }
+        }
+    }
+    for (i, v) in mesh.vertices.iter().enumerate() {
+        if (pos[i] - v.position).length() > tol {
             issues.push(Issue {
                 vertices: vec![i as u32],
                 ..Issue::new(IssueKind::AnchorOff, "vertex is off its anchor")

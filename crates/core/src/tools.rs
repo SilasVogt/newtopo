@@ -101,10 +101,7 @@ impl Scene {
     }
 
     fn patches_of_doc(&self, doc: &Document, body: BodyId) -> Vec<Patch> {
-        match self.ctx(body) {
-            Some(c) => eval::body_patches(c, doc, body),
-            None => vec![],
-        }
+        self.patches_cached(doc, body)
     }
 
     fn resolve_patches(&mut self, sel: &PatchSel) -> R<(BodyId, Vec<PatchId>)> {

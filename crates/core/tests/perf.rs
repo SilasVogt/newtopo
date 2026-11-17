@@ -45,9 +45,25 @@ fn perf_budgets() {
         })
         .unwrap();
         let one2 = t.elapsed();
+        // Count change only (wheel step), output only (no validation gate).
+        let t = Instant::now();
+        s.apply_unchecked(Op::Grid {
+            patches: PatchSel {
+                faces: vec![6],
+                ..Default::default()
+            },
+            u: 6,
+            v: 2,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        })
+        .unwrap();
+        let _ = s.output_of(b);
+        let eval_only = t.elapsed();
         println!(
-            "plate {n}x{m}: {faces} faces, ctx build {build:?}, full eval {full:?} ({} polys), one-patch apply {one:?} / {one2:?}",
-            st.faces
+            "plate {n}x{m}: {faces} faces, ctx build {build:?}, full eval {full:?} ({} polys), one-patch apply {one:?} / {one2:?}, one-patch eval only {eval_only:?}, cache {:?}",
+            st.faces,
+            s.cache_stats(b)
         );
     }
 }

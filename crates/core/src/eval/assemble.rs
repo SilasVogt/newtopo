@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, HashMap};
 
 pub struct FaceRes {
     pub face: FaceId,
-    pub arr: Arr,
-    pub glued: Glued,
+    pub arr: std::sync::Arc<Arr>,
+    pub glued: std::sync::Arc<Glued>,
 }
 
 #[derive(Clone, Debug)]

@@ -10,7 +10,7 @@ use super::geom2::*;
 use crate::fill::{FillInput, fill_polygon};
 use crate::keys::VertexKey;
 use glam::{DVec2, DVec3};
-use newtopo_kernel::{EdgeId, FaceId};
+use newtopo_kernel::EdgeId;
 use std::collections::{HashMap, HashSet};
 
 /// Coordinates used for a region: one face's metric-scaled UV (lifted, u
@@ -390,30 +390,86 @@ struct Cand {
 
 /// Bridge every region of the mesh. Returns regions that could not be made
 /// simple.
+/// Adjacency between final vertices and half-edges per region, kept up to
+/// date while chords and fill diagonals are added.
+pub struct BridgeState {
+    pub adj: HashMap<usize, Vec<usize>>,
+    pub reg_he: HashMap<usize, Vec<usize>>,
+}
+
+impl BridgeState {
+    pub fn new(mesh: &HMesh, pole_target: &HashMap<EdgeId, usize>) -> Self {
+        let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut reg_he: HashMap<usize, Vec<usize>> = HashMap::new();
+        for h in mesh.alive_he() {
+            let (a, b) = (
+                mesh.final_v(mesh.he[h].from, pole_target),
+                mesh.final_v(mesh.he[h].to, pole_target),
+            );
+            adj.entry(a).or_default().push(b);
+            reg_he.entry(mesh.he[h].region).or_default().push(h);
+        }
+        BridgeState { adj, reg_he }
+    }
+
+    /// Walks (orbits) of a region.
+    pub fn walks(&self, mesh: &HMesh, r: usize) -> Vec<Vec<usize>> {
+        let hs = self.reg_he.get(&r).cloned().unwrap_or_default();
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for h in hs {
+            if !mesh.he[h].alive || mesh.he[h].region != r || seen.contains(&h) {
+                continue;
+            }
+            let o = mesh.orbit(h);
+            for &x in &o {
+                seen.insert(x);
+            }
+            out.push(o);
+        }
+        out
+    }
+}
+
+/// Bridge every region of the mesh. Returns regions that could not be made
+/// simple.
 pub fn bridge_all(
     ctx: &BodyCtx,
     mesh: &mut HMesh,
     pole_target: &HashMap<EdgeId, usize>,
 ) -> Vec<usize> {
-    let mut failed = Vec::new();
-    let mut queue: Vec<usize> = (0..mesh.regions.len())
+    let mut st = BridgeState::new(mesh, pole_target);
+    let regions: Vec<usize> = (0..mesh.regions.len())
         .filter(|&r| mesh.regions[r].alive)
         .collect();
-    let fid_of = |mesh: &HMesh, v: usize| mesh.final_v(v, pole_target);
-    // Final-vertex adjacency and per-region half-edge lists, kept up to date
-    // as chords are inserted.
-    let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut reg_he: HashMap<usize, Vec<usize>> = HashMap::new();
-    for h in mesh.alive_he() {
-        let (a, b) = (fid_of(mesh, mesh.he[h].from), fid_of(mesh, mesh.he[h].to));
-        adj.entry(a).or_default().push(b);
-        reg_he.entry(mesh.he[h].region).or_default().push(h);
+    let mut failed = Vec::new();
+    for r in regions {
+        failed.extend(bridge_region(ctx, mesh, pole_target, &mut st, r).0);
     }
+    failed
+}
+
+/// Bridge one region (and the pieces it splits into). Returns the regions
+/// that failed and every region the start region became.
+pub fn bridge_region(
+    ctx: &BodyCtx,
+    mesh: &mut HMesh,
+    pole_target: &HashMap<EdgeId, usize>,
+    st: &mut BridgeState,
+    start: usize,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut failed = Vec::new();
+    let mut produced = Vec::new();
+    let mut queue: Vec<usize> = vec![start];
+    let fid_of = |mesh: &HMesh, v: usize| mesh.final_v(v, pole_target);
+    let adj = &mut st.adj;
+    let reg_he = &mut st.reg_he;
     let mut guard = 0usize;
     let timing = std::env::var("NT_TIME").is_ok();
     let mut tt = [std::time::Duration::ZERO; 5];
     let mut iters = 0usize;
     while let Some(r) = queue.pop() {
+        produced.push(r);
         loop {
             iters += 1;
             let t0 = std::time::Instant::now();
@@ -522,36 +578,82 @@ pub fn bridge_all(
             };
             let mut seen_pairs: std::collections::HashSet<(usize, usize, usize, usize, i64, i64)> =
                 Default::default();
+            // Uniform grid over all (shifted) occurrence positions.
+            let mut pts: Vec<(DVec2, usize, usize, DVec2)> = Vec::new();
+            for &(wb, ib) in &occs {
+                for s in &shifts {
+                    if single && !wind && *s != DVec2::ZERO {
+                        continue;
+                    }
+                    pts.push((geoms[wb].occ[ib].d + *s, wb, ib, *s));
+                }
+            }
+            let mut glo = DVec2::splat(f64::INFINITY);
+            let mut ghi = DVec2::splat(f64::NEG_INFINITY);
+            for p in &pts {
+                glo = glo.min(p.0);
+                ghi = ghi.max(p.0);
+            }
+            let gext = (ghi - glo).max_element().max(1e-12);
+            let gn = ((pts.len() as f64).sqrt().ceil()).clamp(1.0, 512.0);
+            let gcell = gext / gn;
+            let cell_of = |p: DVec2| {
+                (
+                    ((p.x - glo.x) / gcell).floor() as i64,
+                    ((p.y - glo.y) / gcell).floor() as i64,
+                )
+            };
+            let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+            for (i, p) in pts.iter().enumerate() {
+                grid.entry(cell_of(p.0)).or_default().push(i);
+            }
+            let max_ring = (gn as i64) + 2;
             for &(wa, ia) in &occs {
                 let oa = &geoms[wa].occ[ia];
                 let mut near: Vec<(f64, usize, usize, DVec2)> = Vec::new();
-                for &(wb, ib) in &occs {
-                    if single {
-                        let n = geoms[0].occ.len();
-                        let (lo, hi) = (ia.min(ib), ia.max(ib));
-                        if hi - lo < 2 || (lo == 0 && hi == n - 1) {
-                            continue;
-                        }
-                    } else if wb == wa {
-                        continue;
-                    }
-                    let ob = &geoms[wb].occ[ib];
-                    if oa.fid == ob.fid {
-                        continue;
-                    }
-                    for s in &shifts {
-                        if single && !wind && *s != DVec2::ZERO {
-                            continue;
-                        }
-                        let d = (ob.d + *s - oa.d).length();
-                        if near.len() < K || d < near[near.len() - 1].0 {
-                            let pos = near.partition_point(|x| x.0 <= d);
-                            near.insert(pos, (d, wb, ib, *s));
-                            if near.len() > K {
-                                near.pop();
+                let (cx, cy) = cell_of(oa.d);
+                let mut ring = 0i64;
+                loop {
+                    for x in cx - ring..=cx + ring {
+                        for y in cy - ring..=cy + ring {
+                            if (x - cx).abs() != ring && (y - cy).abs() != ring {
+                                continue;
+                            }
+                            let Some(list) = grid.get(&(x, y)) else {
+                                continue;
+                            };
+                            for &pi in list {
+                                let (pp, wb, ib, sh) = pts[pi];
+                                if single {
+                                    let n = geoms[0].occ.len();
+                                    let (lo, hi) = (ia.min(ib), ia.max(ib));
+                                    if hi - lo < 2 || (lo == 0 && hi == n - 1) {
+                                        continue;
+                                    }
+                                } else if wb == wa {
+                                    continue;
+                                }
+                                if oa.fid == geoms[wb].occ[ib].fid {
+                                    continue;
+                                }
+                                let d = (pp - oa.d).length();
+                                if near.len() < K || d < near[near.len() - 1].0 {
+                                    let pos = near.partition_point(|q| q.0 <= d);
+                                    near.insert(pos, (d, wb, ib, sh));
+                                    if near.len() > K {
+                                        near.pop();
+                                    }
+                                }
                             }
                         }
                     }
+                    // Anything beyond this ring is at least `ring · cell` away.
+                    if (near.len() >= K && near[near.len() - 1].0 <= ring as f64 * gcell)
+                        || ring > max_ring
+                    {
+                        break;
+                    }
+                    ring += 1;
                 }
                 for (_, wb, ib, sh) in near {
                     let (wi, i, wj, j, shift) = if (wa, ia) <= (wb, ib) {
@@ -604,49 +706,18 @@ pub fn bridge_all(
             cands.sort_by(|a, b| a.len.total_cmp(&b.len).then_with(|| a.keys.cmp(&b.keys)));
             let index = SegIndex::new(&geoms, &shifts);
             let q = ctx.size * 1e-9;
-            // Exact 3D lengths of every candidate's surface path.
-            match &chart {
-                Chart::Face { fg, .. } => {
-                    let k = 8;
-                    for chunk in (0..cands.len()).collect::<Vec<_>>().chunks(4096) {
-                        let mut uvs = Vec::with_capacity(chunk.len() * (k + 1));
-                        for &ci in chunk {
-                            let c = &cands[ci];
-                            let a = geoms[c.wi].occ[c.i].raw;
-                            let b = geoms[c.wj].occ[c.j].raw + chart.raw_shift(c.shift);
-                            for t in 0..=k {
-                                uvs.push(a + (b - a) * (t as f64 / k as f64));
-                            }
-                        }
-                        let ev = ctx.face_eval(fg.id, &uvs);
-                        for (n, &ci) in chunk.iter().enumerate() {
-                            let mut l = 0.0;
-                            for t in 0..k {
-                                if let (Some(p), Some(q)) =
-                                    (ev.get(n * (k + 1) + t), ev.get(n * (k + 1) + t + 1))
-                                {
-                                    l += (q.p - p.p).length();
-                                }
-                            }
-                            cands[ci].len = l;
-                        }
-                    }
-                }
-                Chart::Plane { .. } => {
-                    for ci in 0..cands.len() {
-                        let c = &cands[ci];
-                        cands[ci].len = (mesh.verts[geoms[c.wi].occ[c.i].v].pos
-                            - mesh.verts[geoms[c.wj].occ[c.j].v].pos)
-                            .length();
-                    }
-                }
+            // Domain distance (metric-scaled UV ≈ 3D length) orders the
+            // candidates; exact 3D surface-path lengths order each window.
+            for c in &mut cands {
+                let (oa, ob) = (&geoms[c.wi].occ[c.i], &geoms[c.wj].occ[c.j]);
+                c.len = (ob.d + c.shift - oa.d).length();
             }
-            cands.sort_by(|a, b| {
-                let (la, lb) = ((a.len / q).round(), (b.len / q).round());
-                la.total_cmp(&lb)
-                    .then_with(|| a.keys.cmp(&b.keys))
-                    .then(a.i.cmp(&b.i))
-                    .then(a.j.cmp(&b.j))
+            let mut order: Vec<usize> = (0..cands.len()).collect();
+            order.sort_by(|&x, &y| {
+                cands[x]
+                    .len
+                    .total_cmp(&cands[y].len)
+                    .then_with(|| cands[x].keys.cmp(&cands[y].keys))
             });
             // Batch selection: shortest valid chords that join different
             // loops (Kruskal) or separate repeated vertices, never crossing
@@ -664,64 +735,187 @@ pub fn bridge_all(
                 r
             }
             let mut separated: HashSet<usize> = HashSet::new();
-            for (ci, c) in cands.iter().enumerate() {
-                if used.contains(&(c.wi, c.i)) || used.contains(&(c.wj, c.j)) {
-                    continue;
+            let n_rep = if walks.len() == 1 {
+                repeated_fids(&geoms[0]).len()
+            } else {
+                0
+            };
+            let mut joins = 0usize;
+            for window in order.chunks(64) {
+                let done = if walks.len() > 1 {
+                    joins + 1 >= walks.len()
+                } else if wind {
+                    !accepted.is_empty()
+                } else {
+                    separated.len() >= n_rep
+                };
+                if done {
+                    break;
                 }
-                let (oa, ob) = (&geoms[c.wi].occ[c.i], &geoms[c.wj].occ[c.j]);
-                let (a, b) = (oa.d, ob.d + c.shift);
-                if (b - a).length() <= eps {
-                    continue;
-                }
-                let mut sep_set: Vec<usize> = Vec::new();
-                if walks.len() > 1 {
-                    if find(&mut wuf, c.wi) == find(&mut wuf, c.wj) {
-                        continue;
-                    }
-                } else if !wind {
-                    let (i, j) = (c.i.min(c.j), c.i.max(c.j));
-                    for (ps, f) in rep_pos.iter().zip(repeated_fids(&geoms[0])) {
-                        let inside = ps.iter().any(|&p| p > i && p < j);
-                        let outside = ps.iter().any(|&p| p < i || p > j);
-                        if inside && outside {
-                            sep_set.push(f);
+                let mut win: Vec<usize> = window.to_vec();
+                match &chart {
+                    Chart::Face { fg, .. } => {
+                        let k = 8;
+                        let mut uvs = Vec::with_capacity(win.len() * (k + 1));
+                        for &ci in &win {
+                            let c = &cands[ci];
+                            let a = geoms[c.wi].occ[c.i].raw;
+                            let b = geoms[c.wj].occ[c.j].raw + chart.raw_shift(c.shift);
+                            for t in 0..=k {
+                                uvs.push(a + (b - a) * (t as f64 / k as f64));
+                            }
+                        }
+                        let ev = ctx.face_eval(fg.id, &uvs);
+                        for (n, &ci) in win.iter().enumerate() {
+                            let mut l = 0.0;
+                            for t in 0..k {
+                                if let (Some(p), Some(q)) =
+                                    (ev.get(n * (k + 1) + t), ev.get(n * (k + 1) + t + 1))
+                                {
+                                    l += (q.p - p.p).length();
+                                }
+                            }
+                            cands[ci].len = l;
                         }
                     }
-                    if sep_set.iter().all(|f| separated.contains(f)) {
-                        continue;
+                    Chart::Plane { .. } => {
+                        for &ci in &win {
+                            let c = &cands[ci];
+                            cands[ci].len = (mesh.verts[geoms[c.wi].occ[c.i].v].pos
+                                - mesh.verts[geoms[c.wj].occ[c.j].v].pos)
+                                .length();
+                        }
                     }
                 }
-                if !in_sector(oa, (b - a).normalize()) || !in_sector(ob, (a - b).normalize()) {
-                    continue;
-                }
-                if !index.clear(a, b, eps * 10.0) {
-                    continue;
-                }
-                let crosses = acc_segs.iter().any(|&(c0, c1)| {
-                    shifts.iter().any(|s| {
-                        seg_hits(a, b, c0 + *s, c1 + *s, eps * 10.0)
-                            .iter()
-                            .any(|&(sa, _)| {
-                                let p = a + (b - a) * sa;
-                                (p - a).length() > eps * 10.0 && (p - b).length() > eps * 10.0
-                            })
-                    })
+                win.sort_by(|&x, &y| {
+                    let (a, b) = (&cands[x], &cands[y]);
+                    let (la, lb) = ((a.len / q).round(), (b.len / q).round());
+                    la.total_cmp(&lb)
+                        .then_with(|| a.keys.cmp(&b.keys))
+                        .then(a.i.cmp(&b.i))
+                        .then(a.j.cmp(&b.j))
                 });
-                if crosses {
-                    continue;
+                for ci in win {
+                    let c = &cands[ci];
+                    if used.contains(&(c.wi, c.i)) || used.contains(&(c.wj, c.j)) {
+                        continue;
+                    }
+                    let (oa, ob) = (&geoms[c.wi].occ[c.i], &geoms[c.wj].occ[c.j]);
+                    let (a, b) = (oa.d, ob.d + c.shift);
+                    if (b - a).length() <= eps {
+                        continue;
+                    }
+                    let mut sep_set: Vec<usize> = Vec::new();
+                    if walks.len() > 1 {
+                        if find(&mut wuf, c.wi) == find(&mut wuf, c.wj) {
+                            continue;
+                        }
+                    } else if !wind {
+                        let (i, j) = (c.i.min(c.j), c.i.max(c.j));
+                        for (ps, f) in rep_pos.iter().zip(repeated_fids(&geoms[0])) {
+                            let inside = ps.iter().any(|&p| p > i && p < j);
+                            let outside = ps.iter().any(|&p| p < i || p > j);
+                            if inside && outside {
+                                sep_set.push(f);
+                            }
+                        }
+                        if sep_set.iter().all(|f| separated.contains(f)) {
+                            continue;
+                        }
+                    }
+                    if !in_sector(oa, (b - a).normalize()) || !in_sector(ob, (a - b).normalize()) {
+                        continue;
+                    }
+                    if !index.clear(a, b, eps * 10.0) {
+                        continue;
+                    }
+                    let crosses = acc_segs.iter().any(|&(c0, c1)| {
+                        shifts.iter().any(|s| {
+                            seg_hits(a, b, c0 + *s, c1 + *s, eps * 10.0)
+                                .iter()
+                                .any(|&(sa, _)| {
+                                    let p = a + (b - a) * sa;
+                                    (p - a).length() > eps * 10.0 && (p - b).length() > eps * 10.0
+                                })
+                        })
+                    });
+                    if crosses {
+                        continue;
+                    }
+                    if walks.len() > 1 {
+                        let (x, y) = (find(&mut wuf, c.wi), find(&mut wuf, c.wj));
+                        wuf[x] = y;
+                        joins += 1;
+                    } else {
+                        separated.extend(sep_set);
+                    }
+                    used.insert((c.wi, c.i));
+                    used.insert((c.wj, c.j));
+                    acc_segs.push((a, b));
+                    accepted.push(ci);
+                    if walks.len() == 1 && wind {
+                        break;
+                    }
                 }
-                if walks.len() > 1 {
-                    let (x, y) = (find(&mut wuf, c.wi), find(&mut wuf, c.wj));
-                    wuf[x] = y;
-                } else {
-                    separated.extend(sep_set);
+            }
+            // Once every loop is joined, a second chord between each joined
+            // pair of loops (different endpoints) splits the region right
+            // away (SPEC §4.6 step 6), saving one pass per hole.
+            let mut split_after = false;
+            if walks.len() > 1 && joins + 1 == walks.len() {
+                let pairs: HashSet<(usize, usize)> = accepted
+                    .iter()
+                    .map(|&ci| {
+                        (
+                            cands[ci].wi.min(cands[ci].wj),
+                            cands[ci].wi.max(cands[ci].wj),
+                        )
+                    })
+                    .collect();
+                let mut done_pairs: HashSet<(usize, usize)> = HashSet::new();
+                for &ci in &order {
+                    let c = &cands[ci];
+                    let pk = (c.wi.min(c.wj), c.wi.max(c.wj));
+                    if !pairs.contains(&pk) || done_pairs.contains(&pk) {
+                        continue;
+                    }
+                    if used.contains(&(c.wi, c.i)) || used.contains(&(c.wj, c.j)) {
+                        continue;
+                    }
+                    let (oa, ob) = (&geoms[c.wi].occ[c.i], &geoms[c.wj].occ[c.j]);
+                    let (a, b) = (oa.d, ob.d + c.shift);
+                    if (b - a).length() <= eps
+                        || !in_sector(oa, (b - a).normalize())
+                        || !in_sector(ob, (a - b).normalize())
+                    {
+                        continue;
+                    }
+                    if !index.clear(a, b, eps * 10.0) {
+                        continue;
+                    }
+                    let crosses = acc_segs.iter().any(|&(c0, c1)| {
+                        shifts.iter().any(|s| {
+                            seg_hits(a, b, c0 + *s, c1 + *s, eps * 10.0)
+                                .iter()
+                                .any(|&(sa, _)| {
+                                    let p = a + (b - a) * sa;
+                                    (p - a).length() > eps * 10.0 && (p - b).length() > eps * 10.0
+                                })
+                        })
+                    });
+                    if crosses {
+                        continue;
+                    }
+                    used.insert((c.wi, c.i));
+                    used.insert((c.wj, c.j));
+                    acc_segs.push((a, b));
+                    accepted.push(ci);
+                    done_pairs.insert(pk);
                 }
-                used.insert((c.wi, c.i));
-                used.insert((c.wj, c.j));
-                acc_segs.push((a, b));
-                accepted.push(ci);
-                if walks.len() == 1 && wind {
-                    break;
+                split_after = done_pairs.len() == pairs.len();
+                if !split_after {
+                    // Keep only the joins; separations follow in later passes.
+                    accepted.truncate(joins);
                 }
             }
             let chosen = accepted.first().copied();
@@ -778,7 +972,7 @@ pub fn bridge_all(
                 adj.entry(fb).or_default().push(fa);
                 reg_he.entry(r).or_default().extend([ch, ch + 1]);
             }
-            if walks.len() > 1 {
+            if walks.len() > 1 && !split_after {
                 continue;
             }
             // The walk split into pieces: each extra orbit becomes a region.
@@ -807,13 +1001,13 @@ pub fn bridge_all(
             }
         }
     }
-    if timing {
+    if timing && tt.iter().map(|d| d.as_micros()).sum::<u128>() > 2000 {
         eprintln!(
-            "  bridge: {iters} iterations; walks {:?} cands {:?} choose {:?}",
+            "    bridge {iters} iterations; walks {:?} cands {:?} choose {:?}",
             tt[0], tt[1], tt[2]
         );
     }
-    failed
+    (failed, produced)
 }
 
 /// Auto-fill every polygon with more than four sides (SPEC §7). Returns
@@ -823,13 +1017,30 @@ pub fn autofill_all(
     mesh: &mut HMesh,
     pole_target: &HashMap<EdgeId, usize>,
 ) -> HashSet<usize> {
-    let mut fan = HashSet::new();
+    let mut st = BridgeState::new(mesh, pole_target);
     let regions: Vec<usize> = (0..mesh.regions.len())
         .filter(|&r| mesh.regions[r].alive)
         .collect();
-    let all = mesh.all_region_walks();
-    for r in regions {
-        let Some(walks) = all.get(&r) else { continue };
+    fill_regions(ctx, mesh, pole_target, &mut st, &regions).0
+}
+
+/// Auto-fill the given regions. Returns fan-filled regions and every region
+/// produced (the given ones plus new pieces).
+pub fn fill_regions(
+    ctx: &BodyCtx,
+    mesh: &mut HMesh,
+    pole_target: &HashMap<EdgeId, usize>,
+    st: &mut BridgeState,
+    regions: &[usize],
+) -> (HashSet<usize>, Vec<usize>) {
+    let mut fan = HashSet::new();
+    let mut produced: Vec<usize> = regions.to_vec();
+    for &r in regions {
+        if !mesh.regions[r].alive {
+            continue;
+        }
+        let walks = st.walks(mesh, r);
+        let walks = &walks;
         if walks.len() != 1 || walks[0].len() <= 4 {
             continue;
         }
@@ -863,16 +1074,14 @@ pub fn autofill_all(
         // Diagonals must not duplicate an edge that already joins the same
         // two vertices elsewhere (that would be non-manifold).
         let n = g.occ.len();
-        let joined: HashSet<(usize, usize)> = mesh
-            .alive_he()
-            .map(|h| {
-                let (a, b) = (
-                    mesh.final_v(mesh.he[h].from, pole_target),
-                    mesh.final_v(mesh.he[h].to, pole_target),
-                );
-                (a.min(b), a.max(b))
-            })
-            .collect();
+        let mut joined: HashSet<(usize, usize)> = HashSet::new();
+        for o in &g.occ {
+            if let Some(l) = st.adj.get(&o.fid) {
+                for &x in l {
+                    joined.insert((o.fid.min(x), o.fid.max(x)));
+                }
+            }
+        }
         let bad = |polys: &[Vec<u32>]| {
             polys.iter().any(|p| {
                 (0..p.len()).any(|k| {
@@ -911,10 +1120,28 @@ pub fn autofill_all(
         if res.polys.len() <= 1 {
             continue;
         }
+        let he0 = mesh.he.len();
+        let reg0 = mesh.regions.len();
         apply_fill(mesh, r, &walk, &g, &chart, &res.polys);
-        let _ = FaceId(0);
+        for h in he0..mesh.he.len() {
+            let (a, b) = (
+                mesh.final_v(mesh.he[h].from, pole_target),
+                mesh.final_v(mesh.he[h].to, pole_target),
+            );
+            st.adj.entry(a).or_default().push(b);
+        }
+        // Re-index the half-edges of r and its new pieces.
+        let mut all: Vec<usize> = st.reg_he.remove(&r).unwrap_or_default();
+        all.extend(he0..mesh.he.len());
+        for h in all {
+            st.reg_he.entry(mesh.he[h].region).or_default().push(h);
+        }
+        produced.extend(reg0..mesh.regions.len());
+        if fan.contains(&r) {
+            fan.extend(reg0..mesh.regions.len());
+        }
     }
-    fan
+    (fan, produced)
 }
 
 fn apply_fill(

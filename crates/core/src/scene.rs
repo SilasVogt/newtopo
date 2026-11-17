@@ -55,8 +55,7 @@ pub struct Scene {
     outputs: Vec<OutputMesh>,
     links: HashMap<BodyId, crate::link::LinkSets>,
     mirrors: HashMap<(BodyId, crate::doc::Axis), crate::link::FaceMap>,
-    #[allow(dead_code)]
-    caches: HashMap<BodyId, eval::cache::EvalCache>,
+    caches: std::sync::Mutex<HashMap<BodyId, eval::cache::EvalCache>>,
 }
 
 /// A body as returned to the UI for drawing the CAD model.
@@ -99,7 +98,7 @@ impl Scene {
             outputs: vec![],
             links: HashMap::new(),
             mirrors: HashMap::new(),
-            caches: HashMap::new(),
+            caches: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -227,6 +226,16 @@ impl Scene {
     pub fn apply(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
         let (doc, outcome) = self.run_op(&op)?;
         self.gate_and_commit(doc)?;
+        Ok(outcome)
+    }
+
+    /// Apply an op without the validation gate (debugging, scripts that
+    /// want to inspect an invalid result). Still one undo step.
+    pub fn apply_unchecked(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
+        let (doc, outcome) = self.run_op(&op)?;
+        if doc != *self.doc {
+            self.commit(doc);
+        }
         Ok(outcome)
     }
 
@@ -415,16 +424,41 @@ impl Scene {
         let fresh = self.evals.get(&body).is_some_and(|(f, _)| *f == fp);
         if !fresh {
             let c = self.bodies.get(&body)?;
-            let ev = eval::evaluate(&c.ctx, &self.doc, body);
+            let mut caches = self.caches.lock().unwrap();
+            let cache = caches.entry(body).or_default();
+            let ev = eval::evaluate_with(&c.ctx, &self.doc, body, cache);
+            drop(caches);
             self.evals.insert(body, (fp, ev));
         }
         self.evals.get(&body).map(|(_, e)| e)
     }
 
     /// Evaluate a body for a candidate document (no caching).
-    pub(crate) fn eval_doc(&self, doc: &Document, body: BodyId) -> Option<BodyEval> {
+    pub(crate) fn eval_doc(&mut self, doc: &Document, body: BodyId) -> Option<BodyEval> {
         let c = self.bodies.get(&body)?;
-        Some(eval::evaluate(&c.ctx, doc, body))
+        let mut caches = self.caches.lock().unwrap();
+        let cache = caches.entry(body).or_default();
+        Some(eval::evaluate_with(&c.ctx, doc, body, cache))
+    }
+
+    /// Patches of a body for a document (stage 1 only, cached).
+    pub(crate) fn patches_cached(
+        &self,
+        doc: &Document,
+        body: BodyId,
+    ) -> Vec<crate::eval::lines::Patch> {
+        let Some(c) = self.bodies.get(&body) else {
+            return vec![];
+        };
+        let mut caches = self.caches.lock().unwrap();
+        let cache = caches.entry(body).or_default();
+        eval::body_patches_with(&c.ctx, doc, body, cache)
+    }
+
+    /// Cache hits / misses of the last evaluation of a body, per level
+    /// (face patches, face arrangement, region bridging+fill).
+    pub fn cache_stats(&self, body: BodyId) -> Option<[(usize, usize); 3]> {
+        self.caches.lock().unwrap().get(&body).map(|c| c.last)
     }
 
     /// Evaluated output for every body (lazy; only dirty bodies re-evaluate).

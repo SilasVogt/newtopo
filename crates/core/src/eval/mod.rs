@@ -120,6 +120,39 @@ pub fn rule_faces(r: &Rule, body: BodyId, ctx: &BodyCtx) -> Vec<FaceId> {
 
 /// Patches of every face of a body (stage 1 only).
 pub fn body_patches(ctx: &BodyCtx, doc: &Document, body: BodyId) -> Vec<Patch> {
+    body_patches_with(ctx, doc, body, &mut cache::EvalCache::default())
+}
+
+/// [`body_patches`] reusing a cache's stage-1 results.
+pub fn body_patches_with(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    cache: &mut cache::EvalCache,
+) -> Vec<Patch> {
+    let mut out = Vec::new();
+    for f in ctx.topo.face_ids() {
+        let splits: Vec<&crate::doc::SplitLine> = doc
+            .split_lines
+            .iter()
+            .filter(|s| s.body == body && s.face == f)
+            .collect();
+        let key = cache::hash_str(&format!("{}|{}|{:?}", body.0, f.0, splits));
+        let s1 = match cache.peek1(key) {
+            Some(s) => s,
+            None => {
+                let s = std::sync::Arc::new(face::stage1(ctx, body, ctx.face(f), &splits));
+                cache.put1(key, s.clone());
+                s
+            }
+        };
+        out.extend(s1.patches.iter().cloned());
+    }
+    out
+}
+
+#[allow(dead_code)]
+fn body_patches_uncached(ctx: &BodyCtx, doc: &Document, body: BodyId) -> Vec<Patch> {
     let mut out = Vec::new();
     for f in ctx.topo.face_ids() {
         let splits: Vec<&crate::doc::SplitLine> = doc
@@ -151,6 +184,28 @@ fn has_spread_rule(doc: &Document, p: &Patch, body: BodyId) -> bool {
 
 /// Evaluate one body.
 pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
+    evaluate_with(ctx, doc, body, &mut cache::EvalCache::default())
+}
+
+/// Evaluate one body, reusing (and refreshing) a per-body cache.
+pub fn evaluate_with(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    cache: &mut cache::EvalCache,
+) -> BodyEval {
+    cache.begin();
+    let ev = evaluate_inner(ctx, doc, body, cache);
+    cache.end();
+    ev
+}
+
+fn evaluate_inner(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    cache: &mut cache::EvalCache,
+) -> BodyEval {
     let timing = std::env::var("NT_TIME").is_ok();
     let t0 = std::time::Instant::now();
     let lap = |what: &str| {
@@ -161,14 +216,25 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     let mut ev = BodyEval::default();
     let nf = ctx.topo.faces.len();
     // 1. Patches.
-    let mut s1s = Vec::with_capacity(nf);
+    let mut s1s: Vec<std::sync::Arc<face::Stage1>> = Vec::with_capacity(nf);
+    let mut s1keys: Vec<u64> = Vec::with_capacity(nf);
     for f in ctx.topo.face_ids() {
         let splits: Vec<&crate::doc::SplitLine> = doc
             .split_lines
             .iter()
             .filter(|s| s.body == body && s.face == f)
             .collect();
-        s1s.push(face::stage1(ctx, body, ctx.face(f), &splits));
+        let key = cache::hash_str(&format!("{}|{}|{:?}", body.0, f.0, splits));
+        let s1 = match cache.get1(key) {
+            Some(s) => s,
+            None => {
+                let s = std::sync::Arc::new(face::stage1(ctx, body, ctx.face(f), &splits));
+                cache.put1(key, s.clone());
+                s
+            }
+        };
+        s1keys.push(key);
+        s1s.push(s1);
     }
     for s in &s1s {
         ev.patches.extend(s.patches.iter().cloned());
@@ -227,7 +293,15 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     if needs_known {
         let pass1 = gen_lines(&plans, false);
         for f in ctx.topo.face_ids() {
-            let (_, glued) = face::stage3(ctx, ctx.face(f), &s1s[f.idx()], &pass1[f.idx()]);
+            let st3 = stage3_cached(
+                ctx,
+                cache,
+                f,
+                &s1s[f.idx()],
+                s1keys[f.idx()],
+                &pass1[f.idx()],
+            );
+            let glued = &st3.1;
             for g in &glued.gnodes {
                 for k in &g.keys {
                     known.entry(k.clone()).or_default().push((f, g.uv));
@@ -284,7 +358,14 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     #[allow(unused_mut)]
     let mut faces: Vec<FaceRes> = Vec::with_capacity(nf);
     for f in ctx.topo.face_ids() {
-        let (arr, glued) = face::stage3(ctx, ctx.face(f), &s1s[f.idx()], &per_face[f.idx()]);
+        let (arr, glued) = stage3_cached(
+            ctx,
+            cache,
+            f,
+            &s1s[f.idx()],
+            s1keys[f.idx()],
+            &per_face[f.idx()],
+        );
         faces.push(FaceRes {
             face: f,
             arr,
@@ -321,7 +402,7 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
     if !done_at_glue.is_empty() {
         for (fi, fr) in faces.iter_mut().enumerate() {
             if !forced[fi].is_empty() {
-                fr.glued = arr::Glued::build_with(&fr.arr, true, &forced[fi]);
+                fr.glued = std::sync::Arc::new(arr::Glued::build_with(&fr.arr, true, &forced[fi]));
             }
         }
         mesh = assemble::assemble(ctx, doc, body, &faces);
@@ -340,10 +421,51 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
         }
     }
     lap("edits");
-    // 6. Bridging (after splitting parallel curved edges).
+    // 6–7. Bridging and auto-fill per region, cached by region signature.
     mesh.split_parallel_edges(ctx, &pole_target);
-    let failed = bridge::bridge_all(ctx, &mut mesh, &pole_target);
-    lap("bridge");
+    let mut st = bridge::BridgeState::new(&mesh, &pole_target);
+    let mut fan: HashSet<usize> = HashSet::new();
+    let mut failed: Vec<usize> = Vec::new();
+    let start: Vec<usize> = (0..mesh.regions.len())
+        .filter(|&r| mesh.regions[r].alive)
+        .collect();
+    for r in start {
+        if !mesh.regions[r].alive {
+            continue;
+        }
+        let sig = cache::region_sig(&mesh, &st, &pole_target, r, doc.settings.autofill);
+        if let Some(rec) = cache.get_region(sig.key) {
+            let (_, fz) = cache::replay(&mut mesh, &mut st, &pole_target, r, &sig.occ, &rec);
+            fan.extend(fz);
+            continue;
+        }
+        let he_before = mesh.he.len();
+        let tr = std::time::Instant::now();
+        let nwalk = st.walks(&mesh, r).iter().map(|w| w.len()).sum::<usize>();
+        let (fail, produced) = bridge::bridge_region(ctx, &mut mesh, &pole_target, &mut st, r);
+        let tb = tr.elapsed();
+        let (fz, produced) = if doc.settings.autofill {
+            bridge::fill_regions(ctx, &mut mesh, &pole_target, &mut st, &produced)
+        } else {
+            (HashSet::new(), produced)
+        };
+        if timing && tr.elapsed().as_millis() >= 2 {
+            eprintln!(
+                "  region {r} ({nwalk} occ, face {}): bridge {tb:?}, total {:?}, {} pieces",
+                mesh.regions[r].face,
+                tr.elapsed(),
+                produced.len()
+            );
+        }
+        if fail.is_empty()
+            && let Some(rec) = cache::record(&mesh, &st, &sig.occ, he_before, &produced, &fz)
+        {
+            cache.put_region(sig.key, rec);
+        }
+        fan.extend(fz);
+        failed.extend(fail);
+    }
+    lap("bridge+fill");
     for r in failed {
         ev.internal.push(Issue {
             kind: IssueKind::NotSimple,
@@ -355,13 +477,6 @@ pub fn evaluate(ctx: &BodyCtx, doc: &Document, body: BodyId) -> BodyEval {
             vertices: vec![],
         });
     }
-    // 7. Auto-fill.
-    let fan = if doc.settings.autofill {
-        bridge::autofill_all(ctx, &mut mesh, &pole_target)
-    } else {
-        HashSet::new()
-    };
-    lap("fill");
     // UV orientation check of every final polygon (the reliable flip test
     // for polygons that span a lot of curvature).
     for (r, walks) in mesh.all_region_walks() {
@@ -547,4 +662,22 @@ pub fn anchor_point(ctx: &BodyCtx, a: &Anchor) -> DVec3 {
         Anchor::CadEdge { edge, t } => ctx.edge_point(edge, t),
         Anchor::Face { face, uv } => ctx.point(face, uv),
     }
+}
+
+fn stage3_cached(
+    ctx: &BodyCtx,
+    cache: &mut cache::EvalCache,
+    f: FaceId,
+    s1: &face::Stage1,
+    s1key: u64,
+    lines: &[GLine],
+) -> (std::sync::Arc<arr::Arr>, std::sync::Arc<arr::Glued>) {
+    let key = cache::hash_str(&format!("{s1key}|{lines:?}"));
+    if let Some(v) = cache.get3(key) {
+        return v;
+    }
+    let (a, g) = face::stage3(ctx, ctx.face(f), s1, lines);
+    let v = (std::sync::Arc::new(a), std::sync::Arc::new(g));
+    cache.put3(key, v.clone());
+    v
 }
