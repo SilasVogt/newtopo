@@ -19,14 +19,17 @@ pub const MAX_RULE_COUNT: u32 = 1000;
 /// Largest number of crossings one two-direction rule may produce
 /// (count A × count B for Connect, U × V for Grid): bounds the arrangement
 /// work and memory for a single patch.
-pub const MAX_RULE_CROSSINGS: u64 = 250_000;
+pub const MAX_RULE_CROSSINGS: u64 = 90_000;
 /// Largest number of rules, split lines, edits or cut points a document may
 /// hold.
 pub const MAX_DOC_ITEMS: usize = 100_000;
 /// Largest number of generated lines (all rule kinds, split lines and
 /// body-wide rules together) one face may receive. Lines cross pairwise, so
-/// this bounds a face's arrangement at roughly a million crossings.
-pub const MAX_FACE_LINES: u64 = 2048;
+/// this bounds a face's arrangement like MAX_RULE_CROSSINGS bounds one rule
+/// (at most about 300 x 300 crossings).
+pub const MAX_FACE_LINES: u64 = 600;
+/// Largest number of generated lines in a whole document.
+pub const MAX_DOC_LINES: u64 = 200_000;
 /// Normalised iso values and seeds may run past 0..1 a little (through-iso
 /// continuation, periodic wrap) but never far.
 const ISO_SLACK: f64 = 1.0;
@@ -81,6 +84,8 @@ fn work_budget(doc: &Document) -> Result<()> {
             _ => {}
         }
     }
+    spread_ownership(doc)?;
+
     // Every line a face receives can cross every other one, so bound the
     // total per face across all rule kinds (a single Iso rule can list
     // thousands of pieces on one face).
@@ -149,6 +154,10 @@ fn work_budget(doc: &Document) -> Result<()> {
             Rule::Join { body, .. } => add(*body, None, 1),
         }
     }
+    let total: u64 = per_face.values().sum::<u64>() + per_body.values().sum::<u64>();
+    if total > MAX_DOC_LINES {
+        bail!("the scene asks for {total} lines in total (at most {MAX_DOC_LINES})");
+    }
     let body_wide = |b: BodyId| per_body.get(&b).copied().unwrap_or(0);
     for (&(b, f), &n) in &per_face {
         if n + body_wide(b) > MAX_FACE_LINES {
@@ -167,6 +176,66 @@ fn work_budget(doc: &Document) -> Result<()> {
                 b.0
             );
         }
+    }
+    Ok(())
+}
+
+/// Spread rules own patches exclusively (SPEC §4.3): ops keep that through
+/// takeover, so a document where two spread rules (or one rule twice) name
+/// the same patch, or a body-wide Slice shares its body with another spread
+/// rule, didn't come from the app and would multiply evaluation work.
+fn spread_ownership(doc: &Document) -> Result<()> {
+    let mut owner: HashMap<PatchId, u32> = HashMap::new();
+    let mut body_slice: HashMap<BodyId, u32> = HashMap::new();
+    let mut claim = |p: &PatchId, rule: u32| -> Result<()> {
+        if let Some(prev) = owner.insert(*p, rule) {
+            bail!(
+                "face {} of body {} is claimed by spread rules {prev} and {rule} (or twice by one rule)",
+                p.face.0,
+                p.body.0
+            );
+        }
+        Ok(())
+    };
+    for r in &doc.rules {
+        let id = r.id.0;
+        match &r.rule {
+            Rule::Connect {
+                patches, flipped, ..
+            } => {
+                patches.iter().try_for_each(|p| claim(p, id))?;
+                let mut seen = HashSet::new();
+                for f in flipped {
+                    if !seen.insert(*f) || !patches.contains(f) {
+                        bail!("Connect rule {id} flips a patch it doesn't own, or one twice");
+                    }
+                }
+            }
+            Rule::Grid { patch, .. } => claim(patch, id)?,
+            Rule::Slice {
+                scope: SliceScope::Patches(l),
+                ..
+            } => l.iter().try_for_each(|p| claim(p, id))?,
+            Rule::Slice {
+                scope: SliceScope::Body(b),
+                ..
+            } => {
+                if let Some(prev) = body_slice.insert(*b, id) {
+                    bail!(
+                        "body {} has two body-wide Slice rules ({prev} and {id})",
+                        b.0
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((p, rule)) = owner.iter().find(|(p, _)| body_slice.contains_key(&p.body)) {
+        bail!(
+            "body {} has a body-wide Slice and spread rule {rule} on face {}",
+            p.body.0,
+            p.face.0
+        );
     }
     Ok(())
 }

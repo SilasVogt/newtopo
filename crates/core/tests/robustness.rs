@@ -272,6 +272,46 @@ fn malformed_scene_is_refused() {
         through: false,
     }));
     assert!(msg.contains("lines"), "{msg}");
+    // Rules stacked on one patch (takeover never produces this) and a
+    // Connect listing the same patch many times are refused.
+    let grid = |id: u32| RuleEntry {
+        id: RuleId(900 + id),
+        ordinal: 900 + id,
+        rule: Rule::Grid {
+            patch: PatchId::whole(b, FaceId(0)),
+            count_u: 100,
+            count_v: 100,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        },
+        link_group: None,
+    };
+    let mut d = s.doc().clone();
+    d.rules.extend((0..8).map(grid));
+    assert!(bad(&d).contains("claimed"), "stacked grids");
+    let msg = bad(&with_rule(Rule::Connect {
+        patches: vec![PatchId::whole(b, FaceId(0)); 10_000],
+        count_a: 4,
+        count_b: 0,
+        start_on_seam: false,
+        flipped: vec![],
+    }));
+    assert!(msg.contains("claimed"), "{msg}");
+    // An Iso rule with 600 U + 600 V pieces is the same work as a 600 x 600
+    // Grid, so the per-face line budget refuses it too.
+    let crossed: Vec<IsoPiece> = (0..1200)
+        .map(|i| {
+            piece(
+                if i < 600 { IsoDir::U } else { IsoDir::V },
+                ((i % 600) as f64 + 0.5) / 600.0,
+            )
+        })
+        .collect();
+    let msg = bad(&with_rule(Rule::Iso {
+        pieces: crossed,
+        through: false,
+    }));
+    assert!(msg.contains("lines"), "{msg}");
     // Finite but absurd parameters (would never finish clipping at seams).
     let msg = bad(&with_rule(Rule::Iso {
         pieces: vec![piece(IsoDir::U, 1e100)],
