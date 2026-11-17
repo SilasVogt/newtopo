@@ -364,16 +364,21 @@ impl Scene {
         heal: HealReport,
     ) -> anyhow::Result<ReplaceReport> {
         let entry = self.doc.body(old).cloned().context("no such body")?;
+        anyhow::ensure!(self.bodies.contains_key(&old), "body without kernel data");
         let kbody = self
             .kernel
             .load_brep(brep)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let ctx = BodyCtx::build(self.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let old_ctx = &self
-            .bodies
-            .get(&old)
-            .context("body without kernel data")?
-            .ctx;
+        // Nothing below fails once the new body has a context; until then
+        // the scene does not own it, so unload it here.
+        let ctx = match BodyCtx::build(self.kernel.clone(), kbody) {
+            Ok(c) => c,
+            Err(e) => {
+                self.kernel.unload(kbody);
+                anyhow::bail!("{e}");
+            }
+        };
+        let old_ctx = &self.bodies[&old].ctx;
         // Face matching by congruence (identity transform preferred).
         let mut report = ReplaceReport::default();
         let src: Vec<FaceId> = old_ctx.topo.face_ids().collect();
@@ -414,7 +419,7 @@ impl Scene {
         }
         report.edits_dropped = doc.edits.iter().filter(|e| e.edit.body() == old).count();
         doc.edits.retain(|e| e.edit.body() != old);
-        link::map_phases(&mut doc, old, old_ctx, id, &map);
+        link::map_phases(&mut doc, old, old_ctx, id, &ctx, &map);
         let po: Vec<_> = doc.phase_overrides.keys().copied().filter(|k| matches!(k, crate::doc::PhaseTarget::Face(b, _) | crate::doc::PhaseTarget::Edge(b, _) if *b == old)).collect();
         for k in po {
             doc.phase_overrides.remove(&k);
@@ -465,6 +470,22 @@ impl Scene {
             return Err(Refusal::new(format!("there is no body {target}")));
         }
         let src = clip.source;
+        let has_keyed =
+            !clip.edit_list.is_empty() || clip.rules.iter().any(|r| matches!(r, Rule::Join { .. }));
+        // Join rules and edits name generated vertices and edges: they are
+        // mapped by position between the source output (without its edits)
+        // and the target output, and their faces join the face matching.
+        let ms = if has_keyed {
+            let mut sdoc = (*self.doc).clone();
+            sdoc.edits.retain(|e| e.edit.body() != src);
+            Some(
+                self.eval_doc(&sdoc, src)
+                    .ok_or_else(|| Refusal::new("the copied body has no CAD data"))?
+                    .mesh,
+            )
+        } else {
+            None
+        };
         let (map, unmatched, mut pasted, mut skipped) = {
             let ca = &self.bodies[&src].ctx;
             let cb = &self.bodies[&target].ctx;
@@ -473,6 +494,9 @@ impl Scene {
                 if !matches!(r, Rule::Join { .. }) {
                     src_faces.extend(eval::rule_faces(r, src, ca));
                 }
+            }
+            if let Some(ms) = &ms {
+                src_faces.extend(keyed_faces(ms, ca, clip));
             }
             src_faces.extend(clip.split_lines.iter().map(|s| s.face));
             src_faces.sort();
@@ -537,7 +561,7 @@ impl Scene {
                 push_rule(doc, nr);
                 pasted += 1;
             }
-            link::map_phases(doc, src, ca, target, &map);
+            link::map_phases(doc, src, ca, target, cb, &map);
             (map, unmatched_faces.len(), pasted, skipped)
         };
 
@@ -550,13 +574,7 @@ impl Scene {
             .filter(|r| matches!(r, Rule::Join { .. }))
             .collect();
         let mut pasted_edits = 0;
-        if !joins.is_empty() || !clip.edit_list.is_empty() {
-            let mut sdoc = (*self.doc).clone();
-            sdoc.edits.retain(|e| e.edit.body() != src);
-            let ms = self
-                .eval_doc(&sdoc, src)
-                .ok_or_else(|| Refusal::new("the copied body has no CAD data"))?
-                .mesh;
+        if let Some(ms) = ms {
             let tol = 1e-4 * self.bodies[&target].ctx.size.max(1e-9);
             let mut new_joins: Vec<RuleId> = Vec::new();
             if !joins.is_empty() {
@@ -742,6 +760,48 @@ fn map_split_patches(
         }
     }
     out
+}
+
+/// Source faces that the clipboard's Join rules and edits lie on (through
+/// the source output `ms`).
+fn keyed_faces(ms: &OutputMesh, ca: &BodyCtx, clip: &Clipboard) -> Vec<FaceId> {
+    let vert = |k: &VertexKey| {
+        ms.vertices
+            .iter()
+            .position(|v| &v.key == k)
+            .map(|i| i as u32)
+    };
+    let edge = |k: &EdgeKey| {
+        ms.edges
+            .iter()
+            .find(|e| e.key.as_ref() == Some(k))
+            .map(|e| vec![e.a, e.b])
+            .unwrap_or_default()
+    };
+    let mut verts: Vec<u32> = Vec::new();
+    let mut faces: Vec<FaceId> = Vec::new();
+    for r in &clip.rules {
+        if let Rule::Join { a, b, .. } = r {
+            verts.extend(vert(a).into_iter().chain(vert(b)));
+        }
+    }
+    for e in &clip.edit_list {
+        match e {
+            Edit::RemoveEdge { edge: k, .. }
+            | Edit::Collapse { edge: k, .. }
+            | Edit::SetHard { edge: k, .. } => verts.extend(edge(k)),
+            Edit::Weld { from, to, .. } => verts.extend(vert(from).into_iter().chain(vert(to))),
+            Edit::RemoveCadEdge { edge: e, .. } => {
+                if e.idx() < ca.topo.edges.len() {
+                    faces.extend(ca.topo.edge(*e).faces.iter().copied());
+                }
+            }
+        }
+    }
+    for v in verts {
+        faces.extend(crate::tools::faces_around(ms, &[v]));
+    }
+    faces
 }
 
 /// Transform for a generated vertex: that of the first mapped face its

@@ -738,7 +738,14 @@ pub fn phase_ref(doc: &Document, ctx: &BodyCtx, body: BodyId, f: FaceId) -> DVec
 
 /// Set the phase references of mapped faces (SPEC §4.1: a face mapping sets
 /// the target's reference to the source's mapped through the transform).
-pub fn map_phases(doc: &mut Document, a: BodyId, ca: &BodyCtx, b: BodyId, map: &FaceMap) {
+pub fn map_phases(
+    doc: &mut Document,
+    a: BodyId,
+    ca: &BodyCtx,
+    b: BodyId,
+    cb: &BodyCtx,
+    map: &FaceMap,
+) {
     for (fa, (fb, t)) in map {
         if !ca.face(*fa).is_periodic() && ca.face(*fa).ring.is_none() {
             continue;
@@ -747,6 +754,50 @@ pub fn map_phases(doc: &mut Document, a: BodyId, ca: &BodyCtx, b: BodyId, map: &
         doc.phase_overrides
             .insert(PhaseTarget::Face(b, *fb), (t.matrix3 * r).normalize());
     }
+    // Closed CAD edges (placeholder loops) of mapped faces carry their own
+    // reference; without it the target's placeholders start at its own
+    // default and land elsewhere.
+    for (fa, (_, t)) in map {
+        for w in &ca.topo.face(*fa).wires {
+            for c in &w.coedges {
+                let et = ca.topo.edge(c.edge);
+                if !et.closed || et.seam || et.degenerate {
+                    continue;
+                }
+                let (lo, hi) = et.t_range;
+                let one: FaceMap = std::iter::once((*fa, map[fa])).collect();
+                let Some((eb, _)) = map_edge_point(ca, c.edge, 0.5 * (lo + hi), cb, &one) else {
+                    continue;
+                };
+                if !cb.topo.edge(eb).closed {
+                    continue;
+                }
+                let r = edge_phase_ref(doc, ca, a, c.edge);
+                doc.phase_overrides
+                    .insert(PhaseTarget::Edge(b, eb), (t.matrix3 * r).normalize());
+            }
+        }
+    }
+}
+
+/// The phase reference of a closed CAD edge (override or the evaluator's
+/// default from the loop normal).
+pub fn edge_phase_ref(doc: &Document, ctx: &BodyCtx, body: BodyId, e: EdgeId) -> DVec3 {
+    if let Some(d) = doc.phase_overrides.get(&PhaseTarget::Edge(body, e)) {
+        return *d;
+    }
+    let pts: Vec<DVec3> = ctx.edge_polys[e.idx()].iter().map(|(_, p)| *p).collect();
+    let mut n = DVec3::ZERO;
+    for i in 0..pts.len() {
+        let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
+        n += DVec3::new(
+            (p.y - q.y) * (p.z + q.z),
+            (p.z - q.z) * (p.x + q.x),
+            (p.x - q.x) * (p.y + q.y),
+        );
+    }
+    let n = n.normalize_or_zero();
+    default_phase_dir(if n.length() > 0.5 { n } else { DVec3::Z })
 }
 
 /// Map a split line through a face mapping.

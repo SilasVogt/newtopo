@@ -612,3 +612,84 @@ fn symmetry_cut() {
     assert_eq!(lines_on_face(&m, 8), 1);
     assert_eq!(lines_on_face(&m, 6), 1);
 }
+
+/// Sol round 2, fix 1: a cut made only from snapped vertices on one linked
+/// hole wall reaches every wall.
+#[test]
+fn link_vertex_only_cut() {
+    use newtopo_core::doc::CutPoint;
+    let (mut s, b) = scene_with(MockBody::plate_with_holes(2, 2));
+    s.apply(Op::SetLink { on: true }).unwrap();
+    s.apply(connect(6, 8)).unwrap();
+    let m = s.output_of(b).unwrap().clone();
+    let lines: Vec<&newtopo_core::mesh::OutEdge> = m
+        .edges
+        .iter()
+        .filter(|e| matches!(e.kind, OutEdgeKind::Line(_)))
+        .filter(|e| {
+            m.polygons
+                .iter()
+                .any(|p| p.face == FaceId(6) && p.verts.contains(&e.a) && p.verts.contains(&e.b))
+        })
+        .collect();
+    assert_eq!(lines.len(), 8);
+    // Top end of one line, bottom end of the next one round the wall.
+    let z = |v: u32| m.vertices[v as usize].position.z;
+    let top = |e: &newtopo_core::mesh::OutEdge| if z(e.a) > z(e.b) { e.a } else { e.b };
+    let bottom = |e: &newtopo_core::mesh::OutEdge| if z(e.a) > z(e.b) { e.b } else { e.a };
+    let e0 = lines[0];
+    let e1 = lines
+        .iter()
+        .filter(|e| e.a != e0.a && e.b != e0.b)
+        .min_by(|x, y| {
+            let d = |e: &newtopo_core::mesh::OutEdge| {
+                (m.vertices[top(e) as usize].position - m.vertices[top(e0) as usize].position)
+                    .length()
+            };
+            d(x).total_cmp(&d(y))
+        })
+        .unwrap();
+    let vk = |v: u32| CutPoint::Vertex {
+        body: b,
+        key: m.vertices[v as usize].key.clone(),
+    };
+    let out = s
+        .apply(Op::Cut {
+            points: vec![vk(top(e0)), vk(bottom(e1))],
+            closed: false,
+        })
+        .unwrap();
+    assert!(
+        out.message.as_deref().unwrap_or("").contains("3 linked"),
+        "{:?}",
+        out.message
+    );
+    let cuts: Vec<_> = s
+        .doc()
+        .rules
+        .iter()
+        .filter(|r| matches!(r.rule, Rule::Cut { .. }))
+        .cloned()
+        .collect();
+    assert_eq!(cuts.len(), 4);
+    for r in &cuts {
+        let Rule::Cut { points, .. } = &r.rule else {
+            unreachable!()
+        };
+        assert!(points.iter().all(|p| matches!(p, CutPoint::Vertex { .. })));
+    }
+    assert_valid(&mut s, b, "linked vertex cut");
+    let m = s.output_of(b).unwrap().clone();
+    let cut_rules: BTreeSet<_> = cuts.iter().map(|r| r.id).collect();
+    for w in s.link_set(b, FaceId(6)) {
+        assert!(
+            m.edges.iter().any(
+                |e| matches!(e.kind, OutEdgeKind::Line(k) if cut_rules.contains(&k.rule))
+                    && m.polygons
+                        .iter()
+                        .any(|p| p.face == w && p.verts.contains(&e.a) && p.verts.contains(&e.b))
+            ),
+            "wall {w} has a cut"
+        );
+    }
+}

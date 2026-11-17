@@ -269,3 +269,94 @@ fn malformed_scene_is_refused() {
     let ok = s.doc().clone();
     s.try_set_document(ok).unwrap();
 }
+
+/// Sol round 2, fix 3: a dropped scene unloads the kernel bodies it owns
+/// (and only those), and failed loads leave nothing loaded.
+#[test]
+fn scene_drop_unloads_bodies() {
+    let k = Arc::new(MockKernel::new());
+    let add = |s: &mut Scene, body: MockBody| {
+        s.add_body(
+            &body.to_brep_bytes(),
+            BodyAttributes::default(),
+            HealReport::default(),
+        )
+        .unwrap()
+    };
+    let mut s1 = Scene::new(k.clone());
+    let a = add(&mut s1, MockBody::cylinder(2.0, 5.0));
+    add(&mut s1, MockBody::make_box(DVec3::ONE));
+    let mut s2 = Scene::new(k.clone());
+    let c = add(&mut s2, MockBody::cylinder(1.0, 2.0));
+    assert_eq!(k.body_count(), 3);
+    // Replacing keeps the old body for undo; both belong to s1.
+    s1.replace_body(
+        a,
+        &MockBody::cylinder(2.0, 5.0).to_brep_bytes(),
+        BodyAttributes::default(),
+        HealReport::default(),
+    )
+    .unwrap();
+    assert_eq!(k.body_count(), 4);
+    // A failed add leaves nothing behind and never unloads the scene's own
+    // body (the duplicate id is s2's).
+    assert!(
+        s1.add_body(
+            b"not a brep",
+            BodyAttributes::default(),
+            HealReport::default()
+        )
+        .is_err()
+    );
+    assert!(
+        s2.add_kernel_body(c, BodyAttributes::default(), HealReport::default(), None)
+            .is_err()
+    );
+    assert_eq!(k.body_count(), 4);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s2.ntopo");
+    s2.save(&path).unwrap();
+    drop(s1);
+    assert_eq!(k.body_count(), 1, "only s1's bodies are unloaded");
+    assert!(s2.output_of(c).is_some(), "s2 still works");
+    drop(s2);
+    assert_eq!(k.body_count(), 0);
+
+    // Loads that fail after loading bodies unload them again.
+    let good = Scene::load(k.clone(), &path).unwrap();
+    assert_eq!(k.body_count(), 1);
+    let mut doc = good.doc().clone();
+    drop(good);
+    assert_eq!(k.body_count(), 0);
+    let b = doc.bodies[0].id;
+    let brep = MockBody::cylinder(1.0, 2.0).to_brep_bytes();
+    let name = format!("cad/{}.bbrep", b.0);
+    doc.phase_overrides
+        .insert(PhaseTarget::Edge(b, EdgeId(999)), DVec3::X);
+    let bad = dir.path().join("bad.ntopo");
+    write_zip(
+        &bad,
+        &[
+            ("scene.json", &serde_json::to_vec(&doc).unwrap()),
+            (&name, &brep),
+        ],
+    );
+    assert!(Scene::load(k.clone(), &bad).is_err());
+    assert_eq!(k.body_count(), 0, "refused scene unloaded its bodies");
+    // Second body's CAD data missing: the first one is unloaded again.
+    let mut two = doc.clone();
+    two.phase_overrides.clear();
+    let mut extra = two.bodies[0].clone();
+    extra.id = BodyId(b.0 + 100);
+    two.bodies.push(extra);
+    write_zip(
+        &bad,
+        &[
+            ("scene.json", &serde_json::to_vec(&two).unwrap()),
+            (&name, &brep),
+        ],
+    );
+    let e = Scene::load(k.clone(), &bad).err().unwrap();
+    assert!(format!("{e:#}").contains("missing"), "{e:#}");
+    assert_eq!(k.body_count(), 0);
+}

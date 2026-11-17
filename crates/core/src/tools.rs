@@ -279,7 +279,7 @@ impl Scene {
                     if let Some(c) = self.ctx(body) {
                         let mut one = crate::link::FaceMap::new();
                         one.insert(p.face, (g, t));
-                        crate::link::map_phases(doc, body, c, body, &one);
+                        crate::link::map_phases(doc, body, c, body, c, &one);
                     }
                 }
             }
@@ -346,20 +346,41 @@ impl Scene {
     /// cut from a hole wall onto the plate around it). Returns the mapped
     /// cuts and the number of partners that could not be mapped.
     fn partner_cuts(&mut self, body: BodyId, rule: &Rule) -> (Vec<Rule>, usize) {
-        let Rule::Cut { points, .. } = rule else {
+        let Rule::Cut { points, closed } = rule else {
             return (vec![], 0);
         };
-        let Some(c) = self.ctx(body) else {
+        if self.ctx(body).is_none() {
             return (vec![], 0);
-        };
-        let mut faces: Vec<FaceId> = Vec::new();
-        for p in points {
-            match p {
-                CutPoint::Face { face, .. } => faces.push(*face),
-                CutPoint::CadEdge { edge, .. } => faces.extend(c.topo.edge(*edge).faces.iter()),
-                CutPoint::Vertex { .. } => {}
-            }
         }
+        // Vertex anchors (snapped generated or CAD vertices) resolve through
+        // the current output: their position and the faces around them.
+        let mesh = if points.iter().any(|p| matches!(p, CutPoint::Vertex { .. })) {
+            match self.output_of(body) {
+                Some(m) => Some(m.clone()),
+                None => return (vec![], 0),
+            }
+        } else {
+            None
+        };
+        let c = self.ctx(body).expect("checked above");
+        let info: Option<Vec<(DVec3, Vec<FaceId>)>> = points
+            .iter()
+            .map(|p| match p {
+                CutPoint::Face { face, uv, .. } => Some((c.point(*face, *uv), vec![*face])),
+                CutPoint::CadEdge { edge, t, .. } => {
+                    Some((c.edge_point(*edge, *t), c.topo.edge(*edge).faces.clone()))
+                }
+                CutPoint::Vertex { key, .. } => {
+                    let m = mesh.as_ref()?;
+                    let i = m.vertices.iter().position(|v| &v.key == key)?;
+                    Some((m.vertices[i].position, faces_around(m, &[i as u32])))
+                }
+            })
+            .collect();
+        let Some(info) = info else {
+            return (vec![], 0);
+        };
+        let mut faces: Vec<FaceId> = info.iter().flat_map(|(_, f)| f.iter().copied()).collect();
         faces.sort();
         faces.dedup();
         let transforms = self.partner_transforms(body, &faces);
@@ -369,20 +390,8 @@ impl Scene {
             .collect();
         let c = self.ctx(body).expect("checked above");
         let tol = 1e-4 * c.size.max(1e-9);
-        // 3D points of the cut on each face (for the self-mapping test).
-        let on_face = |f: FaceId| -> Vec<DVec3> {
-            points
-                .iter()
-                .filter_map(|p| match p {
-                    CutPoint::Face { face, uv, .. } if *face == f => Some(c.point(f, *uv)),
-                    CutPoint::CadEdge { edge, t, .. } if c.topo.edge(*edge).faces.contains(&f) => {
-                        Some(c.edge_point(*edge, *t))
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        let mut out = Vec::new();
+        let original: Vec<DVec3> = info.iter().map(|(p, _)| *p).collect();
+        let mut out: Vec<(Rule, Vec<DVec3>)> = Vec::new();
         let mut skipped = 0;
         for t in transforms {
             let mut map = crate::link::FaceMap::new();
@@ -391,7 +400,13 @@ impl Scene {
                     map.insert(*f, (*g, t));
                     continue;
                 }
-                let q: Vec<DVec3> = on_face(*f).iter().map(|p| t.transform_point3(*p)).collect();
+                // No partner under `t`: the face maps to itself when the
+                // cut's transformed points on it stay on it.
+                let q: Vec<DVec3> = info
+                    .iter()
+                    .filter(|(_, fs)| fs.contains(f))
+                    .map(|(p, _)| t.transform_point3(*p))
+                    .collect();
                 let stays = c.kernel.project_to_face(c.kbody, *f, &q).is_ok_and(|v| {
                     v.iter()
                         .zip(&q)
@@ -401,17 +416,61 @@ impl Scene {
                     map.insert(*f, (*f, t));
                 }
             }
-            match crate::link::map_rule(rule, body, c, body, c, &map) {
-                // A transform taking the cut onto itself (or onto a copy
-                // already made) adds nothing.
-                Some(r)
-                    if same_cut(c, &r, rule, tol)
-                        || out.iter().any(|o| same_cut(c, &r, o, tol)) => {}
-                Some(r) => out.push(r),
-                None => skipped += 1,
+            let mapped: Option<Vec<(CutPoint, DVec3)>> = points
+                .iter()
+                .zip(&info)
+                .map(|(p, (pos, _))| match p {
+                    CutPoint::Vertex { .. } => {
+                        let m = mesh.as_ref()?;
+                        let j = nearest_vertex(m, t.transform_point3(*pos), tol)? as usize;
+                        Some((
+                            CutPoint::Vertex {
+                                body,
+                                key: m.vertices[j].key.clone(),
+                            },
+                            m.vertices[j].position,
+                        ))
+                    }
+                    _ => {
+                        let one = Rule::Cut {
+                            points: vec![p.clone()],
+                            closed: false,
+                        };
+                        let Rule::Cut { points: q, .. } =
+                            crate::link::map_rule(&one, body, c, body, c, &map)?
+                        else {
+                            return None;
+                        };
+                        let q = q.into_iter().next()?;
+                        let at = match &q {
+                            CutPoint::Face { face, uv, .. } => c.point(*face, *uv),
+                            CutPoint::CadEdge { edge, t, .. } => c.edge_point(*edge, *t),
+                            CutPoint::Vertex { .. } => return None,
+                        };
+                        Some((q, at))
+                    }
+                })
+                .collect();
+            let Some(mapped) = mapped else {
+                skipped += 1;
+                continue;
+            };
+            let (pts, at): (Vec<CutPoint>, Vec<DVec3>) = mapped.into_iter().unzip();
+            // A transform taking the cut onto itself (or onto a copy
+            // already made) adds nothing.
+            if same_points(&at, &original, tol) || out.iter().any(|(_, o)| same_points(&at, o, tol))
+            {
+                continue;
             }
+            out.push((
+                Rule::Cut {
+                    points: pts,
+                    closed: *closed,
+                },
+                at,
+            ));
         }
-        (out, skipped)
+        (out.into_iter().map(|(r, _)| r).collect(), skipped)
     }
 
     /// Link / symmetry copies of an output edge, matched by geometry on the
@@ -1765,30 +1824,9 @@ fn same_transform(a: &DAffine3, b: &DAffine3, size: f64) -> bool {
     r && (a.translation - b.translation).length() < 1e-6 * size.max(1.0)
 }
 
-/// Two cuts through the same 3D points (in any order).
-fn same_cut(c: &BodyCtx, a: &Rule, b: &Rule, tol: f64) -> bool {
-    let pts = |r: &Rule| -> Vec<DVec3> {
-        let Rule::Cut { points, .. } = r else {
-            return vec![];
-        };
-        points
-            .iter()
-            .map(|p| match p {
-                CutPoint::Face { face, uv, .. } => c.point(*face, *uv),
-                CutPoint::CadEdge { edge, t, .. } => c.edge_point(*edge, *t),
-                CutPoint::Vertex {
-                    key: VertexKey::Cad(v),
-                    ..
-                } => c.topo.vertex(*v).point,
-                CutPoint::Vertex { .. } => DVec3::NAN,
-            })
-            .collect()
-    };
-    let (pa, pb) = (pts(a), pts(b));
-    pa.len() == pb.len()
-        && pa
-            .iter()
-            .all(|p| pb.iter().any(|q| (*p - *q).length() < tol))
+/// Two point lists that are the same set of 3D points (in any order).
+fn same_points(a: &[DVec3], b: &[DVec3], tol: f64) -> bool {
+    a.len() == b.len() && a.iter().all(|p| b.iter().any(|q| (*p - *q).length() < tol))
 }
 
 /// CAD faces of the polygons holding all the given output vertices (or,
