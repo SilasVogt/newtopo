@@ -369,6 +369,7 @@ rust::Vec<double> edge_pcurve_eval(Store &s, uint32_t body, uint32_t edge, uint3
                                    rust::Slice<const double> t) {
   Body &b = s.body(body);
   TopoDS_Face F = b.face_fwd(face);
+  (void)b.edge(edge);  // validates the id before edge_faces is indexed
   if (!face_has_edge(b, edge, face)) {
     fail("edge " + std::to_string(edge) + " does not bound face " + std::to_string(face));
   }

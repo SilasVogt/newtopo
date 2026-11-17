@@ -238,6 +238,16 @@ fn malformed_scene_is_refused() {
         },
     });
     assert!(bad(&d).contains("CAD vertex 999"));
+    // Settings that size allocations are bounded too.
+    let mut d = s.doc().clone();
+    d.settings.min_closed_segments = u32::MAX;
+    assert!(bad(&d).contains("min_closed_segments"));
+    let mut d = s.doc().clone();
+    d.settings.sharp_angle_deg = 1e9;
+    assert!(bad(&d).contains("sharp angle"));
+    let mut d = s.doc().clone();
+    d.settings.units = "furlong".into();
+    assert!(bad(&d).contains("unit"));
     let mut d = s.doc().clone();
     d.split_lines.push(SplitLine {
         id: SplitId(902),

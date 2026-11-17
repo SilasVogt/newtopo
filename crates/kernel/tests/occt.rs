@@ -180,6 +180,13 @@ fn errors_do_not_crash() {
         k.edge_pcurve_eval(b, EdgeId(e as u32), FaceId(0), false, &[0.0])
             .is_err()
     );
+    // Out-of-range edge ids on a valid face are errors, not native UB.
+    for bad in [999, u32::MAX] {
+        assert!(
+            k.edge_pcurve_eval(b, EdgeId(bad), FaceId(0), false, &[0.0])
+                .is_err()
+        );
+    }
     assert!(k.face_eval(b, FaceId(0), &[]).unwrap().is_empty());
     k.unload(b);
 }

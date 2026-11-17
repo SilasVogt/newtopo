@@ -106,6 +106,9 @@ fn count(c: u32, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// Upper bound for `SceneSettings::min_closed_segments` accepted on load.
+pub const MAX_CLOSED_SEGMENTS: u32 = 1024;
+
 /// Check every reference in `doc` against the topology `topo_of` returns.
 pub(super) fn check_document<'a>(
     doc: &Document,
@@ -113,6 +116,15 @@ pub(super) fn check_document<'a>(
 ) -> Result<()> {
     if crate::export::unit_metres(&doc.settings.units).is_none() {
         bail!("unknown scene unit `{}`", doc.settings.units);
+    }
+    // Settings that size allocations or drive geometry must be sane too.
+    let m = doc.settings.min_closed_segments;
+    if !(3..=MAX_CLOSED_SEGMENTS).contains(&m) {
+        bail!("min_closed_segments {m} is outside 3..={MAX_CLOSED_SEGMENTS}");
+    }
+    let a = doc.settings.sharp_angle_deg;
+    if !(a.is_finite() && (0.0..=180.0).contains(&a)) {
+        bail!("sharp angle {a} is not between 0 and 180 degrees");
     }
     let mut seen = HashSet::new();
     for b in &doc.bodies {
