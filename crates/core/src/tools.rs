@@ -279,7 +279,7 @@ impl Scene {
                     if let Some(c) = self.ctx(body) {
                         let mut one = crate::link::FaceMap::new();
                         one.insert(p.face, (g, t));
-                        crate::link::map_phases(doc, body, c, body, &one);
+                        crate::link::map_phases(doc, body, c, body, c, &one);
                     }
                 }
             }

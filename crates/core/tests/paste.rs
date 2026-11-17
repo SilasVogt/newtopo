@@ -14,6 +14,11 @@ use std::sync::Arc;
 /// Two identical cylinders; the second is moved by `m` (geometry, not the
 /// body transform), so its parameterisation differs from the first's.
 fn two(m: DAffine3) -> (Scene, BodyId, BodyId) {
+    two_of(MockBody::cylinder(2.0, 5.0), m)
+}
+
+/// [`two`] for any mock shape.
+fn two_of(shape: MockBody, m: DAffine3) -> (Scene, BodyId, BodyId) {
     let mut s = Scene::new(Arc::new(MockKernel::new()));
     let mut add = |body: MockBody, name: &str| {
         s.add_body(
@@ -27,8 +32,8 @@ fn two(m: DAffine3) -> (Scene, BodyId, BodyId) {
         )
         .unwrap()
     };
-    let a = add(MockBody::cylinder(2.0, 5.0), "a");
-    let b = add(MockBody::cylinder(2.0, 5.0).transformed(m), "b");
+    let a = add(shape.clone(), "a");
+    let b = add(shape.transformed(m), "b");
     (s, a, b)
 }
 
@@ -278,6 +283,73 @@ fn paste_edits_and_joins() {
     let msg = paste(&mut s, a, b);
     assert!(
         msg.contains("pasted 3 rule(s) and 1 edit(s)") && !msg.contains("could not"),
+        "{msg}"
+    );
+    assert_valid(&mut s, b, "pasted");
+    assert_same_output(&mut s, a, b, m);
+}
+
+/// Sol round 2, fix 2: a body with only a Join rule pastes onto an
+/// identical, moved body.
+#[test]
+fn paste_join_only() {
+    let m = moved();
+    let (mut s, a, b) = two_of(MockBody::make_box(DVec3::new(4.0, 3.0, 2.0)), m);
+    let out = s.output_of(a).unwrap().clone();
+    // A diagonal across one face of the box (the first one a Join accepts).
+    let key = |i: u32| out.vertices[i as usize].key.clone();
+    let joined = out
+        .polygons
+        .iter()
+        .filter(|p| p.verts.len() == 4)
+        .flat_map(|p| [(p.verts[0], p.verts[2]), (p.verts[1], p.verts[3])])
+        .any(|(x, y)| {
+            s.apply(Op::Join {
+                body: Some(a),
+                a: key(x),
+                b: key(y),
+            })
+            .is_ok()
+        });
+    assert!(joined);
+    assert_valid(&mut s, a, "source");
+    let msg = paste(&mut s, a, b);
+    assert!(
+        msg.contains("pasted 1 rule(s) and 0 edit(s)") && !msg.contains("could not"),
+        "{msg}"
+    );
+    assert_valid(&mut s, b, "pasted");
+    assert_same_output(&mut s, a, b, m);
+}
+
+/// Sol round 2, fix 2: a body with only an edit pastes onto an identical,
+/// moved body.
+#[test]
+fn paste_edit_only() {
+    let m = moved();
+    let (mut s, a, b) = two(m);
+    let out = s.output_of(a).unwrap().clone();
+    let rim = out
+        .edges
+        .iter()
+        .find(|e| {
+            matches!(e.kind, OutEdgeKind::Cad(_))
+                && out.polygons.iter().any(|p| {
+                    p.face == FaceId(2) && p.verts.contains(&e.a) && p.verts.contains(&e.b)
+                })
+        })
+        .unwrap();
+    s.apply(Op::Collapse {
+        body: Some(a),
+        edge: rim.key.clone().unwrap(),
+        confirmed: true,
+    })
+    .unwrap();
+    assert_valid(&mut s, a, "source");
+    assert!(s.doc().rules.is_empty());
+    let msg = paste(&mut s, a, b);
+    assert!(
+        msg.contains("pasted 0 rule(s) and 1 edit(s)") && !msg.contains("could not"),
         "{msg}"
     );
     assert_valid(&mut s, b, "pasted");
