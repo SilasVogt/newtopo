@@ -452,3 +452,14 @@ input[type=range] { width: 100%; height: 28px; margin: 0; background: transparen
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Real app screenshot under the hero */
+.appshot { padding-block: 0 clamp(3rem, 6vw, 5rem); }
+.appshot__frame { margin: 0; }
+.appshot__frame img {
+  display: block; width: 100%; height: auto;
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.55);
+}
+.appshot__frame figcaption { margin-top: 0.85rem; color: var(--muted, inherit); font-size: 0.95rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
