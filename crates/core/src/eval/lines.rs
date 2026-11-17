@@ -386,6 +386,26 @@ fn phase_for(
 
 /// Iso-family lines for a patch.
 #[allow(clippy::too_many_arguments)]
+/// Iso values (absolute) of a patch's line family (see [`family`]).
+pub fn family_values(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    fg: &FaceGeom,
+    p: &Patch,
+    dir: usize,
+    count: u32,
+    start_on_seam: bool,
+    spacing: Spacing,
+) -> Vec<f64> {
+    let mut count = count;
+    if p.closed_patch(fg) && (1..3).contains(&count) && p.wraps[dir] {
+        count = 3;
+    }
+    let phase = phase_for(ctx, doc, body, fg, p, dir, start_on_seam);
+    spread(ctx, fg, p, dir, count, phase, spacing)
+}
+
 fn family(
     ctx: &BodyCtx,
     doc: &Document,
@@ -555,6 +575,7 @@ pub fn rule_lines(
             flipped,
         } => {
             let bend = bend_class(ctx, fg);
+            let chain = plans.chains.get(&rule);
             for (sub, pid) in list.iter().enumerate() {
                 if pid.body != body || pid.face != fg.id {
                     continue;
@@ -562,6 +583,60 @@ pub fn rule_lines(
                 let Some(p) = find(pid) else { continue };
                 let flip = flipped.contains(pid);
                 let sub = sub as u32;
+                if let Some((covered, lines)) = chain
+                    && covered.contains(pid)
+                {
+                    for (f, cp, d, v, idx) in lines {
+                        if *f != fg.id || cp != pid {
+                            continue;
+                        }
+                        let di = if *d == IsoDir::U { 0 } else { 1 };
+                        let (pts, closed) = iso_line(
+                            fg,
+                            di,
+                            iso_abs(fg, di, *v),
+                            Some(if di == 0 {
+                                (p.lo.y, p.hi.y)
+                            } else {
+                                (p.lo.x, p.hi.x)
+                            }),
+                        );
+                        out.push(GLine {
+                            who: Who::Line(LineKey {
+                                rule,
+                                index: *idx,
+                                sub,
+                            }),
+                            face: fg.id,
+                            pts,
+                            closed,
+                            allowed: Some(vec![p.index]),
+                            through: false,
+                            seed: None,
+                            end_keys: [None, None],
+                            plane: None,
+                        });
+                    }
+                    if bend == Bend::Two {
+                        let db = if flip { 0 } else { 1 };
+                        family(
+                            ctx,
+                            doc,
+                            body,
+                            fg,
+                            p,
+                            db,
+                            *count_b,
+                            *start_on_seam,
+                            Spacing::ArcLength,
+                            rule,
+                            B_FAMILY,
+                            sub,
+                            out,
+                        );
+                    }
+                    continue;
+                }
                 match bend {
                     Bend::Flat => {}
                     Bend::Radial => radial(ctx, doc, body, fg, p, *count_a, rule, sub, out),
@@ -996,6 +1071,10 @@ pub struct CutSeg {
 #[derive(Default)]
 pub struct BodyPlans {
     pub slice_planes: HashMap<RuleId, Vec<Plane>>,
+    /// Connect chains (SPEC §6.2): lines continued across adjacent selected
+    /// patches. Per rule: patches whose A family comes from a chain, and the
+    /// chain lines (face, patch, dir, normalised value, line index).
+    pub chains: HashMap<RuleId, (Vec<PatchId>, Vec<(FaceId, PatchId, IsoDir, f64, u32)>)>,
     pub cut_segments: HashMap<RuleId, Vec<CutSeg>>,
     /// Rules that could not be fully resolved (dormant parts).
     pub unresolved: Vec<RuleId>,
@@ -1335,4 +1414,101 @@ pub fn plan_cut(
 /// Patch bound helper for ids (SPEC §4.2).
 pub fn bound_eq(a: PatchBound, b: PatchBound) -> bool {
     a == b
+}
+
+/// Connect chains of a rule (SPEC §6.2): each A line of a patch is walked
+/// across tangent (G1) shared edges into the other selected patches, so lines
+/// join end to end. Patches reached by a walk take their A lines from it.
+pub fn connect_chain(
+    ctx: &BodyCtx,
+    doc: &Document,
+    body: BodyId,
+    patches: &[Patch],
+    list: &[PatchId],
+    count_a: u32,
+    start_on_seam: bool,
+    flipped: &[PatchId],
+) -> Option<(Vec<PatchId>, Vec<(FaceId, PatchId, IsoDir, f64, u32)>)> {
+    let mine: Vec<&PatchId> = list.iter().filter(|p| p.body == body).collect();
+    let faces: std::collections::HashSet<FaceId> = mine
+        .iter()
+        .filter(|p| **p == &PatchId::whole(body, p.face))
+        .map(|p| p.face)
+        .collect();
+    if faces.len() < 2 || count_a == 0 {
+        return None;
+    }
+    let mut covered: Vec<PatchId> = Vec::new();
+    let mut lines = Vec::new();
+    for pid in &mine {
+        if covered.contains(pid) || !faces.contains(&pid.face) {
+            continue;
+        }
+        let Some(p) = patches.iter().find(|x| x.id == **pid) else {
+            continue;
+        };
+        let fg = ctx.face(pid.face);
+        let bend = bend_class(ctx, fg);
+        let flip = flipped.contains(pid);
+        let d = match bend {
+            Bend::OneU | Bend::Two => {
+                if flip {
+                    1
+                } else {
+                    0
+                }
+            }
+            Bend::OneV => {
+                if flip {
+                    0
+                } else {
+                    1
+                }
+            }
+            _ => continue,
+        };
+        let vals = family_values(
+            ctx,
+            doc,
+            body,
+            fg,
+            p,
+            d,
+            count_a,
+            start_on_seam,
+            Spacing::ArcLength,
+        );
+        let dir = if d == 0 { IsoDir::U } else { IsoDir::V };
+        let mut reached: Vec<PatchId> = Vec::new();
+        for (i, v) in vals.iter().enumerate() {
+            let pieces = crate::tools::iso_walk_within(
+                ctx,
+                body,
+                pid.face,
+                dir,
+                iso_norm(fg, d, *v),
+                Some(&faces),
+            );
+            for pc in pieces.into_iter().skip(1) {
+                let tp = PatchId::whole(body, pc.face);
+                if tp == **pid {
+                    continue;
+                }
+                lines.push((pc.face, tp, pc.dir, pc.value, i as u32));
+                if !reached.contains(&tp) {
+                    reached.push(tp);
+                }
+            }
+        }
+        for r in reached {
+            if !covered.contains(&r) {
+                covered.push(r);
+            }
+        }
+    }
+    if covered.is_empty() {
+        None
+    } else {
+        Some((covered, lines))
+    }
 }

@@ -27,6 +27,8 @@ insta.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
 ufbx = "0.11"
+# OCCT reference models for the OCCT-backed acceptance tests (needs OCCT_DIR).
+newtopo-testmodels = { workspace = true, features = ["occt"] }
 
 [[bench]]
 name = "fill"

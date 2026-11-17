@@ -2527,6 +2527,7 @@ dependencies = [
  "insta",
  "log",
  "newtopo-kernel",
+ "newtopo-testmodels",
  "proptest",
  "regex",
  "robust",

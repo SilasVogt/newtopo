@@ -1353,6 +1353,18 @@ pub fn iso_walk(
     dir: IsoDir,
     value: f64,
 ) -> Vec<IsoPiece> {
+    iso_walk_within(ctx, body, face, dir, value, None)
+}
+
+/// [`iso_walk`] restricted to a set of faces (Connect chains).
+pub fn iso_walk_within(
+    ctx: &BodyCtx,
+    body: BodyId,
+    face: FaceId,
+    dir: IsoDir,
+    value: f64,
+    within: Option<&std::collections::HashSet<FaceId>>,
+) -> Vec<IsoPiece> {
     let mut out = vec![IsoPiece {
         body,
         face,
@@ -1401,6 +1413,9 @@ pub fn iso_walk(
                 let Some(&f2) = et.faces.iter().find(|x| **x != f) else {
                     continue;
                 };
+                if within.is_some_and(|w| !w.contains(&f2)) {
+                    continue;
+                }
                 let ev1 = ctx.face_eval(f, &[e.uv]);
                 let Some(e1) = ev1.first() else { continue };
                 let tan = if di == 0 { e1.dv } else { e1.du }.normalize_or_zero();

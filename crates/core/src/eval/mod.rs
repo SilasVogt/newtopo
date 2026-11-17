@@ -264,6 +264,29 @@ fn evaluate_inner(
             plans.slice_planes.insert(r.id, planes);
         }
     }
+    let all_patches: Vec<Patch> = s1s.iter().flat_map(|s| s.patches.iter().cloned()).collect();
+    for r in &rules {
+        if let Rule::Connect {
+            patches,
+            count_a,
+            start_on_seam,
+            flipped,
+            ..
+        } = &r.rule
+            && let Some(ch) = lines::connect_chain(
+                ctx,
+                doc,
+                body,
+                &all_patches,
+                patches,
+                *count_a,
+                *start_on_seam,
+                flipped,
+            )
+        {
+            plans.chains.insert(r.id, ch);
+        }
+    }
     let needs_known = rules.iter().any(|r| match &r.rule {
         Rule::Cut { points, .. } => points.iter().any(|p| matches!(p, crate::doc::CutPoint::Vertex { key, body: b } if *b == body && !matches!(key, VertexKey::Cad(_)))),
         Rule::Join { body: b, .. } => *b == body,
