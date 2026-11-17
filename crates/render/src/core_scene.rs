@@ -43,17 +43,21 @@ fn fan(n: usize) -> impl Iterator<Item = [usize; 3]> {
     (1..n.saturating_sub(1)).map(|k| [0, k, k + 1])
 }
 
+/// Bodies to draw: visible themselves and on a visible layer (the app's
+/// outliner rules; hidden layers also don't count for framing).
+pub fn visible_bodies(doc: &newtopo_core::doc::Document) -> Vec<newtopo_core::doc::BodyEntry> {
+    doc.bodies
+        .iter()
+        .filter(|b| b.visible && doc.layer(b.layer).is_none_or(|l| l.visible))
+        .cloned()
+        .collect()
+}
+
 /// Build the render scene for every visible body.
 pub fn build(scene: &mut Scene, d: &CoreDisplay) -> RenderScene {
     let c = &d.colors;
     let mut rs = RenderScene::default();
-    let entries: Vec<_> = scene
-        .doc()
-        .bodies
-        .iter()
-        .filter(|b| b.visible)
-        .cloned()
-        .collect();
+    let entries = visible_bodies(scene.doc());
     let outputs = scene.output().to_vec();
     for entry in &entries {
         let m = entry.transform;
@@ -171,4 +175,43 @@ pub fn render_core_scene_to_png(
     let img = h.render(&[&rs], &cam, size, &opts)?;
     img.save(path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use newtopo_core::doc::{BodyEntry, Document, Layer, LayerId};
+    use newtopo_kernel::BodyId;
+
+    fn body(id: u32, layer: u32, visible: bool) -> BodyEntry {
+        BodyEntry {
+            id: BodyId(id),
+            name: format!("b{id}"),
+            layer: LayerId(layer),
+            color: None,
+            transform: glam::DMat4::IDENTITY,
+            visible,
+            locked: false,
+            heal: Default::default(),
+            source_sha256: None,
+        }
+    }
+
+    #[test]
+    fn hidden_layers_and_bodies_are_not_drawn() {
+        let mut doc = Document::default();
+        doc.layers.push(Layer {
+            id: LayerId(1),
+            name: "Hidden".into(),
+            visible: false,
+            locked: false,
+        });
+        doc.bodies = vec![body(1, 0, true), body(2, 1, true), body(3, 0, false)];
+        let ids: Vec<u32> = visible_bodies(&doc).iter().map(|b| b.id.0).collect();
+        assert_eq!(
+            ids,
+            vec![1],
+            "body on a hidden layer and hidden body are skipped"
+        );
+    }
 }

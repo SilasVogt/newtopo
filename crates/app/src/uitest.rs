@@ -357,3 +357,102 @@ fn viewport_orbit_with_middle_drag() {
         "middle drag orbits (Blender preset)"
     );
 }
+
+#[test]
+fn locked_objects_are_left_out_of_select_all_and_edits() {
+    let mut h = Harness::new(true);
+    h.app.st.local.body_locked.insert(BodyId(0));
+    h.key(Key::Num2, Modifiers::NONE);
+    h.app.st.run(Cmd::SelectAll);
+    assert!(!h.app.st.sel.edges.is_empty());
+    assert!(
+        h.app.st.sel.edges.iter().all(|e| e.body() != BodyId(0)),
+        "edges of the locked body"
+    );
+    h.key(Key::Num1, Modifiers::NONE);
+    h.app.st.run(Cmd::SelectAll);
+    assert!(
+        h.app.st.sel.verts.iter().all(|v| v.body() != BodyId(0)),
+        "vertices of the locked body"
+    );
+    // Defence in depth: a selection that already holds locked edges.
+    h.key(Key::Num2, Modifiers::NONE);
+    let locked_edge = h
+        .app
+        .st
+        .vd
+        .edges
+        .iter()
+        .find(|e| e.body == BodyId(0))
+        .and_then(|e| e.sel.clone())
+        .unwrap();
+    h.app.st.sel.edges.insert(locked_edge.clone());
+    h.app.st.remove_selected();
+    assert!(
+        !h.app.st.sel.edges.contains(&locked_edge),
+        "remove skips locked bodies"
+    );
+    h.app.st.sel.edges.insert(locked_edge.clone());
+    h.app.st.collapse_selected();
+    assert!(
+        !h.app.st.sel.edges.contains(&locked_edge),
+        "collapse skips locked bodies"
+    );
+    let i = h
+        .app
+        .st
+        .vd
+        .verts
+        .iter()
+        .position(|v| v.body == BodyId(0))
+        .unwrap();
+    let j = h
+        .app
+        .st
+        .vd
+        .verts
+        .iter()
+        .rposition(|v| v.body == BodyId(0))
+        .unwrap();
+    h.app.st.weld(i, j);
+    assert!(
+        h.app
+            .st
+            .toasts
+            .items
+            .last()
+            .is_some_and(|t| t.text == crate::strings::TOAST_LOCKED_SKIPPED)
+    );
+}
+
+#[test]
+fn spread_tools_build_one_op_per_body() {
+    let mut h = Harness::new(true);
+    h.app.st.mode = Mode::Face;
+    for f in [3u32, 4] {
+        h.app.st.sel.faces.insert((BodyId(0), FaceId(f)));
+    }
+    h.app.st.sel.faces.insert((BodyId(1), FaceId(0)));
+    h.app.st.tool.active = Tool::Connect;
+    let ops = h.app.st.segment_ops();
+    assert_eq!(ops.len(), 2, "one Connect per body");
+    for op in &ops {
+        let newtopo_core::ops::Op::Connect { patches, .. } = op else {
+            panic!("{op:?}")
+        };
+        let b = patches.body.expect("body set");
+        assert!(
+            patches.patches.iter().all(|p| p.body == b),
+            "patches of one body only"
+        );
+    }
+    h.app.st.tool.seg.a = 0;
+    h.app.st.tool.seg.b = 0;
+    assert_eq!(
+        h.app.st.segment_ops().len(),
+        2,
+        "count 0 clears per body too"
+    );
+    h.app.st.tool.active = Tool::Grid;
+    assert_eq!(h.app.st.segment_ops().len(), 2);
+}

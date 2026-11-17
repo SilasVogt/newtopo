@@ -163,12 +163,22 @@ impl DocState {
         }
     }
 
-    /// Several ops as one undo step, all or nothing.
-    pub fn apply_all(&mut self, ops: Vec<Op>) -> Result<Vec<OpOutcome>, ApplyError> {
+    /// Several ops as one undo step, all or nothing. With `coalesced`, the
+    /// step joins the open gesture.
+    pub fn apply_all(
+        &mut self,
+        ops: Vec<Op>,
+        coalesced: bool,
+    ) -> Result<Vec<OpOutcome>, ApplyError> {
         let Some(scene) = self.scene.as_mut() else {
             return Err(ApplyError::NoScene);
         };
-        match guard(|| scene.apply_all(ops)) {
+        match guard(|| {
+            if coalesced {
+                scene.begin_coalesce();
+            }
+            scene.apply_all(ops)
+        }) {
             Ok(Ok(o)) => {
                 self.bump();
                 Ok(o)

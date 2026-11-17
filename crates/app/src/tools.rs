@@ -270,46 +270,63 @@ impl AppState {
         out
     }
 
-    /// The ops the active spread tool would apply to the selection.
+    /// Selected patches grouped by body (locked bodies left out): the
+    /// engine resolves one `PatchSel` per body, so ops are built per body.
+    pub fn patches_by_body(&self) -> Vec<(BodyId, PatchSel)> {
+        let mut m: std::collections::BTreeMap<BodyId, Vec<PatchId>> = Default::default();
+        for p in self.selected_patches() {
+            if !self.is_locked(p.body) {
+                m.entry(p.body).or_default().push(p);
+            }
+        }
+        m.into_iter()
+            .map(|(b, patches)| {
+                (
+                    b,
+                    PatchSel {
+                        body: Some(b),
+                        faces: vec![],
+                        patches,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// The ops the active spread tool would apply to the selection (one per
+    /// body; applied together as one step).
     pub fn segment_ops(&self) -> Vec<Op> {
         let s = &self.tool.seg;
-        let patches = PatchSel {
-            body: None,
-            faces: vec![],
-            patches: self.selected_patches(),
+        let per_body = self.patches_by_body();
+        let each = |f: &dyn Fn(PatchSel) -> Op| {
+            per_body
+                .iter()
+                .map(|(_, ps)| f(ps.clone()))
+                .collect::<Vec<Op>>()
         };
         match self.tool.active {
-            Tool::Connect => {
-                if s.a == 0 && s.b == 0 {
-                    vec![Op::ClearPatches { patches }]
-                } else {
-                    vec![Op::Connect {
-                        patches,
-                        a: s.a,
-                        b: s.b,
-                        start_on_seam: s.start_on_seam,
-                    }]
-                }
-            }
-            Tool::Grid => {
-                if s.u == 0 && s.v == 0 {
-                    vec![Op::ClearPatches { patches }]
-                } else {
-                    vec![Op::Grid {
-                        patches,
-                        u: s.u,
-                        v: s.v,
-                        start_on_seam: s.start_on_seam,
-                        spacing: s.spacing,
-                    }]
-                }
-            }
+            Tool::Connect if s.a == 0 && s.b == 0 => each(&|patches| Op::ClearPatches { patches }),
+            Tool::Connect => each(&|patches| Op::Connect {
+                patches,
+                a: s.a,
+                b: s.b,
+                start_on_seam: s.start_on_seam,
+            }),
+            Tool::Grid if s.u == 0 && s.v == 0 => each(&|patches| Op::ClearPatches { patches }),
+            Tool::Grid => each(&|patches| Op::Grid {
+                patches,
+                u: s.u,
+                v: s.v,
+                start_on_seam: s.start_on_seam,
+                spacing: s.spacing,
+            }),
             Tool::Slice => {
                 let guide = s.guide.map(|g| g.1);
                 if self.mode == Mode::Object {
                     self.sel
                         .objects
                         .iter()
+                        .filter(|b| !self.is_locked(**b))
                         .map(|b| {
                             if s.slice == 0 {
                                 Op::ClearPatches {
@@ -331,15 +348,15 @@ impl AppState {
                         })
                         .collect()
                 } else if s.slice == 0 {
-                    vec![Op::ClearPatches { patches }]
+                    each(&|patches| Op::ClearPatches { patches })
                 } else {
-                    vec![Op::Slice {
+                    each(&|patches| Op::Slice {
                         body: None,
                         patches: Some(patches),
                         count: s.slice,
                         through: s.through,
                         guide_edge: guide,
-                    }]
+                    })
                 }
             }
             _ => vec![],
@@ -375,18 +392,11 @@ impl AppState {
         }
         let ops = self.segment_ops();
         let (steps, total) = if coalesce {
-            // Every tick of a wheel/slider gesture joins one undo step; the
-            // frame loop ends the gesture after 400 ms idle.
+            // Every tick of a wheel/slider gesture joins one undo step (the
+            // per-body ops go in together); the frame loop ends the gesture
+            // after 400 ms idle.
             self.tool.wheel_last = Some(self.time);
-            let mut n = 0;
-            let mut lines = 0;
-            for op in ops {
-                if let Some(o) = self.apply_coalesced(op) {
-                    n += 1;
-                    lines += o.lines_added;
-                }
-            }
-            (n, lines)
+            self.apply_group_ex(ops, true)
         } else {
             self.doc.end_gesture();
             self.tool.wheel_last = None;
@@ -818,6 +828,10 @@ impl AppState {
 
     pub fn weld(&mut self, from: usize, to: usize) {
         self.tool.weld_from = None;
+        if self.is_locked(self.vd.verts[from].body) || self.is_locked(self.vd.verts[to].body) {
+            self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
+            return;
+        }
         let (a, b) = (&self.vd.verts[from], &self.vd.verts[to]);
         match (&a.sel, &b.sel) {
             (VertSel::Key(ba, ka), VertSel::Key(bb, kb)) if ba == bb => {
@@ -836,9 +850,24 @@ impl AppState {
         }
     }
 
+    /// Drop edges of locked objects from the selection (they can't be
+    /// edited). False when nothing editable is left.
+    fn unlocked_edges_only(&mut self) -> bool {
+        let before = self.sel.edges.len();
+        let locked = self.locked.clone();
+        self.sel.edges.retain(|e| !locked.contains(&e.body()));
+        if self.sel.edges.len() < before {
+            self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
+        }
+        !self.sel.edges.is_empty()
+    }
+
     pub fn collapse_selected(&mut self) {
         if self.mode != Mode::Edge || self.sel.edges.is_empty() {
             self.toast(ToastKind::Info, S::TOAST_SELECT_EDGES);
+            return;
+        }
+        if !self.unlocked_edges_only() {
             return;
         }
         let ops: Vec<Op> = self
@@ -867,6 +896,9 @@ impl AppState {
     pub fn remove_selected(&mut self) {
         if self.mode != Mode::Edge || self.sel.edges.is_empty() {
             self.toast(ToastKind::Info, S::TOAST_SELECT_EDGES);
+            return;
+        }
+        if !self.unlocked_edges_only() {
             return;
         }
         if self.is_demo() {

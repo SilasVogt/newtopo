@@ -1046,5 +1046,64 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             )
         );
     }
+    // 6. A face selection across two bodies: one Connect per body, one step.
+    {
+        let (ctx, mut app, mut t) = new_app();
+        import(
+            &mut s,
+            &ctx,
+            &mut app,
+            &mut t,
+            &models.join("assembly.step"),
+        )?;
+        let id = |app: &App, n: &str| {
+            app.st
+                .doc
+                .scene
+                .as_ref()
+                .and_then(|s| s.doc().bodies.iter().find(|b| b.name == n).map(|b| b.id))
+        };
+        let (Some(left), Some(right)) = (id(&app, "Post left"), id(&app, "Post right")) else {
+            anyhow::bail!("assembly posts not found");
+        };
+        app.st.mode = Mode::Face;
+        for b in [left, right] {
+            for f in faces_of_kind(&app, b, newtopo_kernel::SurfaceKind::Cylinder) {
+                app.st.sel.faces.insert((b, f));
+            }
+        }
+        app.st.tool.seg.a = 6;
+        let r0 = app.st.doc.revision;
+        app.st.activate_tool(Tool::Connect);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        let lines_on = |app: &App, b: BodyId| {
+            app.st
+                .vd
+                .edges
+                .iter()
+                .filter(|e| e.body == b && e.kind == crate::viewdata::EdgeKind::Line)
+                .count()
+        };
+        let (l, r) = (lines_on(&app, left), lines_on(&app, right));
+        eprintln!(
+            "two-body connect: revision {r0} → {}; generated edges left {l} right {r}",
+            app.st.doc.revision
+        );
+        anyhow::ensure!(l > 0 && l == r, "Connect should reach both bodies");
+        // A wheel tick changes both in the same gesture.
+        app.st.wheel_count(1.0, true);
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.6);
+        let (l2, r2) = (lines_on(&app, left), lines_on(&app, right));
+        eprintln!("two-body wheel tick: left {l2} right {r2}");
+        anyhow::ensure!(l2 > l && l2 == r2, "wheel tick should change both bodies");
+        // Two undos bring both back to nothing (connect, then the gesture).
+        app.st.undo();
+        app.st.undo();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        anyhow::ensure!(
+            lines_on(&app, left) == 0 && lines_on(&app, right) == 0,
+            "each step covered both bodies"
+        );
+    }
     Ok(())
 }

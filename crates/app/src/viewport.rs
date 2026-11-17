@@ -813,11 +813,19 @@ impl AppState {
                     .vd
                     .edges
                     .iter()
-                    .filter(|e| fill || e.kind != EdgeKind::Fill)
+                    .filter(|e| (fill || e.kind != EdgeKind::Fill) && !self.is_locked(e.body))
                     .filter_map(|e| e.sel.clone())
                     .collect()
             }
-            Mode::Vertex => self.sel.verts = self.vd.verts.iter().map(|v| v.sel.clone()).collect(),
+            Mode::Vertex => {
+                self.sel.verts = self
+                    .vd
+                    .verts
+                    .iter()
+                    .filter(|v| !self.is_locked(v.body))
+                    .map(|v| v.sel.clone())
+                    .collect()
+            }
         }
         self.on_selection_changed();
     }
@@ -825,7 +833,8 @@ impl AppState {
     /// Invert within the objects being edited (component modes) or the
     /// visible scene (object mode) — SPEC §5.3.
     pub fn invert_selection(&mut self) {
-        let bodies = self.sel.bodies(self.mode);
+        let mut bodies = self.sel.bodies(self.mode);
+        bodies.retain(|b| !self.is_locked(*b));
         match self.mode {
             Mode::Object => {
                 let all: BTreeSet<BodyId> = self
