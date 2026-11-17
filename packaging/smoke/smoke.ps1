@@ -33,7 +33,8 @@ $oldPath = $env:PATH
 Remove-Item Env:NEWTOPO_IMPORT_HELPER -ErrorAction SilentlyContinue
 $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
 
-function Cli([string]$title, [string[]]$cliArgs) {
+# Not "Cli": that name is a built-in alias of Clear-Item and would win.
+function Invoke-Cli([string]$title, [string[]]$cliArgs) {
   Write-Host "`n--- $title"
   & $cli @cliArgs
   $rc = $LASTEXITCODE
@@ -41,11 +42,11 @@ function Cli([string]$title, [string[]]$cliArgs) {
   if ($rc -ne 0) { throw "newtopo-cli $title failed (exit $rc)" }
 }
 try {
-  Cli 'info filleted_box.step' @('info', "$Work\filleted_box.step")
-  Cli 'run script.json -o out.ntopo' @('run', "$Work\script.json", '-o', "$Work\out.ntopo")
+  Invoke-Cli 'info filleted_box.step' @('info', "$Work\filleted_box.step")
+  Invoke-Cli 'run script.json -o out.ntopo' @('run', "$Work\script.json", '-o', "$Work\out.ntopo")
   if (-not (Test-Path "$Work\out.ntopo")) { throw "out.ntopo missing" }
-  Cli 'validate out.ntopo' @('validate', "$Work\out.ntopo")
-  Cli 'export out.ntopo -o out.fbx' @('export', "$Work\out.ntopo", '-o', "$Work\out.fbx")
+  Invoke-Cli 'validate out.ntopo' @('validate', "$Work\out.ntopo")
+  Invoke-Cli 'export out.ntopo -o out.fbx' @('export', "$Work\out.ntopo", '-o', "$Work\out.fbx")
   $magic = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes("$Work\out.fbx")[0..17])
   if ($magic -ne 'Kaydara FBX Binary') { throw "out.fbx is not binary FBX" }
   Get-ChildItem "$Work\out.ntopo", "$Work\out.fbx" | Format-Table Name, Length
