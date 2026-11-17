@@ -181,6 +181,7 @@ if [ -n "${OCCT_DIR:-}" ] && [ -f "$OCCT_DIR/share/doc/opencascade/LICENSE_LGPL_
   lic="$OCCT_DIR/share/doc/opencascade"
 fi
 install -m 0644 "$lic/LICENSE_LGPL_21.txt" "$lic/OCCT_LGPL_EXCEPTION.txt" "$C/Resources/licenses/"
+install -m 0644 "$root/assets/fonts/OFL.txt" "$C/Resources/licenses/NotoSans-OFL.txt"
 # newtopo's own licence (MIT), from the repo root.
 if [ -f "$root/LICENSE" ]; then
   install -m 0644 "$root/LICENSE" "$C/Resources/LICENSE"

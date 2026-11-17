@@ -52,4 +52,15 @@ code.
 newtopo itself is written in Rust and statically links the Rust crates
 listed in "THIRD-PARTY-RUST.txt" (generated from the Cargo dependency graph
 when the package is built). Each crate is used under the licence named
-there (most are MIT and/or Apache-2.0).
+there (most are MIT and/or Apache-2.0); the licence, copyright and NOTICE
+files each crate ships are reproduced in full in that file.
+
+
+4. Noto Sans font
+-----------------
+
+The app's user-interface font, Noto Sans (Regular and Medium), is embedded in
+the newtopo executable.
+Copyright 2022 The Noto Project Authors
+(https://github.com/notofonts/latin-greek-cyrillic)
+Licence:   SIL Open Font License, Version 1.1 (licenses/NotoSans-OFL.txt)

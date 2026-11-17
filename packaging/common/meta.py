@@ -67,13 +67,112 @@ def rust_notices(out_path, triple=None):
         "=" * 56,
         "",
         f"{len(rows)} crates. Licence expressions are the SPDX values from each",
-        "crate's Cargo.toml; full texts are in each crate's source on crates.io.",
+        "crate's Cargo.toml. The licence, copyright and NOTICE files each crate",
+        "ships follow the list, as their licences require.",
         "",
     ]
     w = max((len(f"{n} {v}") for n, v, _, _ in rows), default=10)
     for n, v, lic, repo in rows:
         lines.append(f"{(n + ' ' + v).ljust(w)}  {lic}  {repo}".rstrip())
+
+    missing, printed = [], {}
+    for pid in sorted(seen - workspace, key=lambda i: (pkgs[i]["name"].lower(), pkgs[i]["version"])):
+        p = pkgs[pid]
+        crate = f"{p['name']} {p['version']}"
+        texts = licence_files(p)
+        if not texts:
+            missing.append(f"{crate}  ({p.get('license') or 'see crate'})")
+            continue
+        for name, text in texts:
+            key = " ".join(text.split())
+            lines += ["", "", "-" * 72, f"{crate}: {name}", "-" * 72, ""]
+            if key in printed:
+                lines.append(f"(Identical to the text printed above for {printed[key]}.)")
+            else:
+                printed[key] = f"{crate}: {name}"
+                lines.append(text.rstrip())
+    if missing:
+        lines += [
+            "",
+            "",
+            "-" * 72,
+            "Crates without a licence file in their published source",
+            "-" * 72,
+            "",
+            "These crates name their licence only in Cargo.toml. They are used under",
+            "the licence listed for each, copyright their respective authors; the",
+            "standard texts of those licences follow.",
+            "",
+            *missing,
+            "",
+            STANDARD_MIT,
+        ]
+        apache = next((t for k, t in printed.items() if "Apache License" in k and "Version 2.0" in k), None)
+        if apache is None:
+            lines.append("Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0")
+        else:
+            lines.append(f"Apache-2.0: the full text is printed above ({apache}).")
     Path(out_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+LICENCE_PREFIXES = ("license", "licence", "copying", "copyright", "notice", "unlicense")
+LICENCE_DIRS = ("fonts", "licenses", "licences", "license", "licence")
+STANDARD_MIT = """MIT licence (standard text):
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
+def licence_files(pkg):
+    """(file name, text) for the licence/notice files at the crate's root,
+    plus the Cargo.toml `license-file` if it lives elsewhere."""
+    root = Path(pkg["manifest_path"]).parent
+    found = {}
+
+    def wanted(f, in_licence_dir):
+        n = f.name.lower()
+        if not f.is_file() or f.stat().st_size >= 512 * 1024:
+            return False
+        if n.startswith(LICENCE_PREFIXES) or "license" in n or "licence" in n:
+            return True
+        # Licence texts shipped next to bundled assets (e.g. fonts/OFL.txt).
+        return in_licence_dir and n.endswith((".txt", ".md"))
+
+    for f in sorted(root.iterdir()):
+        if wanted(f, False):
+            found[f.name] = f
+        elif f.is_dir() and f.name.lower() in LICENCE_DIRS:
+            for g in sorted(f.iterdir()):
+                if wanted(g, True):
+                    found[f"{f.name}/{g.name}"] = g
+    lf = pkg.get("license_file")
+    if lf:
+        f = (root / lf).resolve()
+        if f.is_file():
+            found.setdefault(f.name, f)
+    out = []
+    for name, f in found.items():
+        try:
+            out.append((name, f.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            pass
+    return out
 
 
 def main(argv):

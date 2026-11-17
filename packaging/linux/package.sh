@@ -143,6 +143,7 @@ for d in "${OCCT_DIR:-/nonexistent}/share/doc/opencascade" "$pkgdir/common/licen
 done
 [ -n "$occt_lic" ] || die "OCCT licence texts not found (set OCCT_DIR to an OCCT install)"
 install -Dm0644 "$occt_lic/LICENSE_LGPL_21.txt" "$doc/licenses/LICENSE_LGPL_21.txt"
+install -Dm0644 "$root/assets/fonts/OFL.txt" "$doc/licenses/NotoSans-OFL.txt"
 install -Dm0644 "$occt_lic/OCCT_LGPL_EXCEPTION.txt" "$doc/licenses/OCCT_LGPL_EXCEPTION.txt"
 # newtopo's own licence (MIT), from the repo root.
 if [ -f "$root/LICENSE" ]; then

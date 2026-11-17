@@ -181,6 +181,7 @@ else { Write-Warning "python not found; THIRD-PARTY-RUST.txt not generated" }
 $lic = "$pkgdir\common\licenses"
 if ($env:OCCT_DIR -and (Test-Path "$env:OCCT_DIR\share\doc\opencascade\LICENSE_LGPL_21.txt")) { $lic = "$env:OCCT_DIR\share\doc\opencascade" }
 Copy-Item "$lic\LICENSE_LGPL_21.txt", "$lic\OCCT_LGPL_EXCEPTION.txt" "$stage\licenses"
+Copy-Item "$root\assets\fonts\OFL.txt" "$stage\licenses\NotoSans-OFL.txt"
 if (Test-Path "$root\LICENSE") { Copy-Item "$root\LICENSE" "$stage\LICENSE.txt" }
 else { Write-Warning "$root\LICENSE missing; package has no newtopo licence file" }
 
