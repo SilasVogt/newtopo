@@ -67,3 +67,53 @@ fn perf_budgets() {
         );
     }
 }
+
+#[test]
+#[ignore = "timing; run with --release -- --ignored --nocapture"]
+fn perf_occt_models() {
+    use newtopo_kernel::occt::{CadFormat, HealSettings, OcctKernel};
+    use std::sync::Arc;
+    for name in ["filleted_box", "plate_holes", "flange"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{name}.step"));
+        newtopo_testmodels::write_model(newtopo_testmodels::model(name).unwrap(), &path).unwrap();
+        let k = Arc::new(OcctKernel::new());
+        let file = k.import_file(&path, CadFormat::Step, 0.001).unwrap();
+        let mut s = newtopo_core::Scene::new(k.clone());
+        let bb = file.bodies.into_iter().next().unwrap();
+        let heal = k.heal(bb.body, HealSettings::default()).unwrap_or_default();
+        let b = s.add_kernel_body(bb.body, bb.attrs, heal, None).unwrap();
+        let t = Instant::now();
+        let _ = s.output_of(b);
+        let full = t.elapsed();
+        let curved = s
+            .ctx(b)
+            .unwrap()
+            .topo
+            .face_ids()
+            .find(|f| {
+                s.ctx(b).unwrap().topo.face(*f).surface.kind != newtopo_kernel::SurfaceKind::Plane
+            })
+            .unwrap();
+        let mut times = Vec::new();
+        for a in [4u32, 6, 8] {
+            let t = Instant::now();
+            let _ = s.apply(Op::Connect {
+                patches: PatchSel {
+                    body: Some(b),
+                    faces: vec![curved.0],
+                    ..Default::default()
+                },
+                a,
+                b: 0,
+                start_on_seam: false,
+            });
+            times.push(t.elapsed());
+        }
+        println!(
+            "occt {name}: {} faces, full eval {full:?}, Connect count changes {times:?}, cache {:?}",
+            s.ctx(b).unwrap().topo.faces.len(),
+            s.cache_stats(b)
+        );
+    }
+}

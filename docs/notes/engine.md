@@ -92,3 +92,38 @@ For the lead to fold into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
 | 32 | Copy/paste across bodies. | One consistent transform is preferred for the whole body (`link::match_bodies`); pasted spread rules replace spread rules on the same target patches; phase references follow the mapping (§4.1). |
 | 33 | `replace_body`. | Faces matched like paste (identity preferred); rules whose faces all fail to match are dropped; edits are dropped (keyed by the old topology); the old body stays in the kernel so undo works. |
 | 34 | Mock `face_classify_uv` "On" band. | 2e-4 × the UV span (the loops are 256-point polylines); needed so boundary points of other parameterisations project exactly. |
+| 35 | Connect chains (§6.2) on selections spanning faces. | Each patch's A lines are walked across tangent (G1) shared edges into the other selected faces (`lines::connect_chain`, the through-iso walk restricted to the selection); faces reached take their A lines from the walk, so lines join end to end. Directions are matched in 3D (15°), so no A/B reconciliation is needed. |
+| 36 | Polygons whose straight-edge vertex polygon has no area although the curved boundary does (half annulus, cap segment cut by a tangent line). | The most curved edges are split at their midpoint before bridging (`HMesh::split_degenerate_walks`, placeholder keys `i ≥ 120000`). |
+| 37 | Slice planes containing a CAD edge or touching a pole line. | Section pieces lying along the face boundary are dropped (they would duplicate boundary curves). |
+| 38 | Implicit grid on a closed face cut by split lines (meridian split on a torus, equator split on a sphere). | The implicit grid still applies (`Patch::closed_patch` ignores split bounds). |
+| 39 | Bridging join chords. | After Kruskal joins every loop, a second chord per joined pair (different endpoints) splits the region in the same pass (SPEC §4.6 step 6 wording); ranked by metric-UV distance with exact 3D lengths per window of 64. |
+
+### Incremental evaluation (SPEC §4.6 budgets)
+
+Content-keyed caches per body (`eval::cache::EvalCache`, owned by the
+Scene): stage 1 (patches) per face keyed by its split lines; stage 3
+(arrangement + seam gluing) per face keyed by its patches and generated
+lines; bridging + fill per region keyed by the region's canonical walks
+(vertex keys, owners, UV paths) and the edges joining its vertices. A hit is
+always exact (keys hash the full inputs). Kernel calls in emission and
+anchor validation are batched per face. The property test checks that the
+cached output equals a full evaluation.
+
+Release timings (one-patch change = Connect/Grid count change through
+`Scene::apply`, validation gate included):
+
+| Body | Faces | Full | One-patch change, before → after |
+| --- | --- | --- | --- |
+| mock plate 2×2 holes | 10 | 8 ms | 9 → 4 ms |
+| mock plate 5×5 holes | 31 | 45 ms | 70 → 21 ms |
+| mock plate 10×10 holes | 106 | 199 ms | 467 → 92 ms |
+| OCCT filleted_box | 26 | 5.5 ms | 3.4–4.1 ms |
+| OCCT plate_holes (4×4) | 22 | 29 ms | 92 → 18 ms |
+| OCCT flange | 13 | 21 ms | 11 ms |
+
+The remaining cost on the mock 10×10 plate is the top and bottom faces,
+each one region with 100 holes that is re-bridged when any hole rim
+changes (~25 ms each), plus assembly (15 ms) and emission (8 ms), which
+are still per body. No 2,000-face reference body exists yet to measure
+the 300 ms full-rebuild budget; extrapolating the mock plates it holds for
+bodies with few holes per face and not for faces with hundreds of holes.

@@ -7,9 +7,9 @@ use super::bridge::he_path3;
 use super::ctx::BodyCtx;
 use crate::keys::EdgeKey;
 use crate::mesh::{OutEdge, OutEdgeKind, OutPolygon, OutVertex, OutputMesh};
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use newtopo_kernel::{BodyId, EdgeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub fn emit(
     ctx: &BodyCtx,
@@ -86,9 +86,66 @@ pub fn emit(
             position: gv.pos,
         });
     }
+    // Kernel evaluations batched per face (one call per face, SPEC §3.4).
+    let mut batch: BTreeMap<newtopo_kernel::FaceId, Vec<DVec2>> = BTreeMap::new();
+    let mut ask = |f: newtopo_kernel::FaceId, uv: DVec2| -> (newtopo_kernel::FaceId, usize) {
+        let l = batch.entry(f).or_default();
+        l.push(uv);
+        (f, l.len() - 1)
+    };
+    // Corner normal requests.
+    let corner_req = |h: usize,
+                      ask: &mut dyn FnMut(
+        newtopo_kernel::FaceId,
+        DVec2,
+    ) -> (newtopo_kernel::FaceId, usize)| {
+        let he = &mesh.he[h];
+        if let Some(uv) = he.uv.first() {
+            return Some(ask(he.face, *uv));
+        }
+        let p = mesh.prev(h);
+        let hp = &mesh.he[p];
+        hp.uv.last().map(|uv| ask(hp.face, *uv))
+    };
+    let mut poly_reqs: Vec<Vec<Option<(newtopo_kernel::FaceId, usize)>>> =
+        Vec::with_capacity(polys.len());
+    for (corners, _) in &polys {
+        poly_reqs.push(
+            corners
+                .iter()
+                .map(|&(_, h)| corner_req(h, &mut ask))
+                .collect(),
+        );
+    }
+    // Edge path requests.
+    let mut hs: Vec<usize> = mesh.alive_he().collect();
+    hs.sort();
+    let mut path_req: HashMap<usize, (newtopo_kernel::FaceId, usize, usize)> = HashMap::new();
+    for &h in &hs {
+        let he = &mesh.he[h];
+        if he.p3.is_some() || he.uv.is_empty() {
+            continue;
+        }
+        let mut uv = he.uv.clone();
+        if uv.len() == 2 {
+            let (a, b) = (uv[0], uv[1]);
+            uv = (0..=12).map(|i| a + (b - a) * (i as f64 / 12.0)).collect();
+        }
+        let (f, first) = ask(he.face, uv[0]);
+        for q in &uv[1..] {
+            ask(he.face, *q);
+        }
+        path_req.insert(h, (f, first, uv.len()));
+    }
+    let evals: BTreeMap<newtopo_kernel::FaceId, Vec<newtopo_kernel::SurfEval>> = batch
+        .iter()
+        .map(|(f, uvs)| (*f, ctx.face_eval(*f, uvs)))
+        .collect();
+    let got =
+        |r: (newtopo_kernel::FaceId, usize)| evals.get(&r.0).and_then(|v| v.get(r.1)).copied();
     // Polygons, rotated to start at the smallest index, sorted.
     let mut opolys: Vec<OutPolygon> = Vec::new();
-    for (corners, r) in &polys {
+    for (pi, (corners, r)) in polys.iter().enumerate() {
         let n = corners.len();
         let start = (0..n).min_by_key(|&k| idx[&corners[k].0]).unwrap();
         let mut verts = Vec::with_capacity(n);
@@ -96,7 +153,8 @@ pub fn emit(
         for k in 0..n {
             let (v, h) = corners[(start + k) % n];
             verts.push(idx[&v]);
-            normals.push(corner_normal(ctx, mesh, h));
+            let nrm = poly_reqs[pi][(start + k) % n].and_then(got).map(|e| e.n);
+            normals.push(nrm.unwrap_or_else(|| corner_normal(ctx, mesh, h)));
         }
         let face = mesh.he[corners[0].1].face;
         opolys.push(OutPolygon {
@@ -112,8 +170,6 @@ pub fn emit(
     let sharp = sharp_deg.to_radians();
     let mut seen: HashMap<(u32, u32, OutEdgeKind), usize> = HashMap::new();
     let mut edges: Vec<OutEdge> = Vec::new();
-    let mut hs: Vec<usize> = mesh.alive_he().collect();
-    hs.sort();
     for h in hs {
         let he = &mesh.he[h];
         let (a, b) = (fv(he.from), fv(he.to));
@@ -143,7 +199,15 @@ pub fn emit(
         {
             is_hard = o;
         }
-        let mut path = he_path3(ctx, mesh, h);
+        let mut path = match path_req.get(&h) {
+            Some(&(f, first, n)) => match evals.get(&f) {
+                Some(ev) if ev.len() >= first + n => {
+                    ev[first..first + n].iter().map(|e| e.p).collect()
+                }
+                _ => he_path3(ctx, mesh, h),
+            },
+            None => he_path3(ctx, mesh, h),
+        };
         if ia > ib {
             path.reverse();
         }
