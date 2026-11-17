@@ -354,6 +354,8 @@ fn clean_trs(m: DMat4) -> Option<(DVec3, DQuat, DVec3)> {
         .iter()
         .zip(m.to_cols_array())
         .all(|(a, b)| (a - b).abs() <= tol);
+    // Snap last-ulp noise (platform libm differences) to an exact unit scale.
+    let s = s.map(|x| if (x - 1.0).abs() < 1e-12 { 1.0 } else { x });
     (ok && s.min_element() > 0.0).then_some((s, r, t))
 }
 

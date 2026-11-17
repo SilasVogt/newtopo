@@ -67,12 +67,12 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
       "max": [
         1.0,
         0.0,
-        0.8660253882408142
+        0.866025388241
       ],
       "min": [
         -1.0,
         0.0,
-        -0.8660253882408142
+        -0.866025388241
       ],
       "type": "VEC3"
     },
@@ -159,9 +159,9 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
       "name": "ntopo_cc3333",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
-          0.6038273590607633,
-          0.03310476749944876,
-          0.03310476749944876,
+          0.603827359061,
+          0.0331047674994,
+          0.0331047674994,
           1.0
         ],
         "metallicFactor": 0.0,
@@ -172,9 +172,9 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
       "name": "ntopo_3366cc",
       "pbrMetallicRoughness": {
         "baseColorFactor": [
-          0.03310476749944876,
-          0.1328683257311731,
-          0.6038273590607633,
+          0.0331047674994,
+          0.132868325731,
+          0.603827359061,
           1.0
         ],
         "metallicFactor": 0.0,
@@ -231,9 +231,9 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
       "name": "Cube",
       "rotation": [
         0.0,
-        0.7071067811865475,
+        0.707106781187,
         0.0,
-        0.7071067811865476
+        0.707106781187
       ],
       "translation": [
         5.0,

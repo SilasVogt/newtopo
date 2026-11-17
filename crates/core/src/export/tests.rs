@@ -343,6 +343,8 @@ fn golden_glb() {
         })
         .collect();
     assert_eq!(verts, vec![24, 24, 6]);
+    let mut json = json;
+    round_json(&mut json);
     insta::assert_snapshot!("glb_json", serde_json::to_string_pretty(&json).unwrap());
 }
 
@@ -400,7 +402,10 @@ pub(crate) fn dump_fbx(b: &[u8]) -> String {
                 b'I' => format!("{}", i32::from_le_bytes(rd(b, o, 4).try_into().unwrap())),
                 b'L' => format!("{}", i64::from_le_bytes(rd(b, o, 8).try_into().unwrap())),
                 b'F' => format!("{}", f32::from_le_bytes(rd(b, o, 4).try_into().unwrap())),
-                b'D' => format!("{}", f64::from_le_bytes(rd(b, o, 8).try_into().unwrap())),
+                b'D' => format!(
+                    "{}",
+                    sig12(f64::from_le_bytes(rd(b, o, 8).try_into().unwrap()))
+                ),
                 b'S' | b'R' => {
                     let l = u32_at(b, o) as usize;
                     format!("{:?}", String::from_utf8_lossy(&rd(b, o, l)))
@@ -768,5 +773,28 @@ fn units_fbx_declares_the_export_unit() {
             (e.x * raw.settings.unit_meters - 0.1).abs() < 1e-9,
             "{unit}"
         );
+    }
+}
+
+/// Round to 12 significant digits so goldens don't depend on the platform's
+/// libm (MSVC and glibc differ in the last ulp of sin/cos/sqrt).
+pub(crate) fn sig12(x: f64) -> f64 {
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
+    let r: f64 = format!("{x:.11e}").parse().unwrap();
+    if r == 0.0 { 0.0 } else { r }
+}
+
+fn round_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Number(n) if n.is_f64() => {
+            if let Some(x) = n.as_f64().map(sig12).and_then(serde_json::Number::from_f64) {
+                *n = x;
+            }
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(round_json),
+        serde_json::Value::Object(o) => o.values_mut().for_each(round_json),
+        _ => {}
     }
 }
