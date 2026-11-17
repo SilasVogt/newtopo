@@ -387,12 +387,41 @@ impl Scene {
         report.unmatched = unmatched;
         let mut doc = (*self.doc).clone();
         let id = kbody;
+        // Split lines first, so rules on patches they bound can be mapped
+        // onto the new body's patches (as paste does).
+        let splits: Vec<_> = doc
+            .split_lines
+            .iter()
+            .filter(|s| s.body == old)
+            .cloned()
+            .collect();
+        doc.split_lines.retain(|s| s.body != old);
+        for s in &splits {
+            if let Some(ns) = link::map_split(s, old_ctx, id, &ctx, &map, s.id, s.group) {
+                doc.split_lines.push(ns);
+            }
+        }
+        let old_rules: Vec<&Rule> = doc
+            .rules
+            .iter()
+            .filter(|r| !eval::rule_faces(&r.rule, old, old_ctx).is_empty())
+            .map(|r| &r.rule)
+            .collect();
+        let split_patches =
+            map_split_patches(old_ctx, old, &old_rules, &splits, &ctx, id, &doc, &map);
+        let mp = |p: &PatchId| -> Option<PatchId> {
+            if link::is_whole(p) {
+                link::map_patch(p, id, &map)
+            } else {
+                split_patches.get(p).copied()
+            }
+        };
         let mut new_rules = Vec::new();
         doc.rules.retain(|r| {
             if eval::rule_faces(&r.rule, old, old_ctx).is_empty() {
                 return true;
             }
-            match link::map_rule(&r.rule, old, old_ctx, id, &ctx, &map) {
+            match link::map_rule_with(&r.rule, old, old_ctx, id, &ctx, &map, &mp) {
                 Some(nr) => {
                     new_rules.push(crate::doc::RuleEntry {
                         rule: nr,
@@ -405,18 +434,6 @@ impl Scene {
             false
         });
         doc.rules.extend(new_rules);
-        let splits: Vec<_> = doc
-            .split_lines
-            .iter()
-            .filter(|s| s.body == old)
-            .cloned()
-            .collect();
-        doc.split_lines.retain(|s| s.body != old);
-        for s in splits {
-            if let Some(ns) = link::map_split(&s, old_ctx, id, &ctx, &map, s.id, s.group) {
-                doc.split_lines.push(ns);
-            }
-        }
         report.edits_dropped = doc.edits.iter().filter(|e| e.edit.body() == old).count();
         doc.edits.retain(|e| e.edit.body() != old);
         link::map_phases(&mut doc, old, old_ctx, id, &ctx, &map);
@@ -519,7 +536,9 @@ impl Scene {
                     doc.split_lines.push(ns);
                 }
             }
-            let split_patches = map_split_patches(ca, src, clip, cb, target, doc, &map);
+            let rules: Vec<&Rule> = clip.rules.iter().collect();
+            let split_patches =
+                map_split_patches(ca, src, &rules, &clip.split_lines, cb, target, doc, &map);
             let mp = |p: &PatchId| -> Option<PatchId> {
                 if link::is_whole(p) {
                     link::map_patch(p, target, &map)
@@ -690,17 +709,19 @@ fn push_rule(doc: &mut Document, rule: Rule) -> RuleId {
 /// Map the clipboard's patches bounded by split lines onto the target:
 /// each source patch's sample point, transformed, lands in one patch of the
 /// mapped face (with the pasted split lines already in `doc`).
+#[allow(clippy::too_many_arguments)]
 fn map_split_patches(
     ca: &BodyCtx,
     src: BodyId,
-    clip: &Clipboard,
+    rules: &[&Rule],
+    src_splits: &[crate::doc::SplitLine],
     cb: &BodyCtx,
     target: BodyId,
     doc: &Document,
     map: &link::FaceMap,
 ) -> HashMap<PatchId, PatchId> {
     let mut want: Vec<PatchId> = Vec::new();
-    for r in &clip.rules {
+    for r in rules {
         match r {
             Rule::Connect {
                 patches, flipped, ..
@@ -721,8 +742,7 @@ fn map_split_patches(
     faces.dedup();
     for fa in faces {
         let (fb, t) = map[&fa];
-        let sa: Vec<_> = clip
-            .split_lines
+        let sa: Vec<_> = src_splits
             .iter()
             .filter(|s| s.body == src && s.face == fa)
             .collect();

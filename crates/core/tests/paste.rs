@@ -355,3 +355,64 @@ fn paste_edit_only() {
     assert_valid(&mut s, b, "pasted");
     assert_same_output(&mut s, a, b, m);
 }
+
+/// Codex review of PR #2: replacing a body with identical geometry keeps
+/// spread rules on patches bounded by split lines.
+#[test]
+fn replace_keeps_rules_on_split_patches() {
+    let (mut s, a, _) = two(DAffine3::IDENTITY);
+    s.apply(Op::Iso {
+        body: Some(a),
+        face: 0,
+        dir: IsoDir::V,
+        value: 0.4,
+        seed: None,
+        split: true,
+        through: false,
+    })
+    .unwrap();
+    let halves: Vec<PatchId> = s
+        .patch_records(a)
+        .iter()
+        .filter(|p| p.face == FaceId(0))
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(halves.len(), 2);
+    for (p, (u, v)) in halves.iter().zip([(6, 2), (4, 3)]) {
+        s.apply(Op::Grid {
+            patches: PatchSel {
+                body: Some(a),
+                patches: vec![*p],
+                ..Default::default()
+            },
+            u,
+            v,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        })
+        .unwrap();
+    }
+    assert_valid(&mut s, a, "source");
+    let before = s.output_of(a).unwrap().clone();
+    let rep = s
+        .replace_body_with_report(
+            a,
+            &MockBody::cylinder(2.0, 5.0).to_brep_bytes(),
+            BodyAttributes {
+                name: "a v2".into(),
+                transform: DMat4::IDENTITY,
+                ..Default::default()
+            },
+            HealReport::default(),
+        )
+        .unwrap();
+    assert_eq!((rep.rules_kept, rep.rules_dropped), (2, 0), "{rep:?}");
+    let nb = rep.new_body.unwrap();
+    assert_valid(&mut s, nb, "replaced");
+    let after = s.output_of(nb).unwrap().clone();
+    assert_eq!(before.stats(), after.stats());
+    assert_eq!(
+        positions(&before, DAffine3::IDENTITY),
+        positions(&after, DAffine3::IDENTITY)
+    );
+}
