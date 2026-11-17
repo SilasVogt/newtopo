@@ -60,7 +60,11 @@ pub struct Patch {
 impl Patch {
     /// No outer boundary: implicit grid and count clamps apply (SPEC §4.1, §4.2).
     pub fn closed_patch(&self, fg: &FaceGeom) -> bool {
-        !fg.has_outer && !self.split_bounded
+        // Split lines alone don't give a closed surface an outer boundary
+        // (a meridian split on a torus leaves a band that still needs the
+        // implicit grid).
+        let _ = self.split_bounded;
+        !fg.has_outer
     }
 }
 
@@ -1042,6 +1046,46 @@ pub fn section(ctx: &BodyCtx, fg: &FaceGeom, o: DVec3, n: DVec3) -> Vec<(Vec<DVe
         }
         out.push((pts, closed));
     }
+    // Drop pieces running along the face boundary (a plane containing a CAD
+    // edge, or touching a pole line): they would duplicate boundary curves.
+    let tol = 1e-5 * ctx.size;
+    let on_bnd = |p: DVec2| -> bool {
+        let q = fg.m(fg.wrap(p));
+        fg.curves.iter().any(|c| {
+            c.pts
+                .windows(2)
+                .any(|w| super::geom2::dist_point_seg(q, fg.m(w[0]), fg.m(w[1])).0 <= tol)
+                || (c.pts.len() == 1 && (fg.m(c.pts[0]) - q).length() <= tol)
+        })
+    };
+    let mut kept = Vec::new();
+    for (pts, closed) in out {
+        let n = pts.len();
+        let seg_on =
+            |i: usize| on_bnd(pts[i]) && on_bnd(pts[i + 1]) && on_bnd((pts[i] + pts[i + 1]) * 0.5);
+        if (0..n - 1).all(|i| !seg_on(i)) {
+            kept.push((pts, closed));
+            continue;
+        }
+        let mut run: Vec<DVec2> = Vec::new();
+        for i in 0..n - 1 {
+            if seg_on(i) {
+                if run.len() >= 2 {
+                    kept.push((std::mem::take(&mut run), false));
+                }
+                run.clear();
+                continue;
+            }
+            if run.is_empty() {
+                run.push(pts[i]);
+            }
+            run.push(pts[i + 1]);
+        }
+        if run.len() >= 2 {
+            kept.push((run, false));
+        }
+    }
+    let mut out = kept;
     // Deterministic order.
     out.sort_by(|a, b| {
         let ka =

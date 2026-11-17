@@ -446,6 +446,7 @@ fn evaluate_inner(
     lap("edits");
     // 6–7. Bridging and auto-fill per region, cached by region signature.
     mesh.split_parallel_edges(ctx, &pole_target);
+    mesh.split_degenerate_walks(ctx, &pole_target);
     let mut st = bridge::BridgeState::new(&mesh, &pole_target);
     let mut fan: HashSet<usize> = HashSet::new();
     let mut failed: Vec<usize> = Vec::new();
