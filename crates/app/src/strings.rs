@@ -185,7 +185,6 @@ pub const IMPORT_DAMAGED: &str = "Some faces are missing after healing. The file
 pub const IMPORT_OPTIONS: &str = "Import options";
 pub const IMPORT_HEAL: &str = "Heal geometry";
 pub const IMPORT_SEWING: &str = "Sewing tolerance";
-pub const IMPORT_UNITS: &str = "Units";
 pub const IMPORT_FILTER: &str = "CAD files";
 
 // Export

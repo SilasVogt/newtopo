@@ -388,3 +388,26 @@ fn saved_scene_has_normal_permissions() {
         0o640
     );
 }
+
+/// Geometry is stored in the scene's unit, so it can't change under bodies.
+#[test]
+fn units_are_fixed_once_the_scene_has_bodies() {
+    let k = Arc::new(MockKernel::new());
+    let mut s = Scene::new(k);
+    s.apply(Op::SetUnits { units: "cm".into() }).unwrap();
+    assert_eq!(s.doc().settings.units, "cm");
+    assert!(
+        s.apply(Op::SetUnits {
+            units: "furlong".into()
+        })
+        .is_err()
+    );
+    s.add_body(
+        &MockBody::cylinder(2.0, 5.0).to_brep_bytes(),
+        BodyAttributes::default(),
+        HealReport::default(),
+    )
+    .unwrap();
+    assert!(s.apply(Op::SetUnits { units: "m".into() }).is_err());
+    s.apply(Op::SetUnits { units: "cm".into() }).unwrap();
+}

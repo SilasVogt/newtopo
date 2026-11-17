@@ -59,6 +59,8 @@ pub struct ImportedFile {
     pub source_sha256: String,
     /// Helper's warnings (stderr lines worth showing).
     pub warnings: Vec<String>,
+    /// Length unit the geometry was converted to (`ImportOptions::units`).
+    pub units: String,
 }
 
 /// Progress callback: fraction 0..1 and a message. Return false to cancel.
@@ -338,6 +340,7 @@ pub fn run_import(
         bodies,
         source_sha256: side.source_sha256,
         warnings: all_warnings,
+        units: opts.units.clone(),
     })
 }
 

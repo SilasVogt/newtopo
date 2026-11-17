@@ -413,7 +413,7 @@ impl AppState {
         let token = self.prefs.bridge.token.clone();
         let opts = bridge::SendOptions {
             // Scene units → metres in the host.
-            scale: crate::jobs::unit_mm(&self.prefs.units) / 1000.0,
+            scale: crate::jobs::unit_mm(&self.scene_units()) / 1000.0,
             keep_both: self.prefs.bridge.keep_both,
             ..Default::default()
         };

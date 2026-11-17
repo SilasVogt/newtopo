@@ -192,6 +192,32 @@ pub fn unit_mm(u: &str) -> f64 {
 }
 
 impl AppState {
+    /// The open scene's length unit (what its geometry is stored in), or the
+    /// preferred unit for new scenes when nothing is open.
+    pub fn scene_units(&self) -> String {
+        self.doc
+            .scene
+            .as_ref()
+            .and_then(|s| guard(|| s.doc().settings.units.clone()).ok())
+            .unwrap_or_else(|| self.prefs.units.clone())
+    }
+
+    /// Unit to convert an import into: the scene's own unit once it holds
+    /// objects, otherwise the preferred unit for new scenes.
+    fn import_units(&self) -> String {
+        let has_bodies = self
+            .doc
+            .scene
+            .as_ref()
+            .and_then(|s| guard(|| !s.doc().bodies.is_empty()).ok())
+            .unwrap_or(false);
+        if has_bodies {
+            self.scene_units()
+        } else {
+            self.prefs.units.clone()
+        }
+    }
+
     /// An import or export is running.
     pub fn busy(&self) -> bool {
         self.jobs.import.is_some() || self.jobs.export.is_some()
@@ -253,7 +279,9 @@ impl AppState {
         let opts = ImportOptions {
             heal: self.prefs.import.heal,
             sewing_tolerance: self.prefs.import.sewing_tolerance,
-            units: self.prefs.import.units.clone(),
+            // Geometry is stored in the scene's units: convert into the open
+            // scene's units, or into the preferred units for a new scene.
+            units: self.import_units(),
             helper: crate::launch::helper_path(),
             ..Default::default()
         };
@@ -413,6 +441,28 @@ impl AppState {
         }
         self.demo = None;
         let scene = self.doc.scene.as_mut().expect("scene");
+        // Record the unit the file was converted to (an empty scene takes it;
+        // a scene with objects only accepts geometry in its own unit).
+        let scene_units = guard(|| scene.doc().settings.units.clone()).unwrap_or_default();
+        let mut set_units = || {
+            guard(|| {
+                scene.apply(Op::SetUnits {
+                    units: file.units.clone(),
+                })
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.map_err(|r| r.reason))
+        };
+        if file.units != scene_units
+            && let Err(e) = set_units()
+        {
+            report.errors.push(format!(
+                "the file was converted to {} but the scene is in {scene_units}: {e}",
+                file.units
+            ));
+            self.ui.import_report = Some(report);
+            return;
+        }
         let existing: Vec<(String, newtopo_kernel::BodyId)> = guard(|| {
             scene
                 .doc()
@@ -745,7 +795,7 @@ impl AppState {
         let mut opts = d.opts.clone();
         // Scene unit -> chosen export unit, and declare that unit (FBX) or
         // convert it to metres (glTF); OBJ keeps the export unit.
-        opts.scale *= unit_mm(&self.prefs.units) / unit_mm(&d.units);
+        opts.scale *= unit_mm(&self.scene_units()) / unit_mm(&d.units);
         opts.unit_metres = unit_mm(&d.units) / 1000.0;
         let format = d.format;
         self.prefs.export_format = d.format;
@@ -1362,6 +1412,10 @@ mod tests {
     }
 
     fn fake_import(cancel: bool) -> (egui::Context, App) {
+        fake_import_in(cancel, "mm")
+    }
+
+    fn fake_import_in(cancel: bool, units: &str) -> (egui::Context, App) {
         let (ctx, mut app) = app();
         let body = |n: &str| newtopo_kernel::helper::ImportedBody {
             brep: vec![],
@@ -1376,6 +1430,7 @@ mod tests {
             bodies: vec![body("a"), body("b")],
             source_sha256: String::new(),
             warnings: vec![],
+            units: units.into(),
         }))
         .unwrap();
         app.st.jobs.import = Some(ImportJob {
@@ -1386,6 +1441,20 @@ mod tests {
         });
         app.st.poll_jobs(&ctx);
         (ctx, app)
+    }
+
+    /// The unit an import was converted to becomes the scene's unit, and
+    /// export/bridge scale from it (not from the preference).
+    #[test]
+    fn import_records_the_scene_unit() {
+        let (_c, mut app) = fake_import_in(false, "m");
+        app.st.prefs.units = "mm".into();
+        app.st.accept_import_list();
+        assert!(app.st.doc.has_scene());
+        assert_eq!(app.st.scene_units(), "m");
+        // Changing the preference later doesn't rescale the open scene.
+        app.st.prefs.units = "cm".into();
+        assert_eq!(app.st.scene_units(), "m");
     }
 
     #[test]

@@ -144,6 +144,12 @@ pub enum Op {
         #[serde(default)]
         axes: Vec<Axis>,
     },
+    /// Set the scene's length unit ("mm", "cm", "m", "in"). Geometry is
+    /// stored in this unit, so it can only change while the scene has no
+    /// bodies; import converts CAD files into it.
+    SetUnits {
+        units: String,
+    },
     RenameBody {
         body: BodyId,
         name: String,

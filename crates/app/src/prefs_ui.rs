@@ -194,15 +194,6 @@ impl AppState {
                         .max_decimals(5),
                 );
                 ui.end_row();
-                ui.label(S::IMPORT_UNITS);
-                egui::ComboBox::from_id_salt("import-units")
-                    .selected_text(self.prefs.import.units.clone())
-                    .show_ui(ui, |ui| {
-                        for u in ["mm", "cm", "m", "in"] {
-                            ui.selectable_value(&mut self.prefs.import.units, u.to_string(), u);
-                        }
-                    });
-                ui.end_row();
             });
     }
 

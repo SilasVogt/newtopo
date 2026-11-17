@@ -1147,6 +1147,20 @@ impl Scene {
                 doc.settings.symmetry = *on;
                 doc.settings.symmetry_axes = axes.clone();
             }
+            Op::SetUnits { units } => {
+                let units = units.trim().to_ascii_lowercase();
+                if crate::export::unit_metres(&units).is_none() {
+                    return Err(Refusal::new(format!(
+                        "unknown unit `{units}` (use mm, cm, m or in)"
+                    )));
+                }
+                if units != doc.settings.units && !doc.bodies.is_empty() {
+                    return Err(Refusal::new(
+                        "the scene's units can't change once it holds objects: their geometry is stored in those units",
+                    ));
+                }
+                doc.settings.units = units;
+            }
             Op::RenameBody { body, name } => {
                 let e = doc
                     .body_mut(*body)

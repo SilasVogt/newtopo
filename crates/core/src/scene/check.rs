@@ -111,6 +111,9 @@ pub(super) fn check_document<'a>(
     doc: &Document,
     topo_of: impl Fn(BodyId) -> Option<&'a BodyTopology>,
 ) -> Result<()> {
+    if crate::export::unit_metres(&doc.settings.units).is_none() {
+        bail!("unknown scene unit `{}`", doc.settings.units);
+    }
     let mut seen = HashSet::new();
     for b in &doc.bodies {
         if !seen.insert(b.id) {
