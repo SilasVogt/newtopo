@@ -154,14 +154,15 @@ mb = importlib.import_module('newtopo_bridge.build')
 # Cube (6 quads, all edges hard): faceted.
 cube = [0,3,2,1, 4,5,6,7, 0,1,5,4, 2,3,7,6, 0,4,7,3, 1,2,6,5]
 hard = [a for e in [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)] for a in e]
-assert mb.smoothing_groups([4]*6, cube, hard) == [0]*6
+assert mb.smoothing_groups([4]*6, cube, hard) == ([0]*6, [])
 # Two smooth strips meeting at one hard seam: two groups, different bits.
 #  0-1-2      quads (0,1,4,3) and (1,2,5,4) share edge 1-4 (hard)
 #  3-4-5      plus (3,4,7,6) and (4,5,8,7) below share 4-7 (hard)
 #  6-7-8      left column smooth across 3-4, right across 4-5
 v = [0,1,4,3, 1,2,5,4, 3,4,7,6, 4,5,8,7]
-g = mb.smoothing_groups([4]*4, v, [1,4, 4,7])
-assert g[0] == g[2] and g[1] == g[3] and g[0] != g[1] and 0 not in g, g
+g, unresolved = mb.smoothing_groups([4]*4, v, [1,4, 4,7])
+assert unresolved == []
+assert g[0] & g[2] and g[1] & g[3] and not g[0] & g[1] and not g[2] & g[3], g
 print('ok')
 "#;
     let out = Command::new("python3")
@@ -189,6 +190,27 @@ fn bridge_server_hardening_python_tests() {
     }
     let out = Command::new("python3")
         .arg(root().join("tests/blender/test_protocol.py"))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn max_smoothing_group_python_tests() {
+    // tests/blender/test_max_smoothing.py: hard edges never share a bit,
+    // smooth edges always do (cylinder with a seam, random grids).
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipped: no python3");
+        return;
+    }
+    let out = Command::new("python3")
+        .arg(root().join("tests/blender/test_max_smoothing.py"))
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .unwrap();

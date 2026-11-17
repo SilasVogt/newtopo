@@ -74,6 +74,11 @@ pub fn build(
 
 /// 2 x 1 x 1 box, six quads, all 12 edges hard, exact face normals.
 pub fn cube() -> OutputMesh {
+    cuboid(DVec3::new(2.0, 1.0, 1.0))
+}
+
+/// Axis-aligned box from the origin to `size`, six quads, all edges hard.
+pub fn cuboid(size: DVec3) -> OutputMesh {
     let pos: Vec<DVec3> = [
         (0., 0., 0.),
         (2., 0., 0.),
@@ -85,7 +90,7 @@ pub fn cube() -> OutputMesh {
         (0., 1., 1.),
     ]
     .iter()
-    .map(|&(x, y, z)| DVec3::new(x, y, z))
+    .map(|&(x, y, z)| DVec3::new(x / 2.0, y, z) * size)
     .collect();
     let faces: [([u32; 4], DVec3); 6] = [
         ([0, 3, 2, 1], DVec3::NEG_Z),

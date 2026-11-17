@@ -4,8 +4,8 @@
 # MAXScript (polyop, LayerManager) documentation.
 #
 # Max is Z-up like the payload, so no axis change. Hard edges become
-# smoothing groups (faces joined by smooth edges share a group; neighbouring
-# groups across hard edges get different bits). Explicit per-corner
+# smoothing-group bitmasks: faces across each smooth edge share a bit, faces
+# across each hard edge share none (see smoothing_groups). Explicit per-corner
 # normals are not written: smoothing groups carry the hard edges.
 
 import pymxs
@@ -14,61 +14,82 @@ from pymxs import runtime as rt
 from . import protocol
 
 
-def smoothing_groups(sizes, verts, hard_pairs):
-    """Per-face smoothing bitmask (0 = faceted)."""
+def smoothing_groups(sizes, verts, hard_pairs, max_bits=32):
+    """Per-face smoothing-group bitmasks for 3ds Max.
+
+    Max smooths across an edge when the two faces share any bit. So every
+    smooth edge needs a bit common to both faces, and faces across a hard
+    edge must share none, even when they are also joined around through
+    smooth edges (a cylinder with one hard seam). Greedy, in face order:
+    for each smooth edge whose faces share no bit yet, add a bit to one or
+    both faces, preferring a bit one face already has, never one a hard
+    neighbour of the receiving face holds. Adding bits never breaks an
+    edge already satisfied.
+
+    Returns (masks, unresolved): `unresolved` lists face pairs whose smooth
+    edge could not get a shared bit within `max_bits` groups (they render
+    hard), plus face pairs that share both a smooth and a hard edge.
+    """
     nf = len(sizes)
     hard = set()
     for k in range(len(hard_pairs) // 2):
         a, b = hard_pairs[2 * k], hard_pairs[2 * k + 1]
         hard.add((min(a, b), max(a, b)))
-    parent = list(range(nf))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    first = {}
-    across_hard = []
-    smooth_neighbour = [False] * nf
+    faces_of = {}
     at = 0
     for f in range(nf):
         n = sizes[f]
         for k in range(n):
             a, b = verts[at + k], verts[at + (k + 1) % n]
-            e = (min(a, b), max(a, b))
-            g = first.get(e)
-            if g is None:
-                first[e] = f
-            elif e in hard:
-                across_hard.append((g, f))
-            else:
-                parent[find(g)] = find(f)
-                smooth_neighbour[f] = smooth_neighbour[g] = True
+            faces_of.setdefault((min(a, b), max(a, b)), []).append(f)
         at += n
-    comp = [find(f) for f in range(nf)]
-    adj = {}
-    for g, f in across_hard:
-        cg, cf = comp[g], comp[f]
-        if cg != cf:
-            adj.setdefault(cg, set()).add(cf)
-            adj.setdefault(cf, set()).add(cg)
-    bit_of = {}
-    out = []
-    for f in range(nf):
-        if not smooth_neighbour[f]:
-            out.append(0)
+    hard_nb = [set() for _ in range(nf)]
+    smooth_pairs = []
+    for e, fs in faces_of.items():
+        if e in hard:
+            for x in range(len(fs)):
+                for y in range(x + 1, len(fs)):
+                    if fs[x] != fs[y]:
+                        hard_nb[fs[x]].add(fs[y])
+                        hard_nb[fs[y]].add(fs[x])
+        else:
+            for x in range(1, len(fs)):
+                if fs[0] != fs[x]:
+                    smooth_pairs.append((min(fs[0], fs[x]), max(fs[0], fs[x])))
+    smooth_pairs = sorted(set(smooth_pairs))
+    # Faces that are both smooth and hard neighbours (two shared edges with
+    # different flags) can't be honoured; the hard edge wins.
+    masks = [0] * nf
+
+    def free(face, bit):
+        return all(not (masks[h] >> bit) & 1 for h in hard_nb[face])
+
+    unresolved = []
+    for f, g in smooth_pairs:
+        if g in hard_nb[f]:
+            unresolved.append((f, g))
             continue
-        c = comp[f]
-        if c not in bit_of:
-            used = {bit_of[o] for o in adj.get(c, ()) if o in bit_of}
-            # More than 32 differently-smoothed neighbours can't be
-            # represented; bit 0 is reused then (that hard edge shades smooth).
-            bit = next((i for i in range(32) if i not in used), 0)
-            bit_of[c] = bit
-        out.append(1 << bit_of[c])
-    return out
+        if masks[f] & masks[g]:
+            continue
+        chosen = None
+        for bit in range(max_bits):  # a bit one side already has
+            if (masks[f] >> bit) & 1 and free(g, bit):
+                chosen = bit
+                break
+            if (masks[g] >> bit) & 1 and free(f, bit):
+                chosen = bit
+                break
+        if chosen is None:
+            for bit in range(max_bits):  # a fresh bit for both
+                if free(f, bit) and free(g, bit):
+                    chosen = bit
+                    break
+        if chosen is None:
+            unresolved.append((f, g))
+            continue
+        masks[f] |= 1 << chosen
+        masks[g] |= 1 << chosen
+    return masks, unresolved
 
 
 def _layer(name):
@@ -111,8 +132,13 @@ def build_object(o, payload, scale, keep_both):
         rt.polyop.createPolygon(obj, [verts[at + k] + 1 for k in range(n)])  # 1-based
         at += n
 
-    for f, bits in enumerate(smoothing_groups(sizes, verts, hard)):
+    masks, unresolved = smoothing_groups(sizes, verts, hard)
+    for f, bits in enumerate(masks):
         rt.polyop.setFaceSmoothGroup(obj, f + 1, bits)
+    warning = None
+    if unresolved:
+        warning = "%d smooth edge(s) could not share a smoothing group (32-group limit) and render hard" % len(unresolved)
+        print("newtopo bridge: %s: %s" % (name, warning))
 
     if "uvs" in a:
         uv = protocol.array(payload, a["uvs"])
@@ -137,7 +163,10 @@ def build_object(o, payload, scale, keep_both):
     if o.get("layer"):
         _layer(o["layer"]).addNode(obj)
     rt.update(obj)
-    return {"name": name, "actual": str(obj.name)}
+    result = {"name": name, "actual": str(obj.name)}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def apply_push(layout, payload):

@@ -186,13 +186,9 @@ pub struct ExportDialog {
     pub units: String,
 }
 
+/// Millimetres per unit for "mm", "cm", "m", "in" (anything else: mm).
 pub fn unit_mm(u: &str) -> f64 {
-    match u {
-        "cm" => 10.0,
-        "m" => 1000.0,
-        "in" => 25.4,
-        _ => 1.0,
-    }
+    newtopo_core::export::unit_metres(u).map_or(1.0, |m| m * 1000.0)
 }
 
 impl AppState {
@@ -747,7 +743,10 @@ impl AppState {
             return;
         }
         let mut opts = d.opts.clone();
+        // Scene unit -> chosen export unit, and declare that unit (FBX) or
+        // convert it to metres (glTF); OBJ keeps the export unit.
         opts.scale *= unit_mm(&self.prefs.units) / unit_mm(&d.units);
+        opts.unit_metres = unit_mm(&d.units) / 1000.0;
         let format = d.format;
         self.prefs.export_format = d.format;
         self.prefs.export = d.opts;

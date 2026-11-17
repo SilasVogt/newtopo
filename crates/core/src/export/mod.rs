@@ -1,9 +1,12 @@
 //! OBJ, glTF (.glb) and binary FBX 7.4 writers (SPEC §8.3). OWNER: export.
 //!
-//! Units: written coordinates are scene units times `ExportOptions::scale`,
-//! and every format declares them as metres (glTF and OBJ by convention, FBX
-//! through `UnitScaleFactor = 100`), so the app picks `scale` (e.g. 0.001
-//! for a millimetre scene) and all three formats import at the same size.
+//! Units: callers pass `scale` = scene unit -> chosen export unit and
+//! `unit_metres` = that export unit in metres. OBJ writes coordinates in the
+//! export unit (it has no unit metadata); FBX writes them in the export unit
+//! and declares it (`UnitScaleFactor` = unit_metres x 100, centimetres per
+//! unit); GLB converts to metres, which glTF requires. So a 100 mm part
+//! exported in millimetres reads as 100 in OBJ and imports as 0.1 m from
+//! FBX and GLB.
 
 pub mod fbx;
 pub mod glb;
@@ -34,7 +37,8 @@ pub enum ExportUp {
 pub struct ExportOptions {
     /// Triangulate (FBX/OBJ; glTF is always triangulated).
     pub triangulate: bool,
-    /// Multiply positions by this (unit conversion; 1.0 = scene units).
+    /// Multiply positions by this: scene unit -> export unit (e.g. 0.1 for
+    /// a millimetre scene exported in centimetres), times any user scale.
     pub scale: f64,
     pub up: ExportUp,
     /// Layers become hierarchy (FBX/glTF parent nodes, OBJ groups).
@@ -43,6 +47,29 @@ pub struct ExportOptions {
     pub materials: bool,
     /// Face-weighted normals instead of exact CAD normals.
     pub face_weighted_normals: bool,
+    /// Size of one exported coordinate unit in metres (0.001 for mm, 0.01
+    /// for cm, 1.0 for m, 0.0254 for in). FBX declares it
+    /// (`UnitScaleFactor` = centimetres per unit); glTF is metres by
+    /// definition, so GLB coordinates are multiplied by it; OBJ has no unit
+    /// metadata and keeps coordinates in the export unit.
+    #[serde(default = "default_unit_metres")]
+    pub unit_metres: f64,
+}
+
+fn default_unit_metres() -> f64 {
+    1.0
+}
+
+/// Metres per unit for the unit names used in settings ("mm", "cm", "m",
+/// "in"); `None` for anything else.
+pub fn unit_metres(name: &str) -> Option<f64> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "mm" => Some(0.001),
+        "cm" => Some(0.01),
+        "m" => Some(1.0),
+        "in" => Some(0.0254),
+        _ => None,
+    }
 }
 
 impl Default for ExportOptions {
@@ -54,6 +81,7 @@ impl Default for ExportOptions {
             layers_as_hierarchy: true,
             materials: true,
             face_weighted_normals: false,
+            unit_metres: 1.0,
         }
     }
 }
@@ -79,6 +107,11 @@ pub fn export(
         "export scale must be a positive number (got {})",
         opts.scale
     );
+    anyhow::ensure!(
+        opts.unit_metres.is_finite() && opts.unit_metres > 0.0,
+        "export unit must be a positive length in metres (got {})",
+        opts.unit_metres
+    );
     for o in objects {
         anyhow::ensure!(
             o.transform.is_finite(),
@@ -99,9 +132,12 @@ pub fn export(
             ExportFiles { main, side }
         }
         Format::Glb => {
-            // glTF is +Y up by definition; `opts.up` doesn't apply.
+            // glTF is +Y up and in metres by definition: `opts.up` doesn't
+            // apply, and coordinates are converted from the export unit.
             let o = ExportOptions {
                 up: ExportUp::Y,
+                scale: opts.scale * opts.unit_metres,
+                unit_metres: 1.0,
                 ..opts.clone()
             };
             let (objs, mats) = prep::prepare_all(objects, &o, TransformMode::Node, true);
@@ -114,7 +150,13 @@ pub fn export(
             let (objs, mats) =
                 prep::prepare_all(objects, opts, TransformMode::Node, opts.triangulate);
             ExportFiles {
-                main: fbx::write_fbx(&objs, &mats, opts.up, opts.layers_as_hierarchy),
+                main: fbx::write_fbx(
+                    &objs,
+                    &mats,
+                    opts.up,
+                    opts.unit_metres,
+                    opts.layers_as_hierarchy,
+                ),
                 side: Vec::new(),
             }
         }

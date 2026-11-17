@@ -239,3 +239,83 @@ fn strip_positions(v: &Value) -> Value {
         other => other.clone(),
     }
 }
+
+/// Physical size: a 100 mm cube in a millimetre scene, exported with the
+/// app/CLI defaults (export unit = scene unit = mm), imports into Blender as
+/// 0.1 m from FBX (both importers) and GLB. OBJ has no unit metadata, so it
+/// arrives as 100 Blender units (the file's millimetre numbers).
+#[test]
+#[ignore = "needs Blender; set NEWTOPO_BLENDER=1 and run with --ignored"]
+fn hundred_mm_cube_imports_at_real_size() {
+    if std::env::var("NEWTOPO_BLENDER").as_deref() != Ok("1") {
+        eprintln!("skipped: NEWTOPO_BLENDER != 1");
+        return;
+    }
+    use newtopo_core::export::{ExportObject, samples, unit_metres};
+    let mesh = samples::cuboid(DVec3::splat(100.0));
+    let objects = [ExportObject {
+        name: "Cube100",
+        layer: "Parts",
+        color: None,
+        transform: glam::DMat4::IDENTITY,
+        mesh: &mesh,
+    }];
+    // What the app and CLI pass for a mm scene exported in mm.
+    let opts = ExportOptions {
+        scale: 1.0,
+        unit_metres: unit_metres("mm").unwrap(),
+        ..ExportOptions::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        ("fbx-mm", "fbx", Format::Fbx, 0.1),
+        ("fbx-legacy-mm", "fbx-legacy", Format::Fbx, 0.1),
+        ("glb-mm", "gltf", Format::Glb, 0.1),
+        ("obj-mm", "obj", Format::Obj, 100.0),
+    ];
+    let mut specs = Vec::new();
+    for (label, importer, format, _) in &cases {
+        let path = dir.path().join(format!("{label}.{}", format.extension()));
+        export(*format, &objects, &opts)
+            .unwrap()
+            .save(&path)
+            .unwrap();
+        specs.push(format!("{label}={importer}:{}", path.display()));
+    }
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/blender/check_import.py"
+    );
+    let out = blender_json(&["-P", script, "--"], &specs);
+    for (label, _, _, want) in &cases {
+        let res = &out[*label];
+        assert!(res.get("error").is_none(), "{label}: {}", res["error"]);
+        let pts: Vec<DVec3> = res["objects"]["Cube100"]["world_positions"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label}: no Cube100 in {res}"))
+            .iter()
+            .map(|p| {
+                DVec3::new(
+                    p[0].as_f64().unwrap(),
+                    p[1].as_f64().unwrap(),
+                    p[2].as_f64().unwrap(),
+                )
+            })
+            .collect();
+        let lo = pts
+            .iter()
+            .fold(DVec3::splat(f64::INFINITY), |a, p| a.min(*p));
+        let hi = pts
+            .iter()
+            .fold(DVec3::splat(f64::NEG_INFINITY), |a, p| a.max(*p));
+        let size = hi - lo;
+        eprintln!(
+            "{label}: Blender size {:.4} x {:.4} x {:.4}",
+            size.x, size.y, size.z
+        );
+        assert!(
+            (size - DVec3::splat(*want)).abs().max_element() < 1e-3 * want,
+            "{label}: Blender size {size}, want {want}"
+        );
+    }
+}

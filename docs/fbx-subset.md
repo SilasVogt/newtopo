@@ -29,7 +29,7 @@ property and layer-element names). No exporter source code was read.
 | --- | --- |
 | `FBXHeaderExtension` | `FBXHeaderVersion` 1003, `FBXVersion` 7400, `EncryptionType` 0, `CreationTimeStamp`, `Creator` |
 | `FileId`, `CreationTime`, `Creator` | fixed values |
-| `GlobalSettings` | `Version` 1000; `Properties70`: axes (below), `UnitScaleFactor` = `OriginalUnitScaleFactor` = 100, `AmbientColor`, `DefaultCamera`, `TimeMode` 11, `TimeSpanStart`/`Stop`, `CustomFrameRate` -1 |
+| `GlobalSettings` | `Version` 1000; `Properties70`: axes (below), `UnitScaleFactor` = `OriginalUnitScaleFactor` = `unit_metres` x 100, `AmbientColor`, `DefaultCamera`, `TimeMode` 11, `TimeSpanStart`/`Stop`, `CustomFrameRate` -1 |
 | `Documents` | one `Document` "Scene" with `RootNode` 0 |
 | `References` | empty |
 | `Definitions` | `Version` 100, total `Count`, one `ObjectType` per used class with its `Count` (no property templates) |
@@ -46,9 +46,12 @@ system declared to match:
 | Y (default) | 1 | 1 | 2 | 1 | 0 | 1 |
 | Z | 2 | 1 | 1 | -1 | 0 | 1 |
 
-Y-up conversion is `(x, y, z) -> (x, z, -y)`. Coordinates are scene units
-times `ExportOptions::scale`; `UnitScaleFactor = 100` declares one file unit
-as one metre (the factor counts centimetres), matching glTF and OBJ.
+Y-up conversion is `(x, y, z) -> (x, z, -y)`. Coordinates are written in
+the export unit (scene units times `ExportOptions::scale`), and
+`UnitScaleFactor` declares that unit in centimetres:
+`ExportOptions::unit_metres` x 100 (0.1 for mm, 1 for cm, 100 for m, 2.54
+for in). A 100 mm part exported in mm is written as 100 and imports as
+0.1 m.
 
 ## Objects
 
