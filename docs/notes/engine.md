@@ -66,3 +66,29 @@ For the lead to fold into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
   vertices end up collinear), split-through iso on a torus, removing a
   meridian edge on a bare torus.
 - Link, symmetry and copy/paste rules (§6.11–§6.13) are not implemented.
+
+## Round 2
+
+### Confirmations for the app
+- `IsoDir::U` is the line of **constant u**: `value` is the u position
+  (normalised 0..1 over the face's `SurfaceInfo::u_range`), `seed` is the v
+  position of the click (normalised over `v_range`). `IsoDir::V` likewise.
+- The document `BodyId` **equals** the kernel `BodyId`: `add_body` /
+  `add_kernel_body` use the kernel's id, `Scene::load` remaps the saved ids
+  to the freshly loaded kernel ids (`Document::remap_bodies`), and
+  `replace_body` gives the new body its kernel id. So
+  `scene.kernel.project_to_face(body, …)` with a document id is correct.
+- `Op::SetSelection` was skipped: selection lives in the app, and making
+  it an undo step would put UI state in the document snapshots. The app can
+  keep its own selection history.
+
+### Decisions
+| # | Question | Decision |
+| --- | --- | --- |
+| 28 | Link / symmetry for edits (Remove, Collapse, Weld). | Not mirrored: edit keys name generated topology of one face; mapping them needs key-level correspondence. Rules (Connect, Grid, Slice on patches, Iso, Cut) and split lines are mirrored/linked. |
+| 29 | Link / symmetry on split patches. | Only whole-face patches are expanded to partners. |
+| 30 | Grid mapped to a face whose UV axes are swapped by the mapping. | Counts are swapped; a planar face whose UV axes are rotated (not swapped) gets its own grid in its own UV axes. |
+| 31 | Congruence. | Same surface kind and parameters, wire/edge counts, area (0.2 %), sorted edge lengths (0.1 %), and a rigid transform verified by projecting sampled surface points (1e-4 × size) and boundary samples onto the other face both ways. Candidates: preferred transforms (body transform, transforms already found for other faces), a pure translation, PCA-aligned rotations with all sign flips (reflections included). |
+| 32 | Copy/paste across bodies. | One consistent transform is preferred for the whole body (`link::match_bodies`); pasted spread rules replace spread rules on the same target patches; phase references follow the mapping (§4.1). |
+| 33 | `replace_body`. | Faces matched like paste (identity preferred); rules whose faces all fail to match are dropped; edits are dropped (keyed by the old topology); the old body stays in the kernel so undo works. |
+| 34 | Mock `face_classify_uv` "On" band. | 2e-4 × the UV span (the loops are 256-point polylines); needed so boundary points of other parameterisations project exactly. |

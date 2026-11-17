@@ -2,7 +2,7 @@
 //! JSON op-script format of `newtopo-cli run` and of "record ops" in the UI
 //! (SPEC §10), so every tool is testable headless.
 
-use crate::doc::{Axis, CutPoint, IsoDir, PatchId, Spacing};
+use crate::doc::{Axis, CutPoint, IsoDir, LayerId, PatchId, Spacing};
 use crate::keys::{EdgeKey, RuleId, VertexKey};
 use newtopo_kernel::{BodyId, EdgeId};
 use serde::{Deserialize, Serialize};
@@ -148,6 +148,50 @@ pub enum Op {
         body: BodyId,
         name: String,
     },
+    SetBodyLocked {
+        body: BodyId,
+        locked: bool,
+    },
+    SetLayerVisible {
+        layer: LayerId,
+        visible: bool,
+    },
+    SetLayerLocked {
+        layer: LayerId,
+        locked: bool,
+    },
+    /// The new layer's id is in `OpOutcome::created`.
+    CreateLayer {
+        name: String,
+    },
+    /// Bodies on the layer move to the active layer (or the first other layer).
+    DeleteLayer {
+        layer: LayerId,
+    },
+    RenameLayer {
+        layer: LayerId,
+        name: String,
+    },
+    MoveBodyToLayer {
+        body: BodyId,
+        layer: LayerId,
+    },
+    SetActiveLayer {
+        layer: LayerId,
+    },
+    /// Toggle the A/B assignment of a patch in its Connect rule (§6.2 Tab).
+    FlipConnect {
+        patch: PatchId,
+    },
+    /// Delete one edit (History panel).
+    DeleteEdit {
+        edit: u32,
+    },
+    /// SPEC §6.13: apply copied rules to other bodies through face congruence.
+    PasteRules {
+        clipboard: crate::link::Clipboard,
+        targets: Vec<BodyId>,
+    },
     SetBodyVisible {
         body: BodyId,
         visible: bool,
@@ -209,4 +253,7 @@ impl Refusal {
 pub struct OpOutcome {
     pub message: Option<String>,
     pub lines_added: u32,
+    /// Id of something the op created (`CreateLayer` → the layer id).
+    #[serde(default)]
+    pub created: Option<u32>,
 }

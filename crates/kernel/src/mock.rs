@@ -215,7 +215,9 @@ impl MockBody {
             .abs()
             .max((info.v_range.1 - info.v_range.0).abs())
             .max(1e-12);
-        let tol = 1e-9 * size;
+        // Loops are sampled polylines (256 points per curved coedge): treat
+        // the sagitta band as on the boundary.
+        let tol = 2e-4 * size;
         let mut inside = false;
         for l in loops {
             let n = l.len();

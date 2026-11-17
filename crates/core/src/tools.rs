@@ -249,6 +249,76 @@ impl Scene {
             .ok_or_else(|| Refusal::new("that vertex no longer exists"))
     }
 
+    /// Link / symmetry expansion of a patch list (SPEC §6.11, §6.12):
+    /// whole-face patches of partner faces are added, and the partners'
+    /// phase references are set from the source through the mapping.
+    fn expand_partners(
+        &mut self,
+        doc: &mut Document,
+        body: BodyId,
+        list: Vec<PatchId>,
+    ) -> Vec<PatchId> {
+        if !doc.settings.link && !doc.settings.symmetry {
+            return list;
+        }
+        let records = self.patch_records(body);
+        let mut out = list.clone();
+        let mut map = crate::link::FaceMap::new();
+        for p in &list {
+            if *p != PatchId::whole(body, p.face) {
+                continue;
+            }
+            for (g, t) in self.tool_partners(body, p.face) {
+                let w = PatchId::whole(body, g);
+                if records.iter().any(|r| r.id == w) && !out.contains(&w) {
+                    out.push(w);
+                    map.insert(p.face, (g, t));
+                    if let Some(c) = self.ctx(body) {
+                        let mut one = crate::link::FaceMap::new();
+                        one.insert(p.face, (g, t));
+                        crate::link::map_phases(doc, body, c, body, &one);
+                    }
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Link / symmetry copies of iso pieces.
+    fn expand_pieces(
+        &mut self,
+        doc: &Document,
+        body: BodyId,
+        pieces: Vec<IsoPiece>,
+    ) -> Vec<IsoPiece> {
+        if !doc.settings.link && !doc.settings.symmetry {
+            return pieces;
+        }
+        let mut out = pieces.clone();
+        for p in &pieces {
+            for (g, t) in self.tool_partners(body, p.face) {
+                let Some(c) = self.ctx(body) else { continue };
+                if let Some((dir, value, seed)) =
+                    crate::link::map_iso(c, p.face, p.dir, p.value, p.seed, c, g, &t)
+                    && !out
+                        .iter()
+                        .any(|q| q.face == g && q.dir == dir && (q.value - value).abs() < 1e-9)
+                {
+                    out.push(IsoPiece {
+                        body,
+                        face: g,
+                        dir,
+                        value,
+                        seed,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// Run one op against the current document.
     pub(crate) fn run_op(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
         let mut doc = self.doc().clone();
@@ -261,6 +331,7 @@ impl Scene {
                 start_on_seam,
             } => {
                 let (body, list) = self.resolve_patches(patches)?;
+                let list = self.expand_partners(&mut doc, body, list);
                 if *a == 0 && *b == 0 {
                     self.takeover(&mut doc, body, &list);
                     out.message = Some("Connect removed".into());
@@ -312,6 +383,7 @@ impl Scene {
                 spacing,
             } => {
                 let (body, list) = self.resolve_patches(patches)?;
+                let list = self.expand_partners(&mut doc, body, list);
                 self.takeover(&mut doc, body, &list);
                 if *u == 0 && *v == 0 {
                     out.message = Some("Surface Grid removed".into());
@@ -345,6 +417,7 @@ impl Scene {
                     }
                     (None, Some(sel)) => {
                         let (b, list) = self.resolve_patches(sel)?;
+                        let list = self.expand_partners(&mut doc, b, list);
                         (b, SliceScope::Patches(list))
                     }
                     (None, None) => {
@@ -429,6 +502,7 @@ impl Scene {
                         seed: *seed,
                     }]
                 };
+                let pieces = self.expand_pieces(&doc, b, pieces);
                 if *split {
                     let group = doc.fresh_id();
                     let mut faces = Vec::new();
@@ -527,6 +601,7 @@ impl Scene {
             }
             Op::ClearPatches { patches } => {
                 let (body, list) = self.resolve_patches(patches)?;
+                let list = self.expand_partners(&mut doc, body, list);
                 self.takeover(&mut doc, body, &list);
             }
             Op::DeleteRule { rule } => {
@@ -729,6 +804,124 @@ impl Scene {
                     return Err(Refusal::new("names can't be empty"));
                 }
                 e.name = name.clone();
+            }
+            Op::SetBodyLocked { body, locked } => {
+                let e = doc
+                    .body_mut(*body)
+                    .ok_or_else(|| Refusal::new(format!("there is no body {body}")))?;
+                e.locked = *locked;
+            }
+            Op::SetLayerVisible { layer, visible } => {
+                let l = doc
+                    .layers
+                    .iter_mut()
+                    .find(|l| l.id == *layer)
+                    .ok_or_else(|| Refusal::new("there is no such layer"))?;
+                l.visible = *visible;
+            }
+            Op::SetLayerLocked { layer, locked } => {
+                let l = doc
+                    .layers
+                    .iter_mut()
+                    .find(|l| l.id == *layer)
+                    .ok_or_else(|| Refusal::new("there is no such layer"))?;
+                l.locked = *locked;
+            }
+            Op::CreateLayer { name } => {
+                if name.trim().is_empty() {
+                    return Err(Refusal::new("names can't be empty"));
+                }
+                let id = LayerId(doc.fresh_id());
+                doc.layers.push(Layer {
+                    id,
+                    name: name.clone(),
+                    visible: true,
+                    locked: false,
+                });
+                out.created = Some(id.0);
+                out.message = Some(format!("layer {} created", id.0));
+            }
+            Op::DeleteLayer { layer } => {
+                if !doc.layers.iter().any(|l| l.id == *layer) {
+                    return Err(Refusal::new("there is no such layer"));
+                }
+                if doc.layers.len() == 1 {
+                    return Err(Refusal::new("the last layer can't be deleted"));
+                }
+                doc.layers.retain(|l| l.id != *layer);
+                if doc.active_layer == *layer {
+                    doc.active_layer = doc.layers[0].id;
+                }
+                let to = doc.active_layer;
+                let mut moved = 0;
+                for b in &mut doc.bodies {
+                    if b.layer == *layer {
+                        b.layer = to;
+                        moved += 1;
+                    }
+                }
+                out.message = Some(format!("{moved} object(s) moved to layer {}", to.0));
+            }
+            Op::RenameLayer { layer, name } => {
+                if name.trim().is_empty() {
+                    return Err(Refusal::new("names can't be empty"));
+                }
+                let l = doc
+                    .layers
+                    .iter_mut()
+                    .find(|l| l.id == *layer)
+                    .ok_or_else(|| Refusal::new("there is no such layer"))?;
+                l.name = name.clone();
+            }
+            Op::MoveBodyToLayer { body, layer } => {
+                if !doc.layers.iter().any(|l| l.id == *layer) {
+                    return Err(Refusal::new("there is no such layer"));
+                }
+                let e = doc
+                    .body_mut(*body)
+                    .ok_or_else(|| Refusal::new(format!("there is no body {body}")))?;
+                e.layer = *layer;
+            }
+            Op::SetActiveLayer { layer } => {
+                if !doc.layers.iter().any(|l| l.id == *layer) {
+                    return Err(Refusal::new("there is no such layer"));
+                }
+                doc.active_layer = *layer;
+            }
+            Op::FlipConnect { patch } => {
+                let r = doc
+                    .rules
+                    .iter_mut()
+                    .find(|r| matches!(&r.rule, Rule::Connect { patches, .. } if patches.contains(patch)))
+                    .ok_or_else(|| Refusal::new("that patch has no Connect lines to flip"))?;
+                if let Rule::Connect { flipped, .. } = &mut r.rule {
+                    if let Some(i) = flipped.iter().position(|p| p == patch) {
+                        flipped.remove(i);
+                    } else {
+                        flipped.push(*patch);
+                        flipped.sort();
+                    }
+                }
+            }
+            Op::DeleteEdit { edit } => {
+                let n = doc.edits.len();
+                doc.edits.retain(|e| e.id != *edit);
+                if doc.edits.len() == n {
+                    return Err(Refusal::new(format!("there is no edit {edit}")));
+                }
+            }
+            Op::PasteRules { clipboard, targets } => {
+                if targets.is_empty() {
+                    return Err(Refusal::new("select one or more objects to paste onto"));
+                }
+                let mut msgs = Vec::new();
+                for t in targets {
+                    if *t == clipboard.source {
+                        continue;
+                    }
+                    msgs.push(self.paste_into(&mut doc, clipboard, *t)?);
+                }
+                out.message = Some(msgs.join("; "));
             }
             Op::SetBodyVisible { body, visible } => {
                 let e = doc

@@ -21,6 +21,7 @@
 pub mod arr;
 pub mod assemble;
 pub mod bridge;
+pub mod cache;
 pub mod clip;
 pub mod ctx;
 pub mod emit;

@@ -738,3 +738,74 @@ impl MockBody {
         b
     }
 }
+
+impl MockBody {
+    /// The same body moved by a rigid motion (rotation + translation);
+    /// parameterisations are carried along, so faces map one to one.
+    pub fn transformed(&self, m: glam::DAffine3) -> MockBody {
+        let p = |v: DVec3| m.transform_point3(v);
+        let d = |v: DVec3| m.transform_vector3(v);
+        let mut b = self.clone();
+        for v in &mut b.vertices {
+            *v = p(*v);
+        }
+        for f in &mut b.faces {
+            f.surface = match f.surface.clone() {
+                Surface::Plane { o, x, y } => Surface::Plane {
+                    o: p(o),
+                    x: d(x),
+                    y: d(y),
+                },
+                Surface::Cylinder { o, z, x, r } => Surface::Cylinder {
+                    o: p(o),
+                    z: d(z),
+                    x: d(x),
+                    r,
+                },
+                Surface::Cone { o, z, x, r0, k } => Surface::Cone {
+                    o: p(o),
+                    z: d(z),
+                    x: d(x),
+                    r0,
+                    k,
+                },
+                Surface::Sphere { o, z, x, r } => Surface::Sphere {
+                    o: p(o),
+                    z: d(z),
+                    x: d(x),
+                    r,
+                },
+                Surface::Torus {
+                    o,
+                    z,
+                    x,
+                    major,
+                    minor,
+                } => Surface::Torus {
+                    o: p(o),
+                    z: d(z),
+                    x: d(x),
+                    major,
+                    minor,
+                },
+            };
+        }
+        for e in &mut b.edges {
+            e.curve = match e.curve.clone() {
+                Curve3::Line { p0, d: dd } => Curve3::Line {
+                    p0: p(p0),
+                    d: d(dd),
+                },
+                Curve3::Circle { c, x, y, r } => Curve3::Circle {
+                    c: p(c),
+                    x: d(x),
+                    y: d(y),
+                    r,
+                },
+                Curve3::Point { p: q } => Curve3::Point { p: p(q) },
+                c @ Curve3::OnFace { .. } => c,
+            };
+        }
+        b
+    }
+}

@@ -29,6 +29,9 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+mod ext;
+pub use ext::{BendArrow, BendInfo, ReplaceReport};
+
 /// Undo depth (SPEC §4.7).
 pub const UNDO_DEPTH: usize = 500;
 
@@ -50,6 +53,10 @@ pub struct Scene {
     evals: BTreeMap<BodyId, (u64, BodyEval)>,
     stashed: Option<(u64, BodyId, BodyEval)>,
     outputs: Vec<OutputMesh>,
+    links: HashMap<BodyId, crate::link::LinkSets>,
+    mirrors: HashMap<(BodyId, crate::doc::Axis), crate::link::FaceMap>,
+    #[allow(dead_code)]
+    caches: HashMap<BodyId, eval::cache::EvalCache>,
 }
 
 /// A body as returned to the UI for drawing the CAD model.
@@ -90,6 +97,9 @@ impl Scene {
             evals: BTreeMap::new(),
             stashed: None,
             outputs: vec![],
+            links: HashMap::new(),
+            mirrors: HashMap::new(),
+            caches: HashMap::new(),
         }
     }
 
@@ -128,7 +138,12 @@ impl Scene {
     ) -> anyhow::Result<BodyId> {
         let ctx = BodyCtx::build(self.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
         let mut doc = (*self.doc).clone();
-        let id = BodyId(doc.fresh_id());
+        // Document body ids equal kernel body ids (the app queries the
+        // kernel with them).
+        let id = kbody;
+        if doc.body(id).is_some() {
+            bail!("body id {id} is already in the scene");
+        }
         let layer = match &attrs.layer {
             Some(name) => match doc.layers.iter().find(|l| &l.name == name) {
                 Some(l) => l.id,
@@ -211,8 +226,39 @@ impl Scene {
     /// is refused with a reason).
     pub fn apply(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
         let (doc, outcome) = self.run_op(&op)?;
+        self.gate_and_commit(doc)?;
+        Ok(outcome)
+    }
+
+    /// Apply several ops as one undo step, all or nothing (the result of the
+    /// whole batch must validate).
+    pub fn apply_all(&mut self, ops: Vec<Op>) -> Result<Vec<OpOutcome>, Refusal> {
+        let orig = self.doc.clone();
+        let mut outs = Vec::with_capacity(ops.len());
+        for op in &ops {
+            match self.run_op(op) {
+                Ok((d, o)) => {
+                    self.doc = Arc::new(d);
+                    outs.push(o);
+                }
+                Err(e) => {
+                    self.doc = orig;
+                    self.stashed = None;
+                    return Err(e);
+                }
+            }
+        }
+        let fin = (*self.doc).clone();
+        self.doc = orig;
+        self.stashed = None;
+        self.gate_and_commit(fin)?;
+        Ok(outs)
+    }
+
+    /// Validation gate shared by [`Scene::apply`] and [`Scene::apply_all`].
+    fn gate_and_commit(&mut self, doc: Document) -> Result<(), Refusal> {
         if doc == *self.doc {
-            return Ok(outcome);
+            return Ok(());
         }
         let ids: Vec<BodyId> = doc
             .bodies
@@ -254,17 +300,7 @@ impl Scene {
         for (b, fp, ev) in fresh {
             self.evals.insert(b, (fp, ev));
         }
-        Ok(outcome)
-    }
-
-    /// Apply an op without the validation gate (debugging, scripts that
-    /// want to inspect an invalid result). Still one undo step.
-    pub fn apply_unchecked(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
-        let (doc, outcome) = self.run_op(&op)?;
-        if doc != *self.doc {
-            self.commit(doc);
-        }
-        Ok(outcome)
+        Ok(())
     }
 
     fn blocking_count(&mut self, b: BodyId) -> usize {
@@ -544,6 +580,18 @@ impl Scene {
     /// Save as `.ntopo` (SPEC §8.2): zip with `scene.json`,
     /// `cad/<body>.bbrep` and `cad/source.sha256`.
     pub fn save(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.write_ntopo(path)?;
+        self.saved = Some(self.doc.clone());
+        Ok(())
+    }
+
+    /// Write a copy (autosave): like [`Scene::save`] but the modified marker
+    /// stays as it is.
+    pub fn save_copy(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.write_ntopo(path)
+    }
+
+    fn write_ntopo(&self, path: &Path) -> anyhow::Result<()> {
         let file =
             std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
         let mut zip = zip::ZipWriter::new(file);
@@ -567,7 +615,6 @@ impl Scene {
         zip.start_file("cad/source.sha256", opts)?;
         zip.write_all(shas.as_bytes())?;
         zip.finish()?;
-        self.saved = Some(self.doc.clone());
         Ok(())
     }
 
@@ -590,8 +637,9 @@ impl Scene {
                 crate::doc::FORMAT_VERSION
             );
         }
-        let doc: Document = migrate(raw)?;
+        let mut doc: Document = migrate(raw)?;
         let mut scene = Scene::new(kernel);
+        let mut remap: BTreeMap<BodyId, BodyId> = BTreeMap::new();
         for b in &doc.bodies {
             let mut bytes = Vec::new();
             zip.by_name(&format!("cad/{}.bbrep", b.id.0))
@@ -604,13 +652,17 @@ impl Scene {
             let ctx =
                 BodyCtx::build(scene.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
             let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
+            remap.insert(b.id, kbody);
             scene.bodies.insert(
-                b.id,
+                kbody,
                 BodyCache {
                     ctx,
                     edge_polylines,
                 },
             );
+        }
+        if remap.iter().any(|(a, b)| a != b) {
+            doc.remap_bodies(&remap);
         }
         scene.doc = Arc::new(doc);
         scene.saved = Some(scene.doc.clone());
