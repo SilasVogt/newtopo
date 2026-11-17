@@ -1,11 +1,19 @@
 name: Release
 
-# Tag push (v*): build every package and attach them to a *draft* GitHub
-# Release for review. Manual run (workflow_dispatch): build everything and
-# upload it as workflow artifacts only (dry run, no Release).
+# Tag push (v*): build every package, smoke-test it and attach it to a
+# *draft* GitHub Release for review. Manual runs (workflow_dispatch) and pull
+# requests that touch packaging: the same builds and smoke tests, uploaded as
+# workflow artifacts only (dry run, no Release).
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+      - "scripts/build-occt.*"
+      - "rust-toolchain.toml"
   workflow_dispatch:
 
 concurrency:
@@ -29,7 +37,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-deps
         with:
-          extra: patchelf dpkg-dev desktop-file-utils
+          # libfuse2: run the AppImage mounted; mesa-vulkan-drivers: lavapipe for the GUI smoke test.
+          extra: patchelf dpkg-dev desktop-file-utils libfuse2 mesa-vulkan-drivers libvulkan1
       - uses: ./.github/actions/occt
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -42,25 +51,44 @@ jobs:
         run: |
           desktop-file-validate packaging/linux/newtopo.desktop
           packaging/linux/package.sh --skip-build --out dist
-      # The Rust binaries don't link OCCT until the shim lands, so package a
-      # small OCCT-linked probe as newtopo-import to test the .so bundling.
-      - name: Packaging self-test (OCCT-linked probe)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Reference models
         run: |
-          cfg="$(dirname "$(find "$OCCT_DIR" -name OpenCASCADEConfig.cmake | head -1)")"
-          cmake -S packaging/selftest -B build-probe -DCMAKE_BUILD_TYPE=Release -DOpenCASCADE_DIR="$cfg"
-          cmake --build build-probe --parallel
-          mkdir -p probe-bin
-          cp target/release/newtopo target/release/newtopo-cli build-probe/newtopo-import probe-bin/
-          packaging/linux/package.sh --bin-dir probe-bin --out probe-dist
-          mkdir probe-x && tar -xzf probe-dist/*.tar.gz -C probe-x
-          env -u LD_LIBRARY_PATH probe-x/*/bin/newtopo-import | grep occt-probe-ok
-          env -u LD_LIBRARY_PATH ldd probe-x/*/bin/newtopo-import
-          chmod +x probe-dist/*.AppImage
-          (cd probe-x && APPIMAGE_EXTRACT_AND_RUN=1 ../probe-dist/*.AppImage --appimage-extract >/dev/null)
-          env -u LD_LIBRARY_PATH probe-x/squashfs-root/usr/bin/newtopo-import | grep occt-probe-ok
-          dpkg-deb -c probe-dist/*.deb | grep -c 'opt/newtopo/lib/libTK'
-          dpkg-deb -f probe-dist/*.deb Depends
+          cargo build -p newtopo-testmodels --features occt --release --locked
+          target/release/newtopo-testmodels models/
+      # Every Linux format, run as shipped: no LD_LIBRARY_PATH, packages
+      # unpacked outside the workspace so nothing from target/ is found.
+      - name: Smoke test packages
+        run: |
+          T="$RUNNER_TEMP/smoke"; mkdir -p "$T"; M="$PWD/models"; S="$PWD/packaging/smoke/smoke.sh"
+          name="$(basename dist/*.tar.gz .tar.gz)"
+          unset LD_LIBRARY_PATH
+
+          echo "::group::tar.gz"
+          tar -xzf dist/*.tar.gz -C "$T"
+          ldd "$T/$name/bin/newtopo" "$T/$name/bin/newtopo-cli" "$T/$name/bin/newtopo-import" | grep -E '^/|libTK|not found'
+          "$S" cli "$M" "$T/w-tar" "$T/$name/bin/newtopo-cli"
+          "$S" gui "$T/w-tar-gui" "$T/$name/bin/newtopo"
+          echo "::endgroup::"
+
+          echo "::group::AppImage (extracted, AppRun --cli)"
+          cp dist/*.AppImage "$T/newtopo.AppImage"; chmod +x "$T/newtopo.AppImage"
+          (cd "$T" && ./newtopo.AppImage --appimage-extract >/dev/null)
+          "$S" cli "$M" "$T/w-appdir" "$T/squashfs-root/AppRun" --cli
+          echo "::endgroup::"
+
+          echo "::group::AppImage (FUSE mount via a symlink named newtopo-cli)"
+          ln -s newtopo.AppImage "$T/newtopo-cli"
+          "$S" cli "$M" "$T/w-appimage" "$T/newtopo-cli"
+          echo "::endgroup::"
+
+          echo "::group::.deb (apt install, /usr/bin symlinks)"
+          sudo apt-get install -y -qq "$PWD/$(ls dist/*.deb)"
+          ls -l "$(command -v newtopo-cli)"
+          "$S" cli "$M" "$T/w-deb" newtopo-cli
+          "$S" gui "$T/w-deb-gui" newtopo
+          sudo apt-get remove -y -qq newtopo
+          [ ! -e /opt/newtopo ] || { echo "/opt/newtopo left behind"; ls -R /opt/newtopo; exit 1; }
+          echo "::endgroup::"
       - uses: actions/upload-artifact@v7
         with:
           name: packages-linux
@@ -83,33 +111,43 @@ jobs:
       - name: Package
         shell: pwsh
         run: packaging/windows/package.ps1 -SkipBuild -Out dist
-      - name: Packaging self-test (OCCT-linked probe)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Reference models
+        run: |
+          cargo build -p newtopo-testmodels --features occt --release --locked
+          target/release/newtopo-testmodels.exe models
+      # Portable zip and a silent per-user install, each run with PATH cut
+      # down to the Windows folders (smoke.ps1), then a silent uninstall.
+      - name: Smoke test packages
         shell: pwsh
         run: |
-          $cfg = (Get-ChildItem $env:OCCT_DIR -Recurse -Filter OpenCASCADEConfig.cmake | Select-Object -First 1).DirectoryName
-          cmake -S packaging/selftest -B build-probe -A x64 "-DOpenCASCADE_DIR=$cfg"
-          if ($LASTEXITCODE) { throw "configure failed" }
-          cmake --build build-probe --config Release --parallel
-          if ($LASTEXITCODE) { throw "build failed" }
-          New-Item -ItemType Directory probe-bin | Out-Null
-          Copy-Item target/release/newtopo.exe, target/release/newtopo-cli.exe, build-probe/Release/newtopo-import.exe probe-bin
-          packaging/windows/package.ps1 -BinDir probe-bin -Out probe-dist
-          Expand-Archive (Get-ChildItem probe-dist/*.zip).FullName probe-x
-          $exe = (Get-ChildItem probe-x -Recurse -Filter newtopo-import.exe).FullName
-          Get-ChildItem (Split-Path $exe) | Format-Table Name, Length
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-          $out = & $exe
-          Write-Host $out
-          if ("$out" -notmatch 'occt-probe-ok') { throw "probe did not run from the zip (exit $LASTEXITCODE)" }
-          # Silent install, run from the install dir, silent uninstall.
-          $setup = (Get-ChildItem probe-dist/*-setup.exe).FullName
-          Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/DIR=C:\probe-install', '/LOG=probe-install.log' -Wait
-          $out = & C:\probe-install\newtopo-import.exe
-          if ("$out" -notmatch 'occt-probe-ok') { Get-Content probe-install.log; throw "probe did not run after install" }
-          Write-Host "HKCU .ntopo -> $((Get-ItemProperty 'HKCU:\Software\Classes\.ntopo').'(default)')"
-          Start-Process C:\probe-install\unins000.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
-          if (Test-Path C:\probe-install\newtopo.exe) { throw "uninstall left newtopo.exe behind" }
+          $T = "$env:RUNNER_TEMP\smoke"
+          $M = (Resolve-Path models).Path
+          New-Item -ItemType Directory -Force $T | Out-Null
+
+          Write-Host "::group::zip"
+          Expand-Archive (Get-ChildItem dist/*.zip).FullName "$T\zip"
+          $dir = (Get-ChildItem "$T\zip" -Directory | Select-Object -First 1).FullName
+          packaging/smoke/smoke.ps1 -Dir $dir -Models $M -Work "$T\w-zip"
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::installer (silent, per user)"
+          $setup = (Get-ChildItem dist/*-setup.exe).FullName
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', "/DIR=$T\install", "/LOG=$T\install.log" -Wait -PassThru
+          if ($p.ExitCode) { Get-Content "$T\install.log"; throw "setup exited $($p.ExitCode)" }
+          Get-ChildItem "$T\install" | Format-Table Name, Length
+          packaging/smoke/smoke.ps1 -Dir "$T\install" -Models $M -Work "$T\w-install"
+          $assoc = (Get-ItemProperty 'HKCU:\Software\Classes\.ntopo').'(default)'
+          $cmd = (Get-ItemProperty 'HKCU:\Software\Classes\newtopo.scene\shell\open\command').'(default)'
+          Write-Host ".ntopo -> $assoc; open: $cmd"
+          if ($assoc -ne 'newtopo.scene') { throw ".ntopo association missing" }
+          $lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter 'newtopo*.lnk'
+          if (-not $lnk) { throw "Start-menu shortcut missing" }
+          Write-Host "shortcut: $($lnk.FullName)"
+          $p = Start-Process "$T\install\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait -PassThru
+          if (Test-Path "$T\install\newtopo.exe") { throw "uninstall left newtopo.exe behind" }
+          if (Test-Path 'HKCU:\Software\Classes\newtopo.scene') { throw "uninstall left the file association behind" }
+          Write-Host "uninstalled (exit $($p.ExitCode))"
+          Write-Host "::endgroup::"
       - uses: actions/upload-artifact@v7
         with:
           name: packages-windows
@@ -134,23 +172,30 @@ jobs:
       - run: cargo build --workspace --release --locked
       - name: Package
         run: packaging/macos/package.sh --skip-build --out dist
-      - name: Packaging self-test (OCCT-linked probe)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Reference models
+        run: |
+          cargo build -p newtopo-testmodels --features occt --release --locked
+          target/release/newtopo-testmodels models/
+      # The app inside the mounted DMG, as a user would run it: no DYLD_*
+      # variables, signature intact, only @rpath and system libraries.
+      - name: Smoke test packages
         run: |
           unset DYLD_FALLBACK_LIBRARY_PATH DYLD_LIBRARY_PATH
-          cfg="$(dirname "$(find "$OCCT_DIR" -name OpenCASCADEConfig.cmake | head -1)")"
-          cmake -S packaging/selftest -B build-probe -DCMAKE_BUILD_TYPE=Release -DOpenCASCADE_DIR="$cfg" \
-            -DCMAKE_EXE_LINKER_FLAGS=-Wl,-headerpad_max_install_names
-          cmake --build build-probe --parallel
-          echo "--- probe as built:"; otool -L build-probe/newtopo-import
-          mkdir -p probe-bin
-          cp target/release/newtopo target/release/newtopo-cli build-probe/newtopo-import probe-bin/
-          packaging/macos/package.sh --bin-dir probe-bin --out probe-dist
-          hdiutil attach probe-dist/*.dmg -mountpoint /tmp/probe -nobrowse -readonly
-          ls /tmp/probe /tmp/probe/newtopo.app/Contents/Frameworks | head -40
-          /tmp/probe/newtopo.app/Contents/MacOS/newtopo-import | grep occt-probe-ok
-          codesign --verify --deep --strict /tmp/probe/newtopo.app
-          hdiutil detach /tmp/probe
+          T="$RUNNER_TEMP/smoke"; mkdir -p "$T"; M="$PWD/models"; S="$PWD/packaging/smoke/smoke.sh"
+          hdiutil attach dist/*.dmg -mountpoint "$T/mnt" -nobrowse -readonly
+          app="$T/mnt/newtopo.app"
+          ls "$T/mnt" "$app/Contents/MacOS" "$app/Contents/Frameworks"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          bad=0
+          for f in "$app"/Contents/MacOS/* "$app"/Contents/Frameworks/*.dylib; do
+            refs="$(otool -L "$f" | tail -n +2 | awk '{print $1}')"
+            if echo "$refs" | grep -vE '^(@rpath/|/usr/lib/|/System/)'; then echo "^ unexpected in $f"; bad=1; fi
+          done
+          for b in newtopo newtopo-cli newtopo-import; do echo "--- otool -L $b"; otool -L "$app/Contents/MacOS/$b"; done
+          [ "$bad" = 0 ]
+          "$S" cli "$M" "$T/w-dmg" "$app/Contents/MacOS/newtopo-cli"
+          "$S" gui "$T/w-gui" "$app/Contents/MacOS/newtopo"
+          hdiutil detach "$T/mnt"
       - uses: actions/upload-artifact@v7
         with:
           name: packages-macos
