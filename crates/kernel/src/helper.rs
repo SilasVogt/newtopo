@@ -402,15 +402,27 @@ mod tests {
             };
             run_import(&input, &opts, &mut |_, _| true).unwrap_err().0
         };
-        let e = run("echo 'progress 0.1 reading'; echo 'reader exploded' >&2; kill -SEGV $$", 10_000);
-        assert!(e.starts_with("import failed:") && e.contains("reader exploded"), "{e}");
+        let e = run(
+            "echo 'progress 0.1 reading'; echo 'reader exploded' >&2; kill -SEGV $$",
+            10_000,
+        );
+        assert!(
+            e.starts_with("import failed:") && e.contains("reader exploded"),
+            "{e}"
+        );
         let e = run("kill -SEGV $$", 10_000);
-        assert!(e.starts_with("import failed:") && e.contains("signal"), "{e}");
+        assert!(
+            e.starts_with("import failed:") && e.contains("signal"),
+            "{e}"
+        );
         let started = Instant::now();
         let e = run("echo 'stuck' >&2; sleep 30", 300);
         assert!(e.contains("timed out") && e.contains("stuck"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(10));
-        let e = run("echo 'warning: odd entity' >&2; echo 'bad file' >&2; exit 3", 10_000);
+        let e = run(
+            "echo 'warning: odd entity' >&2; echo 'bad file' >&2; exit 3",
+            10_000,
+        );
         assert!(e.contains("bad file") && !e.contains("odd entity"), "{e}");
         // Exit 0 without a sidecar is still a failure.
         let e = run("exit 0", 10_000);
@@ -421,7 +433,10 @@ mod tests {
     #[test]
     fn cancel_while_helper_is_silent() {
         let (_dir, script, input) = fake_helper("echo 'progress 0.2 reading'; sleep 30");
-        let opts = ImportOptions { helper: Some(script), ..Default::default() };
+        let opts = ImportOptions {
+            helper: Some(script),
+            ..Default::default()
+        };
         let started = Instant::now();
         let mut calls = 0;
         let e = run_import(&input, &opts, &mut |_, _| {

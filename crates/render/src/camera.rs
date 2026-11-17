@@ -488,7 +488,11 @@ mod tests {
     #[test]
     fn ortho_ray_starts_behind_scene() {
         // Zoomed far in: the eye sits inside the scene sphere.
-        let c = OrbitCamera { ortho: true, distance: 1.0, ..Default::default() };
+        let c = OrbitCamera {
+            ortho: true,
+            distance: 1.0,
+            ..Default::default()
+        };
         let r = c.ray_in_scene(DVec2::new(10.0, 10.0), [20.0, 20.0], DVec3::ZERO, 100.0);
         // The origin is farther back than any point of the sphere.
         assert!((DVec3::ZERO - r.origin).dot(r.dir) > 100.0);

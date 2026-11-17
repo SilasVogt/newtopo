@@ -45,9 +45,9 @@ fn progress(f: f32, msg: &str) {
 #[cfg(feature = "occt")]
 fn run(a: &Args) -> Result<()> {
     use anyhow::Context;
+    use newtopo_kernel::CadKernel;
     use newtopo_kernel::helper::{SIDECAR_FILE, SIDECAR_VERSION, Sidecar, SidecarBody};
     use newtopo_kernel::occt::{CadFormat, HealSettings, OcctKernel, unit_in_metres};
-    use newtopo_kernel::CadKernel;
     use sha2::{Digest, Sha256};
 
     let format = CadFormat::from_path(&a.input).with_context(|| {
