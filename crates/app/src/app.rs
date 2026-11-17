@@ -757,13 +757,14 @@ impl AppState {
         self.apply_ex(op, false)
     }
 
-    /// Apply as part of the open wheel gesture (one undo step per gesture).
-    pub fn apply_coalesced(&mut self, op: Op) -> Option<newtopo_core::ops::OpOutcome> {
-        self.apply_ex(op, true)
-    }
-
     /// Apply several ops as one undo step. Returns how many were accepted.
     pub fn apply_group(&mut self, ops: Vec<Op>) -> (usize, u32) {
+        self.apply_group_ex(ops, false)
+    }
+
+    /// [`AppState::apply_group`]; with `coalesced`, the group joins the open
+    /// wheel gesture's undo step.
+    pub fn apply_group_ex(&mut self, ops: Vec<Op>, coalesced: bool) -> (usize, u32) {
         if self.is_demo() {
             self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             return (0, 0);
@@ -772,13 +773,18 @@ impl AppState {
             0 => return (0, 0),
             1 => {
                 let op = ops.into_iter().next().expect("one op");
-                return self.apply(op).map(|o| (1, o.lines_added)).unwrap_or((0, 0));
+                return self
+                    .apply_ex(op, coalesced)
+                    .map(|o| (1, o.lines_added))
+                    .unwrap_or((0, 0));
             }
             _ => {}
         }
         // All or nothing, one undo step.
-        self.doc.end_gesture();
-        match self.doc.apply_all(ops.clone()) {
+        if !coalesced {
+            self.doc.end_gesture();
+        }
+        match self.doc.apply_all(ops.clone(), coalesced) {
             Ok(outs) => {
                 for m in outs.iter().filter_map(|o| o.message.clone()) {
                     self.toast(ToastKind::Info, m);

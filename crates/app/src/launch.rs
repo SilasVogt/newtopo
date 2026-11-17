@@ -177,14 +177,19 @@ mod tests {
 
     #[test]
     fn first_argument_is_the_document() {
-        let l = parse_args(&a(&["/x/part.ntopo"]));
-        assert_eq!(l.open, Some(PathBuf::from("/x/part.ntopo")));
-        let l = parse_args(&a(&["--sample", "-psn_0_1234", "/x/a.step", "/x/b.step"]));
+        // A platform-absolute root: "/x/…" isn't absolute on Windows (it
+        // resolves against the current drive).
+        let root = std::env::temp_dir();
+        let p = |name: &str| root.join("x").join(name);
+        let s = |name: &str| p(name).to_string_lossy().into_owned();
+        let l = parse_args(&a(&[&s("part.ntopo")]));
+        assert_eq!(l.open, Some(p("part.ntopo")));
+        let l = parse_args(&a(&["--sample", "-psn_0_1234", &s("a.step"), &s("b.step")]));
         assert!(l.sample);
-        assert_eq!(l.open, Some(PathBuf::from("/x/a.step")));
-        let l = parse_args(&a(&["--window-shot", "/tmp/w.png", "/x/s.ntopo"]));
-        assert_eq!(l.window_shot, Some(PathBuf::from("/tmp/w.png")));
-        assert_eq!(l.open, Some(PathBuf::from("/x/s.ntopo")));
+        assert_eq!(l.open, Some(p("a.step")));
+        let l = parse_args(&a(&["--window-shot", &s("w.png"), &s("s.ntopo")]));
+        assert_eq!(l.window_shot, Some(p("w.png")));
+        assert_eq!(l.open, Some(p("s.ntopo")));
         let l = parse_args(&a(&["--shot", "out", "--models", "m"]));
         assert_eq!(
             (l.shot, l.models, l.open),

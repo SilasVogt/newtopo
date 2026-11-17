@@ -138,6 +138,8 @@ pub const TOAST_SELECT_EDGES: &str = "Select edges first (edge mode, 2).";
 pub const TOAST_SELECT_OBJECTS: &str = "Select an object first.";
 pub const TOAST_CAD_EDGE_ARMED: &str =
     "That's a CAD edge. Press Delete again within a second to remove it from the output.";
+pub const TOAST_LOCKED_SKIPPED: &str =
+    "Locked objects can't be edited; their part of the selection was skipped.";
 pub const TOAST_FILL_EDGE: &str =
     "Fill edges can't be removed. Add a line (Iso or Cut) or weld instead.";
 pub const TOAST_SAVED: &str = "Saved";

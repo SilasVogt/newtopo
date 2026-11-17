@@ -268,7 +268,8 @@ pub fn triangulate(pts: &[Vec3]) -> Vec<[usize; 3]> {
 /// built is returned with `error` set.
 pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
     let mut vd = ViewData::default();
-    let entries = match guard(|| scene.doc().bodies.clone()) {
+    // Same visibility rule as `newtopo-cli render` (body flag + layer).
+    let entries = match guard(|| newtopo_render::core_scene::visible_bodies(scene.doc())) {
         Ok(b) => b,
         Err(e) => {
             vd.error = Some(e);
@@ -336,10 +337,7 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
     let mut rs = RenderScene::default();
     let (mut ppos, mut ptris, mut pids) = (Vec::new(), Vec::new(), Vec::new());
 
-    for entry in entries
-        .iter()
-        .filter(|e| e.visible && !p.hidden.contains(&e.id))
-    {
+    for entry in entries.iter().filter(|e| !p.hidden.contains(&e.id)) {
         let m = entry.transform;
         let body_color = entry
             .color
