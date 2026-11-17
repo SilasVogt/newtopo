@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>newtopo: clean quad meshes from CAD solids</title>
+  <meta name="description" content="newtopo turns STEP and IGES solids into clean, game-ready quad meshes. Put edge lines on the exact CAD surfaces, let auto-fill finish the mesh, and export FBX, OBJ, glTF or send it to Blender. Open source, early access.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0e1114" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2f4f5" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="newtopo">
+  <meta property="og:title" content="newtopo: clean quad meshes from CAD solids">
+  <meta property="og:description" content="Put edge lines on the exact CAD surfaces, let auto-fill finish the mesh, and export to FBX, OBJ, glTF or Blender.">
+  <meta property="og:url" content="https://silasvogt.github.io/newtopo/">
+  <meta property="og:image" content="https://silasvogt.github.io/newtopo/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A filleted CAD part with blue edge lines drawn over its surfaces">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="preload" href="assets/art/hero-part.svg" as="image" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script>document.documentElement.classList.add("js")</script>
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="nav__inner wrap">
+      <a class="brand" href="#top" aria-label="newtopo home">
+        <img src="assets/icon.svg" width="28" height="28" alt="">
+        <span>newtopo</span>
+        <span class="status">Early access</span>
+      </a>
+      <nav aria-label="Sections">
+        <ul class="nav__links">
+          <li><a href="#loop">How it works</a></li>
+          <li><a href="#tools">Tools</a></li>
+          <li><a href="#export">Export</a></li>
+          <li><a href="#cli">CLI</a></li>
+        </ul>
+      </nav>
+      <div class="nav__end">
+        <a class="nav__src" href="https://github.com/SilasVogt/newtopo">GitHub</a>
+        <a class="btn btn--small" href="#download">Download</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ============================================================ HERO -->
+    <section class="hero wrap" id="top" aria-labelledby="hero-title">
+      <div class="hero__copy">
+        <h1 id="hero-title">Clean quad meshes from CAD solids.</h1>
+        <p class="hero__sub">Lay edge lines on the exact surfaces of a STEP or IGES model. newtopo fills the rest with quads and exports game-ready meshes.</p>
+        <div class="hero__cta">
+          <a class="btn" href="#download">Download</a>
+          <a class="btn btn--ghost" href="#loop">How it works</a>
+        </div>
+      </div>
+      <figure class="hero__art shot" data-shot="hero-viewport">
+        <!-- SCREENSHOT: hero-viewport. The main viewport with a filleted part, CAD edges, user lines and auto-fill edges visible. 16:11, at least 1880x1280. -->
+        <img src="assets/art/hero-part.svg" width="940" height="640" fetchpriority="high"
+             alt="A rounded plate with a filleted boss. Blue lines run across its fillets and walls, and orange auto-fill edges connect them across the flat top.">
+        <figcaption class="legend" aria-label="Line colours">
+          <span class="legend__item"><i class="sw sw--cad"></i>CAD edges</span>
+          <span class="legend__item"><i class="sw sw--ln"></i>Your lines</span>
+          <span class="legend__item"><i class="sw sw--fe"></i>Auto-fill</span>
+        </figcaption>
+      </figure>
+    </section>
+
+    <!-- ============================================================ APP SHOT -->
+    <section class="appshot wrap" aria-labelledby="appshot-title">
+      <h2 id="appshot-title" class="visually-hidden">The app</h2>
+      <figure class="appshot__frame">
+        <img src="assets/screens/app-slice.webp" width="1800" height="1125" loading="lazy"
+             alt="The newtopo app: a filleted box with ten Slice planes drawn across its faces and fillets, the outliner on the left and the Slice panel and output-mesh statistics on the right.">
+        <figcaption>The v0.1 app: a Slice rule with 10 planes on a filleted box. Every line sits on the exact CAD surface.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============================================================ BEFORE / AFTER -->
+    <section class="compare-sec wrap" id="why" aria-labelledby="why-title">
+      <div class="compare-sec__head">
+        <h2 id="why-title">CAD exports tessellate into triangle soup.</h2>
+        <p>Long, thin triangles with no edge flow shade badly and take days to fix by hand. newtopo starts from the B-rep instead, so every vertex sits on the real surface.</p>
+      </div>
+      <div class="compare" style="--pos: 50%">
+        <!-- SCREENSHOT: compare-before. Preview of a plain tessellated STEP import (triangles). Same camera as compare-after. 940x620. -->
+        <img class="compare__img shot" data-shot="compare-before" src="assets/art/compare-soup.svg" width="940" height="620" loading="lazy"
+             alt="The part as a tessellated export: fans of long, thin triangles across the flat top and slivers along the fillets.">
+        <!-- SCREENSHOT: compare-after. Preview mode of the same part after newtopo. Same camera as compare-before. 940x620. -->
+        <img class="compare__img compare__after shot" data-shot="compare-after" src="assets/art/compare-quads.svg" width="940" height="620" loading="lazy"
+             alt="The same part after newtopo: rows of quads that follow the fillets, walls and boss.">
+        <span class="compare__handle" aria-hidden="true"></span>
+        <input class="compare__range" type="range" min="0" max="100" value="50" step="1"
+               aria-label="Slide to compare the tessellated export with the newtopo mesh">
+      </div>
+      <div class="compare__labels" aria-hidden="true">
+        <span>Tessellated export</span>
+        <span>newtopo output</span>
+      </div>
+    </section>
+
+    <!-- ============================================================ CORE LOOP -->
+    <section class="loop wrap" id="loop" aria-labelledby="loop-title">
+      <h2 id="loop-title" class="loop__title">Import. Add lines. Auto-fill. Export.</h2>
+      <div class="loop__grid">
+        <!-- Desktop only: main.js fills this sticky stage with copies of the step images below. -->
+        <div class="loop__stage" aria-hidden="true"><div class="loop__frame"></div></div>
+        <ol class="loop__steps">
+          <li class="step" data-step="0">
+            <figure class="step__art shot" data-shot="loop-import">
+              <!-- SCREENSHOT: loop-import. A freshly imported STEP part, shaded, CAD edges only. 600x400. -->
+              <img src="assets/art/loop-import.svg" width="600" height="400" loading="lazy" alt="The imported part, shaded, with only its CAD edges drawn.">
+            </figure>
+            <h3>Import the solid</h3>
+            <p>Open STEP (AP203, AP214, AP242) or IGES. Names, layers, colours and assemblies come along. The CAD model stays read-only, and every CAD face starts as one polygon.</p>
+          </li>
+          <li class="step" data-step="1">
+            <figure class="step__art shot" data-shot="loop-lines">
+              <!-- SCREENSHOT: loop-lines. The same part with Connect/Grid lines added on fillets and walls. 600x400. -->
+              <img src="assets/art/loop-lines.svg" width="600" height="400" loading="lazy" alt="Blue lines added along the walls, across the fillets and around the boss.">
+            </figure>
+            <h3>Add lines on the exact surfaces</h3>
+            <p>Place lines by count with Connect, Surface Grid and Slice, or one at a time with Iso and Cut. Each line lies on the real surface and splits the face it crosses.</p>
+          </li>
+          <li class="step" data-step="2">
+            <figure class="step__art shot" data-shot="loop-fill">
+              <!-- SCREENSHOT: loop-fill. Auto-fill edges shown in their own colour on the flat top face. 600x400. -->
+              <img src="assets/art/loop-fill.svg" width="600" height="400" loading="lazy" alt="Orange auto-fill edges connect the outline of the top face to the boss.">
+            </figure>
+            <h3>Let auto-fill finish it</h3>
+            <p>Anything still bigger than a quad is split into quads and triangles, using only the vertices you already have. Auto-fill never adds points and never blocks an export.</p>
+          </li>
+          <li class="step" data-step="3">
+            <figure class="step__art shot" data-shot="loop-preview">
+              <!-- SCREENSHOT: loop-preview. Preview mode (V) showing only the output mesh. 600x400. -->
+              <img src="assets/art/loop-preview.svg" width="600" height="400" loading="lazy" alt="Preview of the finished mesh: flat-shaded quads with every edge drawn.">
+            </figure>
+            <h3>Clean up, preview, export</h3>
+            <p>Remove, collapse or weld what you don't want, then press <kbd>V</kbd> to see exactly what export will write. Batch-rename, run a quick UV unwrap, and send it out.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============================================================ RULES (interactive) -->
+    <section class="rules wrap" id="rules" aria-labelledby="rules-title">
+      <div class="rules__demo">
+        <div class="torus" id="torus" role="img" aria-label="A torus with lines around the ring and around the tube. The sliders change how many.">
+          <noscript><p class="torus__noscript">This demo needs JavaScript. A torus with Connect A = 12 and B = 8 gives a 12 by 8 quad grid.</p></noscript>
+        </div>
+        <div class="rules__controls">
+          <div class="ctl">
+            <label class="ctl__name" for="torus-a">Connect A <span class="ctl__hint">around the ring</span></label>
+            <output for="torus-a" id="torus-a-out" class="ctl__val">12</output>
+            <input type="range" id="torus-a" min="3" max="40" value="12">
+          </div>
+          <div class="ctl">
+            <label class="ctl__name" for="torus-b">Connect B <span class="ctl__hint">around the tube</span></label>
+            <output for="torus-b" id="torus-b-out" class="ctl__val">8</output>
+            <input type="range" id="torus-b" min="3" max="24" value="8">
+          </div>
+          <p class="rules__count" aria-live="polite"><span id="torus-quads">96</span> quads</p>
+        </div>
+      </div>
+      <div class="rules__copy">
+        <h2 id="rules-title">Every line stays editable.</h2>
+        <p>Lines come from rules: a Connect count on a fillet, a grid on a face, a set of slices, one iso line, one cut path. Rules sit on top of the read-only CAD model, so you can change any of them later.</p>
+        <p>Change a count and the mesh regenerates on the spot. Manual welds, collapses and removed edges that still apply are kept, and everything is undoable.</p>
+        <ul class="facts">
+          <li><strong>Scenes save as <code>.ntopo</code></strong> and reopen without the original CAD file.</li>
+          <li><strong>Copy rules</strong> from one body and paste them onto an identical one.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================================ TOOLS (bento) -->
+    <section class="tools wrap" id="tools" aria-labelledby="tools-title">
+      <h2 id="tools-title">Tools that work on the real surface.</h2>
+      <p class="section-lead">Every tool is live, undoable, and aware of Link and Symmetry. Every shortcut can be rebound, and a command palette (<span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span>) finds the rest.</p>
+      <div class="bento">
+        <article class="tile tile--connect">
+          <figure class="tile__art shot" data-shot="tool-connect">
+            <!-- SCREENSHOT: tool-connect. Connect on a cylinder face, lines along its length. 800x560. -->
+            <img src="assets/art/tool-connect.svg" width="400" height="280" loading="lazy" alt="A cylinder with evenly spaced lines along its length.">
+          </figure>
+          <div class="tile__text">
+            <h3>Connect <kbd>C</kbd></h3>
+            <p>Lines that follow how a face bends: along a cylinder, across a fillet, both ways on a torus. Neighbouring fillets join into one continuous line.</p>
+          </div>
+        </article>
+        <article class="tile tile--grid">
+          <figure class="tile__art shot" data-shot="tool-grid">
+            <!-- SCREENSHOT: tool-grid. Surface Grid on a plate face with a hole. 800x560. -->
+            <img src="assets/art/tool-grid.svg" width="400" height="280" loading="lazy" alt="A flat plate with a grid of lines that stops at the edge of a round hole.">
+          </figure>
+          <div class="tile__text">
+            <h3>Surface Grid <kbd>G</kbd></h3>
+            <p>A U by V grid of exact iso lines on any face, flat or curved. It stops cleanly at holes.</p>
+          </div>
+        </article>
+        <article class="tile tile--slice">
+          <figure class="tile__art shot" data-shot="tool-slice">
+            <!-- SCREENSHOT: tool-slice. Slice through a filleted body. 800x560. -->
+            <img src="assets/art/tool-slice.svg" width="400" height="280" loading="lazy" alt="A rounded block with evenly spaced loops that pass over its fillets.">
+          </figure>
+          <div class="tile__text">
+            <h3>Slice <kbd>S</kbd></h3>
+            <p>Evenly spaced cuts across a body, like a stack of planes. Around a shared axis they turn radial.</p>
+          </div>
+        </article>
+        <article class="tile tile--iso">
+          <figure class="tile__art shot" data-shot="tool-iso">
+            <!-- SCREENSHOT: tool-iso. A through-iso loop around a fillet ring. 800x560. -->
+            <img src="assets/art/tool-iso.svg" width="400" height="280" loading="lazy" alt="A boss on a plate with a single closed line running around its fillet.">
+          </figure>
+          <div class="tile__text">
+            <h3>Iso <kbd>I</kbd></h3>
+            <p>One exact line where you click. Through mode carries it across smooth neighbours; split mode divides a face into parts.</p>
+          </div>
+        </article>
+        <article class="tile tile--cut">
+          <figure class="tile__art shot" data-shot="tool-cut">
+            <!-- SCREENSHOT: tool-cut. A cut path across three faces of a box. 800x560. -->
+            <img src="assets/art/tool-cut.svg" width="400" height="280" loading="lazy" alt="A box with a path of points drawn across three of its faces.">
+          </figure>
+          <div class="tile__text">
+            <h3>Cut <kbd>K</kbd></h3>
+            <p>Click a path across faces. Every point lands on the exact surface, and crossed edges get new vertices.</p>
+          </div>
+        </article>
+        <article class="tile tile--cleanup">
+          <figure class="tile__art shot" data-shot="tool-cleanup">
+            <!-- SCREENSHOT: tool-cleanup. Target Weld in action on a quad strip. 800x460. -->
+            <img src="assets/art/tool-cleanup.svg" width="400" height="230" loading="lazy" alt="Two quad strips. In the second, one vertex has been welded onto its neighbour, turning a quad into a triangle.">
+          </figure>
+          <div class="tile__text">
+            <h3>Remove, collapse, weld</h3>
+            <p><kbd>Delete</kbd> removes edges, <span class="keys"><kbd>Alt</kbd><kbd>C</kbd></span> collapses, <kbd>W</kbd> welds one vertex onto another. CAD outlines stay put, and anything that would break the mesh is refused with a reason.</p>
+          </div>
+        </article>
+        <article class="tile tile--link">
+          <figure class="tile__art shot" data-shot="tool-link">
+            <!-- SCREENSHOT: tool-link. Link on: one hole edited, all identical holes updated; symmetry plane visible. 800x560. -->
+            <img src="assets/art/tool-link.svg" width="400" height="280" loading="lazy" alt="A plate with six identical holes, each with the same lines, and a dashed mirror plane through the middle.">
+          </figure>
+          <div class="tile__text">
+            <h3>Link and Symmetry <span class="keys"><kbd>Shift</kbd><kbd>L</kbd></span> <span class="keys"><kbd>Shift</kbd><kbd>M</kbd></span></h3>
+            <p>Link finds identical faces in a body, so lines on one hole appear in every matching hole. Symmetry mirrors your work across X, Y or Z.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================================================ EXPORT + BRIDGE -->
+    <section class="export wrap" id="export" aria-labelledby="export-title">
+      <h2 id="export-title">Out to FBX, OBJ and glTF. Or straight into Blender.</h2>
+      <div class="export__grid">
+        <div class="formats-col">
+        <dl class="formats">
+          <div class="format">
+            <dt>FBX</dt>
+            <dd>Binary 7.4. Quads kept, or triangulated on request. Per-corner normals and edge smoothing.</dd>
+          </div>
+          <div class="format">
+            <dt>OBJ</dt>
+            <dd>With MTL materials, split normals and smoothing groups. Layers become groups.</dd>
+          </div>
+          <div class="format">
+            <dt>glTF</dt>
+            <dd>Binary <code>.glb</code>, triangulated, vertices split at hard edges.</dd>
+          </div>
+        </dl>
+        <p class="formats__note">Every format carries hard edges from the CAD model's sharp edges, smooth normals taken from the exact surface, object names, layers as hierarchy, materials from CAD colours, units and up axis.</p>
+        </div>
+        <figure class="bridge shot" data-shot="bridge-blender">
+          <!-- SCREENSHOT: bridge-blender. Blender receiving a mesh from the bridge panel (F2), collections visible in the outliner. 1040x720. -->
+          <div class="bridge__diagram" aria-hidden="true">
+            <div class="bridge__node">
+              <img src="assets/icon.svg" width="40" height="40" alt="">
+              <span>newtopo</span>
+              <kbd>F2</kbd>
+            </div>
+            <div class="bridge__wire">
+              <span class="bridge__pulse"></span>
+              <code>127.0.0.1:47110</code>
+            </div>
+            <div class="bridge__node bridge__node--host">
+              <span class="bridge__host">Blender</span>
+              <span class="bridge__sub">add-on</span>
+            </div>
+          </div>
+          <figcaption>
+            <h3>The Blender bridge</h3>
+            <p>Install the add-on once and press Send. The mesh arrives with its names, sharp edges and UVs, and layers become collections. Sending again replaces the object. It talks over a local connection only, with a token you paste in once. Maya and 3ds Max add-ons are planned.</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============================================================ CLI -->
+    <section class="cli wrap" id="cli" aria-labelledby="cli-title">
+      <div class="cli__copy">
+        <h2 id="cli-title">The same core, without a screen.</h2>
+        <p><code>newtopo-cli</code> runs everything the app does from a terminal: inspect a file, replay a recorded script, check a scene, export and render. Use it in build pipelines, batch jobs and CI.</p>
+        <p>The app can record what you do as a JSON script, so a cleanup you did once can run again on the next revision of the part.</p>
+      </div>
+      <div class="term" role="region" aria-label="Example commands">
+        <pre><code><span class="c"># bodies, faces, surface types, layers</span>
+<span class="p">$</span> newtopo-cli info bracket.step
+
+<span class="c"># replay a recorded script onto a new revision</span>
+<span class="p">$</span> newtopo-cli run cleanup.json -o bracket.ntopo
+
+<span class="c"># check invariants; non-zero exit on failure</span>
+<span class="p">$</span> newtopo-cli validate bracket.ntopo
+
+<span class="p">$</span> newtopo-cli export bracket.ntopo --format fbx -o bracket.fbx --up y
+<span class="p">$</span> newtopo-cli render bracket.ntopo --view iso --preview -o bracket.png</code></pre>
+      </div>
+    </section>
+
+    <!-- ============================================================ DOWNLOAD -->
+    <section class="download wrap" id="download" aria-labelledby="download-title">
+      <div class="download__head">
+        <h2 id="download-title">Download the early access build.</h2>
+        <p>Version 0.1 is free and open source under the MIT licence. Expect rough edges, and expect your OS to ask before it runs an unsigned app.</p>
+      </div>
+      <div class="os">
+        <a class="os__card" data-os="windows" href="https://github.com/SilasVogt/newtopo/releases/latest">
+          <span class="os__name">Windows</span>
+          <span class="os__detail">Installer for Windows 10 and 11, x64</span>
+          <span class="os__go">Download for Windows <span aria-hidden="true">&rarr;</span></span>
+          <span class="os__mine">Your system</span>
+        </a>
+        <a class="os__card" data-os="mac" href="https://github.com/SilasVogt/newtopo/releases/latest">
+          <span class="os__name">macOS</span>
+          <span class="os__detail"><code>.dmg</code> for Apple silicon. Best effort during early access.</span>
+          <span class="os__go">Download for macOS <span aria-hidden="true">&rarr;</span></span>
+          <span class="os__mine">Your system</span>
+        </a>
+        <a class="os__card" data-os="linux" href="https://github.com/SilasVogt/newtopo/releases/latest">
+          <span class="os__name">Linux</span>
+          <span class="os__detail">x86-64 as AppImage, <code>.deb</code> or <code>.tar.gz</code>. Wayland and X11.</span>
+          <span class="os__go">Download for Linux <span aria-hidden="true">&rarr;</span></span>
+          <span class="os__mine">Your system</span>
+        </a>
+      </div>
+      <div class="download__foot">
+        <a class="src-link" href="https://github.com/SilasVogt/newtopo">
+          <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          Source on GitHub
+        </a>
+        <a class="all-releases" href="https://github.com/SilasVogt/newtopo/releases">All releases and checksums</a>
+      </div>
+
+      <section class="reqs" aria-labelledby="reqs-title">
+        <h3 id="reqs-title">System requirements</h3>
+        <div class="reqs__grid">
+          <div class="req">
+            <h4>Operating system</h4>
+            <p>Windows 10 or 11, x64<br>Linux x86-64, Wayland or X11<br>macOS on Apple silicon (later in early access)</p>
+          </div>
+          <div class="req">
+            <h4>Graphics</h4>
+            <p>A GPU with Vulkan, DirectX 12 or Metal. Integrated graphics are fine.</p>
+          </div>
+          <div class="req">
+            <h4>Hardware</h4>
+            <p>A 4-core CPU and 16 GB of memory is the baseline it is tuned for.</p>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot__inner wrap">
+      <div class="foot__brand">
+        <a class="brand" href="#top">
+          <img src="assets/icon.svg" width="24" height="24" alt="">
+          <span>newtopo</span>
+        </a>
+        <p>Retopology for CAD solids. <span class="foot__muted">newtopo is a working name.</span></p>
+      </div>
+      <div class="foot__legal">
+        <p>newtopo is free software under the <a href="https://github.com/SilasVogt/newtopo/blob/main/LICENSE">MIT licence</a>.</p>
+        <p>It uses <a href="https://dev.opencascade.org/">Open CASCADE Technology</a>, licensed under the GNU LGPL 2.1 with the Open CASCADE exception. Its licence notices ship with every build.</p>
+      </div>
+      <ul class="foot__links">
+        <li><a href="https://github.com/SilasVogt/newtopo">Source</a></li>
+        <li><a href="https://github.com/SilasVogt/newtopo/releases">Releases</a></li>
+        <li><a href="https://github.com/SilasVogt/newtopo/issues">Report an issue</a></li>
+      </ul>
+    </div>
+  </footer>
+</body>
+</html>

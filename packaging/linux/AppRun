@@ -1,0 +1,16 @@
+#!/bin/sh
+# AppImage entry point.
+#   ./newtopo-<ver>-linux-x86_64.AppImage [scene.ntopo]   runs the app
+#   ./newtopo-<ver>-linux-x86_64.AppImage --cli <args>    runs newtopo-cli
+# A symlink to the AppImage named "newtopo-cli" also runs the CLI.
+# Shared libraries are found through each binary's RUNPATH ($ORIGIN/../lib),
+# and newtopo-import sits next to the other two executables in usr/bin.
+HERE="$(dirname "$(readlink -f "$0")")"
+case "$(basename "${ARGV0:-$0}")" in
+  newtopo-cli*) exec "$HERE/usr/bin/newtopo-cli" "$@" ;;
+esac
+if [ "${1:-}" = "--cli" ]; then
+  shift
+  exec "$HERE/usr/bin/newtopo-cli" "$@"
+fi
+exec "$HERE/usr/bin/newtopo" "$@"

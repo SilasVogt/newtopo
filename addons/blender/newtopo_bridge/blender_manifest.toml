@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "newtopo_bridge"
+version = "0.1.0"
+name = "newtopo bridge"
+tagline = "Receive meshes sent from the newtopo app"
+maintainer = "newtopo"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+network = "Listens on 127.0.0.1 for meshes sent by the newtopo app"

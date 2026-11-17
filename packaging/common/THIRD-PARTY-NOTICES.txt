@@ -1,0 +1,66 @@
+newtopo - third-party notices
+=============================
+
+newtopo itself is licensed under the MIT licence (see the LICENSE file
+next to this one). It is distributed together with the third-party software
+listed below, each part under its own licence. The full licence texts of the
+components that require them are in the "licenses" folder next to this file.
+
+
+1. Open CASCADE Technology (OCCT)
+---------------------------------
+
+Version:   8.0.1
+Website:   https://dev.opencascade.org/
+Source:    https://github.com/Open-Cascade-SAS/OCCT/tree/V8.0.1
+Licence:   GNU Lesser General Public License version 2.1, with the
+           Open CASCADE Exception version 1.0
+           (licenses/LICENSE_LGPL_21.txt, licenses/OCCT_LGPL_EXCEPTION.txt)
+
+newtopo uses OCCT unmodified, built from the official V8.0.1 source tag with
+these CMake options:
+
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRARY_TYPE=Shared
+  -DINSTALL_DIR_LAYOUT=Unix
+  -DBUILD_MODULE_Draw=OFF -DBUILD_MODULE_Visualization=OFF
+  -DUSE_TCL=OFF -DUSE_TK=OFF -DUSE_FREETYPE=OFF -DUSE_OPENGL=OFF
+  -DUSE_GLES2=OFF -DUSE_XLIB=OFF -DBUILD_DOC_Overview=OFF -DBUILD_GTEST=OFF
+
+OCCT is linked dynamically. Its shared libraries ship as separate files:
+
+  Windows:  the TK*.dll files next to newtopo.exe
+  macOS:    newtopo.app/Contents/Frameworks/libTK*.dylib
+  Linux:    lib/libTK*.so.* (tar.gz and AppImage), /opt/newtopo/lib (.deb)
+
+You may replace these libraries with your own build of the same OCCT
+version (or a binary-compatible one), as the LGPL allows. The exact source
+code is available at the URL above; on request we will also provide it.
+
+
+2. Microsoft Visual C++ runtime (Windows packages only)
+-------------------------------------------------------
+
+The Windows packages include the Microsoft Visual C++ runtime DLLs
+(vcruntime140*.dll, msvcp140*.dll and related files) as redistributable
+files under the Microsoft Visual Studio licence terms for redistributable
+code.
+
+
+3. Rust crates
+--------------
+
+newtopo itself is written in Rust and statically links the Rust crates
+listed in "THIRD-PARTY-RUST.txt" (generated from the Cargo dependency graph
+when the package is built). Each crate is used under the licence named
+there (most are MIT and/or Apache-2.0); the licence, copyright and NOTICE
+files each crate ships are reproduced in full in that file.
+
+
+4. Noto Sans font
+-----------------
+
+The app's user-interface font, Noto Sans (Regular and Medium), is embedded in
+the newtopo executable.
+Copyright 2022 The Noto Project Authors
+(https://github.com/notofonts/latin-greek-cyrillic)
+Licence:   SIL Open Font License, Version 1.1 (licenses/NotoSans-OFL.txt)

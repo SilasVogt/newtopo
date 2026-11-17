@@ -1,0 +1,35 @@
+[package]
+name = "newtopo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+newtopo-kernel.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+glam.workspace = true
+robust.workspace = true
+spade.workspace = true
+zip.workspace = true
+sha2.workspace = true
+log.workspace = true
+bytemuck.workspace = true
+regex = "1"
+flate2 = "1"
+getrandom = "0.3"
+tempfile.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+insta.workspace = true
+criterion.workspace = true
+ufbx = "0.11"
+# OCCT reference models for the OCCT-backed acceptance tests (needs OCCT_DIR).
+newtopo-testmodels = { workspace = true, features = ["occt"] }
+
+[[bench]]
+name = "fill"
+harness = false

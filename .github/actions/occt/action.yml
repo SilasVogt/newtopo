@@ -1,0 +1,72 @@
+name: Set up OCCT
+description: >
+  Restore Open CASCADE Technology from the Actions cache, or build it from
+  source with scripts/build-occt.{sh,ps1} and save it right away (so a
+  later failing step doesn't lose a long build). Exports OCCT_DIR and puts
+  the OCCT libraries on PATH (Windows) / LD_LIBRARY_PATH (Linux) /
+  DYLD_FALLBACK_LIBRARY_PATH (macOS, see the note in the outputs).
+inputs:
+  version:
+    description: OCCT version (source tag V<version>)
+    default: "8.0.1"
+outputs:
+  dir:
+    description: OCCT install prefix
+    value: ${{ steps.paths.outputs.dir }}
+  cache-hit:
+    description: Whether OCCT came from the cache
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - id: paths
+      shell: bash
+      run: |
+        # ImageOS (ubuntu22, ubuntu24, win25, macos15, ...) separates glibc /
+        # SDK baselines; the script hash invalidates on recipe changes.
+        echo "dir=${RUNNER_TEMP//\\//}/occt-${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.paths.outputs.dir }}
+        key: occt-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.paths.outputs.image }}-${{ hashFiles('scripts/build-occt.sh', 'scripts/build-occt.ps1') }}
+
+    - if: steps.restore.outputs.cache-hit != 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ninja-build
+
+    - if: steps.restore.outputs.cache-hit != 'true' && runner.os != 'Windows'
+      shell: bash
+      env:
+        OCCT_VERSION: ${{ inputs.version }}
+      run: scripts/build-occt.sh "${{ steps.paths.outputs.dir }}"
+
+    - if: steps.restore.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        OCCT_VERSION: ${{ inputs.version }}
+      run: scripts/build-occt.ps1 -Prefix "${{ steps.paths.outputs.dir }}"
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.paths.outputs.dir }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    - shell: bash
+      run: |
+        dir="${{ steps.paths.outputs.dir }}"
+        echo "OCCT_DIR=$dir" >> "$GITHUB_ENV"
+        case "$RUNNER_OS" in
+          Windows) cygpath -w "$dir/bin" >> "$GITHUB_PATH" ;;
+          Linux) echo "LD_LIBRARY_PATH=$dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV" ;;
+          # SIP strips DYLD_* when a protected binary (/bin/bash) starts, so
+          # steps that run OCCT-linked binaries should also export this
+          # themselves; cargo itself is not protected and passes it on.
+          macOS) echo "DYLD_FALLBACK_LIBRARY_PATH=$dir/lib" >> "$GITHUB_ENV" ;;
+        esac
+        ls "$dir"
