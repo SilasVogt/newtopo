@@ -31,6 +31,10 @@ env_logger.workspace = true
 image.workspace = true
 pollster.workspace = true
 
+# Windows: embed packaging/icons/newtopo.ico as the executable's icon.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
 [dev-dependencies]
 tempfile.workspace = true
 

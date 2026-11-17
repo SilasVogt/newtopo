@@ -13,6 +13,7 @@ mod docstate;
 mod icons;
 mod jobs;
 mod keymap;
+mod launch;
 mod palette;
 mod panels;
 mod prefs;
@@ -96,28 +97,21 @@ fn icon() -> Option<egui::IconData> {
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(i) = args.iter().position(|a| a == "--shot") {
-        let dir = args
-            .get(i + 1)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("screenshots"));
-        if let Err(e) = shot::run(&dir) {
+    let launch = launch::parse_args(&args);
+    if let Some(dir) = &launch.shot {
+        let r = match &launch.models {
+            Some(m) => shot::run_real(dir, m),
+            None => shot::run(dir),
+        };
+        if let Err(e) = r {
             eprintln!("screenshots failed: {e:#}");
             std::process::exit(1);
         }
         return Ok(());
     }
-    let sample = args.iter().any(|a| a == "--sample");
-    let window_shot = args
-        .iter()
-        .position(|a| a == "--window-shot")
-        .and_then(|i| args.get(i + 1))
-        .map(PathBuf::from);
-    let open: Option<PathBuf> = args
-        .iter()
-        .enumerate()
-        .find(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--window-shot"))
-        .map(|(_, a)| PathBuf::from(a));
+    let sample = launch.sample;
+    let window_shot = launch.window_shot.clone();
+    let open = launch.open.clone();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(strings::APP_NAME)
@@ -151,11 +145,7 @@ fn main() -> eframe::Result {
                 app.st.load_sample();
             }
             if let Some(p) = open {
-                if jobs::is_scene(&p) {
-                    app.st.open_scene(Some(p));
-                } else if jobs::is_cad(&p) {
-                    app.st.start_import(p);
-                }
+                app.st.open_from_launch(p);
             }
             Ok(Box::new(EframeApp {
                 app,

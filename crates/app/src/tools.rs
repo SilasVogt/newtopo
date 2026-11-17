@@ -93,6 +93,8 @@ impl Default for SegParams {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// `value`/`seed` are normalised to the face's parameter range (0..1),
+/// as `Op::Iso` expects.
 pub struct IsoPreview {
     pub body: BodyId,
     pub face: FaceId,
@@ -121,11 +123,8 @@ pub struct ToolState {
     pub seg: SegParams,
     pub last_lines_added: Option<u32>,
     pub picking_guide: bool,
-    wheel_last: Option<f64>,
-    /// Undo steps the current wheel gesture added, and the document
-    /// revision right after them (merge only if nothing else happened).
-    wheel_steps: usize,
-    wheel_rev: u64,
+    /// Time of the last tick of the open wheel/slider gesture.
+    pub wheel_last: Option<f64>,
     pub iso_dir: IsoDirSel,
     pub iso_split: bool,
     pub iso_through: bool,
@@ -259,12 +258,16 @@ impl AppState {
         }
     }
 
-    fn selected_patches(&self) -> Vec<PatchId> {
-        self.sel
-            .faces
-            .iter()
-            .map(|(b, f)| PatchId::whole(*b, *f))
-            .collect()
+    /// Patches of the selected faces (all pieces of a split face).
+    pub fn selected_patches(&self) -> Vec<PatchId> {
+        let mut out = Vec::new();
+        for (b, f) in &self.sel.faces {
+            match self.vd.patches.get(b) {
+                Some(ps) => out.extend(ps.iter().filter(|p| p.face == *f).map(|p| p.id)),
+                None => out.push(PatchId::whole(*b, *f)),
+            }
+        }
+        out
     }
 
     /// The ops the active spread tool would apply to the selection.
@@ -371,37 +374,25 @@ impl AppState {
             return;
         }
         let ops = self.segment_ops();
-        // Coalescing workaround (facade has no begin/end gesture API):
-        // undo the previous step of this gesture, then apply the new one.
-        let merge = coalesce
-            && self.tool.wheel_steps > 0
-            && self.tool.wheel_rev == self.doc.revision
-            && self
-                .tool
-                .wheel_last
-                .is_some_and(|t| self.time - t <= COALESCE_SECS);
-        if merge {
-            for _ in 0..self.tool.wheel_steps {
-                self.undo();
-            }
-        }
-        let mut total = 0;
-        let mut steps = 0;
-        for op in ops {
-            if let Some(o) = self.apply(op) {
-                total += o.lines_added;
-                steps += 1;
-            }
-        }
-        self.tool.last_lines_added = (steps > 0).then_some(total);
-        if coalesce {
-            self.tool.wheel_steps = steps;
-            self.tool.wheel_rev = self.doc.revision;
+        let (steps, total) = if coalesce {
+            // Every tick of a wheel/slider gesture joins one undo step; the
+            // frame loop ends the gesture after 400 ms idle.
             self.tool.wheel_last = Some(self.time);
+            let mut n = 0;
+            let mut lines = 0;
+            for op in ops {
+                if let Some(o) = self.apply_coalesced(op) {
+                    n += 1;
+                    lines += o.lines_added;
+                }
+            }
+            (n, lines)
         } else {
-            self.tool.wheel_steps = 0;
+            self.doc.end_gesture();
             self.tool.wheel_last = None;
-        }
+            self.apply_group(ops)
+        };
+        self.tool.last_lines_added = (steps > 0).then_some(total);
     }
 
     /// Modifier + wheel over the viewport changes the counts (SPEC §6.1/6.2).
@@ -623,6 +614,19 @@ impl AppState {
             IsoDirSel::U => (uv.x, uv.y, surface.v_range),
             IsoDirSel::V => (uv.y, uv.x, surface.u_range),
         };
+        // The op takes the value and seed normalised to the face's
+        // parameter range (0..1).
+        let norm = |x: f64, r: (f64, f64)| {
+            if (r.1 - r.0).abs() > 1e-12 {
+                ((x - r.0) / (r.1 - r.0)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            }
+        };
+        let (value_n, seed_n) = match self.tool.iso_dir {
+            IsoDirSel::U => (norm(value, surface.u_range), norm(seed, surface.v_range)),
+            IsoDirSel::V => (norm(value, surface.v_range), norm(seed, surface.u_range)),
+        };
         let n = 96;
         let uvs: Vec<DVec2> = (0..=n)
             .map(|i| {
@@ -655,8 +659,8 @@ impl AppState {
         Some(IsoPreview {
             body,
             face,
-            value,
-            seed,
+            value: value_n,
+            seed: seed_n,
             pts: pieces,
         })
     }
@@ -828,19 +832,25 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_SELECT_EDGES);
             return;
         }
-        let edges: Vec<EdgeSel> = self.sel.edges.iter().cloned().collect();
-        for e in edges {
-            match e {
-                EdgeSel::Key(b, k) => {
-                    self.apply(Op::Collapse {
-                        body: Some(b),
-                        edge: k,
-                        confirmed: false,
-                    });
-                }
-                _ => self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY),
-            }
+        let ops: Vec<Op> = self
+            .sel
+            .edges
+            .iter()
+            .filter_map(|e| match e {
+                EdgeSel::Key(b, k) => Some(Op::Collapse {
+                    body: Some(*b),
+                    edge: k.clone(),
+                    confirmed: false,
+                }),
+                _ => None,
+            })
+            .collect();
+        if ops.is_empty() {
+            self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
+            return;
         }
+        // One undo step for the whole selection.
+        self.apply_group(ops);
         self.sel.edges.clear();
     }
 
@@ -880,17 +890,35 @@ impl AppState {
             self.toast(ToastKind::Warn, S::TOAST_FILL_EDGE);
             return;
         }
+        // One Op::RemoveEdges per body: the selection goes in one step.
+        let mut by_body: std::collections::BTreeMap<BodyId, Vec<newtopo_core::keys::EdgeKey>> =
+            Default::default();
         for (b, k) in generated {
-            if self
-                .apply(Op::RemoveEdge {
+            by_body.entry(b).or_default().push(k);
+        }
+        let ops: Vec<(BodyId, Vec<newtopo_core::keys::EdgeKey>)> = by_body.into_iter().collect();
+        if ops.len() > 1 {
+            self.doc.begin_group();
+        }
+        for (b, edges) in ops {
+            let op = if edges.len() == 1 {
+                Op::RemoveEdge {
                     body: Some(b),
-                    edge: k.clone(),
-                })
-                .is_some()
-            {
-                self.sel.edges.remove(&EdgeSel::Key(b, k));
+                    edge: edges[0].clone(),
+                }
+            } else {
+                Op::RemoveEdges {
+                    body: Some(b),
+                    edges: edges.clone(),
+                }
+            };
+            if self.apply(op).is_some() {
+                for k in edges {
+                    self.sel.edges.remove(&EdgeSel::Key(b, k));
+                }
             }
         }
+        self.doc.end_gesture();
         if !cad.is_empty() {
             let sels: Vec<EdgeSel> = cad.iter().map(|c| c.2.clone()).collect();
             let armed = self

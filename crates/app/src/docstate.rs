@@ -32,7 +32,7 @@ pub fn guard<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// The CAD kernel used for new scenes. Wired by the lead once a kernel
 /// constructor exists (API request: `newtopo_kernel::default_kernel()`).
 pub fn make_kernel() -> Option<Arc<dyn CadKernel>> {
-    None
+    Some(newtopo_kernel::default_kernel())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,9 +59,6 @@ pub struct DocState {
     /// Bumped on every change; view caches compare against it.
     pub revision: u64,
     saved_revision: u64,
-    /// Set when the engine panicked; further calls are skipped until a new
-    /// scene is created so a broken engine can't loop on errors.
-    pub engine_broken: Option<String>,
 }
 
 impl DocState {
@@ -95,7 +92,6 @@ impl DocState {
     pub fn set_scene(&mut self, scene: Scene, path: Option<PathBuf>) {
         self.scene = Some(scene);
         self.path = path;
-        self.engine_broken = None;
         self.bump();
         self.saved_revision = self.revision;
     }
@@ -127,9 +123,6 @@ impl DocState {
         let Some(scene) = self.scene.as_mut() else {
             return Err(ApplyError::NoScene);
         };
-        if let Some(e) = &self.engine_broken {
-            return Err(ApplyError::Engine(e.clone()));
-        }
         match guard(|| scene.apply(op)) {
             Ok(Ok(o)) => {
                 self.bump();
@@ -140,9 +133,44 @@ impl DocState {
                 // The scene may be half-modified: mark it changed and stop
                 // calling into the engine until a new scene is loaded.
                 self.bump();
-                self.engine_broken = Some(e.clone());
                 Err(ApplyError::Engine(e))
             }
+        }
+    }
+
+    /// Apply as part of the current gesture (one undo step for the whole
+    /// gesture, SPEC §4.7); call [`DocState::end_gesture`] when it ends.
+    pub fn apply_coalesced(&mut self, op: Op) -> Result<OpOutcome, ApplyError> {
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(ApplyError::NoScene);
+        };
+        match guard(|| scene.apply_coalesced(op)) {
+            Ok(Ok(o)) => {
+                self.bump();
+                Ok(o)
+            }
+            Ok(Err(r)) => Err(ApplyError::Refused(r)),
+            Err(e) => {
+                self.bump();
+                Err(ApplyError::Engine(e))
+            }
+        }
+    }
+
+    pub fn end_gesture(&mut self) {
+        if let Some(scene) = self.scene.as_mut() {
+            let _ = guard(|| scene.end_coalesce());
+        }
+    }
+
+    /// Start a group of ops that becomes one undo step (closes any open
+    /// gesture first).
+    pub fn begin_group(&mut self) {
+        if let Some(scene) = self.scene.as_mut() {
+            let _ = guard(|| {
+                scene.end_coalesce();
+                scene.begin_coalesce();
+            });
         }
     }
 
@@ -216,6 +244,6 @@ mod tests {
         assert_eq!(d.apply(Op::PurgeDormant), Err(ApplyError::NoScene));
         assert_eq!(d.undo(), Ok(false));
         assert_eq!(d.title(), crate::strings::UNTITLED);
-        assert!(d.ensure_scene().is_err(), "no kernel in this build");
+        assert!(d.ensure_scene().is_ok(), "default kernel available");
     }
 }
