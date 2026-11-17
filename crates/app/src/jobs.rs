@@ -482,6 +482,8 @@ impl AppState {
                     .scene
                     .as_ref()
                     .and_then(|s| guard(|| s.doc().camera).ok())
+                    // The default camera means none was saved: frame instead.
+                    .filter(|c| *c != newtopo_core::doc::Camera::default())
                 {
                     self.view.camera = newtopo_render::OrbitCamera::from_doc(&cam, self.prefs.up);
                     self.view.needs_frame = false;
