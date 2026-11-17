@@ -125,11 +125,17 @@ impl Scene {
             .kernel
             .load_brep(brep)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        self.add_kernel_body(kbody, attrs, heal, None)
+        let r = self.add_kernel_body(kbody, attrs, heal, None);
+        if r.is_err() && !self.bodies.contains_key(&kbody) {
+            self.kernel.unload(kbody);
+        }
+        r
     }
 
     /// Add a body already loaded into the kernel (tests, import helper
-    /// in-process). One undo step.
+    /// in-process). One undo step. On success the scene owns the kernel
+    /// body and unloads it when dropped; on failure the caller still owns
+    /// it.
     pub fn add_kernel_body(
         &mut self,
         kbody: BodyId,
@@ -741,8 +747,15 @@ impl Scene {
                 .load_brep(&bytes)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             drop(bytes);
-            let ctx =
-                BodyCtx::build(scene.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Bodies already in `scene.bodies` are unloaded when `scene`
+            // drops on an early return; this one is not there yet.
+            let ctx = match BodyCtx::build(scene.kernel.clone(), kbody) {
+                Ok(c) => c,
+                Err(e) => {
+                    scene.kernel.unload(kbody);
+                    bail!("{e}");
+                }
+            };
             let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
             remap.insert(b.id, kbody);
             scene.bodies.insert(
@@ -801,6 +814,18 @@ impl Scene {
         self.eval(body)
             .map(|e| e.lines_per_rule.clone())
             .unwrap_or_default()
+    }
+}
+
+/// A scene owns the kernel bodies it loaded (or was handed through
+/// [`Scene::add_kernel_body`]) and unloads them when dropped, so opening a
+/// new scene does not leak the old model's native data. Bodies of other
+/// scenes sharing the kernel are untouched.
+impl Drop for Scene {
+    fn drop(&mut self) {
+        for c in self.bodies.values() {
+            self.kernel.unload(c.ctx.kbody);
+        }
     }
 }
 

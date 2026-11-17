@@ -387,6 +387,11 @@ impl MockKernel {
         Self::default()
     }
 
+    /// Number of bodies currently loaded (for lifetime tests).
+    pub fn body_count(&self) -> usize {
+        self.bodies.read().unwrap().len()
+    }
+
     /// Register a body and return its id.
     pub fn add_body(&self, body: MockBody) -> BodyId {
         let topo = body.topology();

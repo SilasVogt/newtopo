@@ -172,3 +172,19 @@ bodies with few holes per face and not for faces with hundreds of holes.
     `edits` count stays). Join rules and edits are mapped by position
     between the source output (without its edits) and the target output
     (after the pasted rules). Unmapped or dormant ones are reported.
+
+## Sol review round 2
+
+49. Cut points on vertices resolve through the current output (position
+    and the faces around the vertex) for Link / symmetry; vertex points map
+    to the output vertex at the transformed position.
+50. Paste includes the faces under the clipboard's Join rules and edits in
+    the face matching, so a clipboard with only those pastes.
+51. Face mappings (Link, symmetry, paste, replace) also set the phase
+    reference of closed CAD edges of mapped faces, so placeholder loops
+    land in mapped positions on the target.
+52. A `Scene` owns its kernel bodies (loaded by `add_body`, `load`,
+    `replace_body`, or handed over through `add_kernel_body`) and unloads
+    them on drop; failed adds, loads and replaces unload what they had
+    loaded. Bodies of other scenes on a shared kernel are untouched. A
+    replaced body stays loaded until the scene drops (undo needs it).

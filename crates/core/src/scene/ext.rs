@@ -364,16 +364,21 @@ impl Scene {
         heal: HealReport,
     ) -> anyhow::Result<ReplaceReport> {
         let entry = self.doc.body(old).cloned().context("no such body")?;
+        anyhow::ensure!(self.bodies.contains_key(&old), "body without kernel data");
         let kbody = self
             .kernel
             .load_brep(brep)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let ctx = BodyCtx::build(self.kernel.clone(), kbody).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let old_ctx = &self
-            .bodies
-            .get(&old)
-            .context("body without kernel data")?
-            .ctx;
+        // Nothing below fails once the new body has a context; until then
+        // the scene does not own it, so unload it here.
+        let ctx = match BodyCtx::build(self.kernel.clone(), kbody) {
+            Ok(c) => c,
+            Err(e) => {
+                self.kernel.unload(kbody);
+                anyhow::bail!("{e}");
+            }
+        };
+        let old_ctx = &self.bodies[&old].ctx;
         // Face matching by congruence (identity transform preferred).
         let mut report = ReplaceReport::default();
         let src: Vec<FaceId> = old_ctx.topo.face_ids().collect();
