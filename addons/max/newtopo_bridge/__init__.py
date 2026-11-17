@@ -93,7 +93,7 @@ def start(port=None, token=None):
     global _server, _timer, _token
     _token = token if token is not None else get_token()
     if _server is None:
-        srv = protocol.PollingServer(port or get_port(), _handle)
+        srv = protocol.PollingServer(port or get_port(), _handle, lambda: _token)
         srv.start()  # raises OSError if the port is taken; nothing is kept then
         _server = srv
     if _timer is None:

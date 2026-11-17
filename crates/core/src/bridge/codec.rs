@@ -7,10 +7,13 @@ use std::io::{Read, Write};
 
 /// Protocol version spoken by this build.
 pub const PROTOCOL_VERSION: u32 = 1;
-/// Largest JSON header accepted (object metadata for big scenes fits).
-pub const MAX_HEADER: usize = 64 << 20;
-/// Largest payload accepted.
-pub const MAX_PAYLOAD: u64 = 4 << 30;
+/// Largest JSON header (the push layout lives in it; ~10k objects fit).
+/// Same limit as the add-ons' `protocol.py`.
+pub const MAX_HEADER: usize = 4 << 20;
+/// Largest payload (same limit as the add-ons).
+pub const MAX_PAYLOAD: u64 = 512 << 20;
+/// Largest payload accepted in a reply (hello/ack/error carry none).
+pub const MAX_REPLY_PAYLOAD: u64 = 1 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -84,8 +87,18 @@ pub fn write_frame(w: &mut impl Write, header: &Header, payload: &[u8]) -> Resul
     Ok(())
 }
 
-/// Read one frame (blocking).
+/// Read one frame (blocking), payload up to [`MAX_PAYLOAD`].
 pub fn read_frame(r: &mut impl Read) -> Result<(Header, Vec<u8>), CodecError> {
+    read_frame_limited(r, MAX_PAYLOAD)
+}
+
+/// Read one frame, refusing a declared payload over `max_payload` right
+/// after the header. The payload buffer grows with the bytes that actually
+/// arrive, so a large declared size allocates nothing up front.
+pub fn read_frame_limited(
+    r: &mut impl Read,
+    max_payload: u64,
+) -> Result<(Header, Vec<u8>), CodecError> {
     let mut len = [0u8; 4];
     r.read_exact(&mut len)?;
     let hl = u32::from_le_bytes(len) as usize;
@@ -95,11 +108,14 @@ pub fn read_frame(r: &mut impl Read) -> Result<(Header, Vec<u8>), CodecError> {
     let mut js = vec![0u8; hl];
     r.read_exact(&mut js)?;
     let header: Header = serde_json::from_slice(&js)?;
-    if header.payload_len > MAX_PAYLOAD {
+    if header.payload_len > max_payload.min(MAX_PAYLOAD) {
         return Err(CodecError::TooLarge(header.payload_len));
     }
-    let mut payload = vec![0u8; header.payload_len as usize];
-    r.read_exact(&mut payload)?;
+    let mut payload = Vec::new();
+    r.take(header.payload_len).read_to_end(&mut payload)?;
+    if payload.len() as u64 != header.payload_len {
+        return Err(CodecError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+    }
     Ok((header, payload))
 }
 
@@ -157,6 +173,28 @@ mod tests {
         .unwrap()
         .to_string();
         assert!(js.contains("\"type\":\"push\""), "{js}");
+    }
+
+    #[test]
+    fn reply_payload_limit_and_truncation() {
+        let mut h = Header::new(MsgType::Ack, "");
+        let big = encode(&h, &vec![0u8; 2 << 20]);
+        assert!(matches!(
+            read_frame_limited(&mut &big[..], MAX_REPLY_PAYLOAD),
+            Err(CodecError::TooLarge(_))
+        ));
+        // A huge declared payload that never arrives: error, no big buffer.
+        h.payload_len = 0;
+        let mut b = encode(&h, b"");
+        let hl = u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;
+        let js = String::from_utf8(b[4..4 + hl].to_vec()).unwrap().replace(
+            "\"payload_len\":0",
+            &format!("\"payload_len\":{}", 500u64 << 20),
+        );
+        b = (js.len() as u32).to_le_bytes().to_vec();
+        b.extend_from_slice(js.as_bytes());
+        b.extend_from_slice(b"short");
+        assert!(matches!(read_frame(&mut &b[..]), Err(CodecError::Io(_))));
     }
 
     #[test]

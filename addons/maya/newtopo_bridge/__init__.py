@@ -12,9 +12,10 @@
 #
 #     import newtopo_bridge; newtopo_bridge.set_token("<token from newtopo>")
 #
-# A background thread accepts connections on 127.0.0.1 and reads whole
-# frames; each request is handed to maya.utils.executeDeferred so all scene
-# changes run on the main thread. The thread waits for the main thread's
+# A background thread accepts connections on 127.0.0.1 one at a time and
+# authenticates each request from its header before reading the payload
+# (protocol.read_request). Each request is handed to
+# maya.utils.executeDeferred so all scene changes run on the main thread. The thread waits for the main thread's
 # reply and sends it back. Maya needs unique node names: duplicates get a
 # suffix and the ack reports the actual name of every object.
 
@@ -138,22 +139,14 @@ class ThreadedServer(object):
                 conn.close()
 
     def _serve(self, conn):
-        conn.settimeout(60.0)
-        buf = bytearray()
-        frame = None
-        while frame is None:
-            chunk = conn.recv(1 << 20)
-            if not chunk:
-                return
-            buf += chunk
-            frame = protocol.try_decode(buf)
-        header, payload, _ = frame
-        err = protocol.check(header, self.token)
-        if err is not None:
-            conn.sendall(err)
+        # Header first: token, version and size are checked before any
+        # payload byte is read (protocol.read_request sends the refusal).
+        req = protocol.read_request(conn, self.token)
+        if req is None:
             return
-        conn.sendall(self.dispatch(header, bytes(payload)))
-
+        header, payload = req
+        conn.settimeout(10.0)
+        conn.sendall(self.dispatch(header, payload))
 
 def start(port=None, token=None):
     """Start listening (idempotent)."""

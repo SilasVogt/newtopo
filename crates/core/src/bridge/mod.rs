@@ -73,6 +73,8 @@ pub enum BridgeError {
     Version(u32),
     #[error("host error: {0}")]
     Host(String),
+    #[error("too large for the bridge: {0}")]
+    TooLarge(String),
     #[error("unexpected reply: {0:?}")]
     Unexpected(MsgType),
 }
@@ -208,12 +210,38 @@ pub fn send_with(
     let (layout, bytes) = payload::build(objects, opts.scale, opts.keep_both);
     let mut header = Header::new(MsgType::Push, token);
     header.layout = Some(serde_json::to_value(&layout).expect("layout serialises"));
+    // The add-ons refuse anything over these limits; say so before sending.
+    let header_len = serde_json::to_vec(&header)
+        .map(|v| v.len())
+        .unwrap_or(usize::MAX);
+    if header_len > codec::MAX_HEADER {
+        return Err(BridgeError::TooLarge(format!(
+            "{} objects need a {header_len}-byte header (limit {}); send fewer objects at once",
+            objects.len(),
+            codec::MAX_HEADER
+        )));
+    }
+    if bytes.len() as u64 > codec::MAX_PAYLOAD {
+        return Err(BridgeError::TooLarge(format!(
+            "{} bytes of geometry (limit {}); send fewer objects at once",
+            bytes.len(),
+            codec::MAX_PAYLOAD
+        )));
+    }
     let mut s = connect(port, opts.connect_timeout)?;
     s.set_write_timeout(Some(opts.reply_timeout))?;
     s.set_read_timeout(Some(opts.reply_timeout))?;
     let t = Instant::now();
-    codec::write_frame(&mut s, &header, &bytes)?;
-    let (reply, _) = codec::read_frame(&mut s)?;
+    if let Err(e) = codec::write_frame(&mut s, &header, &bytes) {
+        // The host refuses a bad token, version or size right after the
+        // header and closes without reading the payload; its error frame
+        // may already be here, which explains the failed write.
+        return match codec::read_frame_limited(&mut s, codec::MAX_REPLY_PAYLOAD) {
+            Ok((reply, _)) if reply.kind == MsgType::Error => Err(error_of(&reply)),
+            _ => Err(e.into()),
+        };
+    }
+    let (reply, _) = codec::read_frame_limited(&mut s, codec::MAX_REPLY_PAYLOAD)?;
     log::debug!(
         "bridge push to port {port}: {} bytes, reply after {:?}",
         bytes.len(),
@@ -239,7 +267,7 @@ pub fn probe(port: u16, token: &str) -> BridgeStatus {
         s.set_read_timeout(Some(Duration::from_secs(2)))?;
         s.set_write_timeout(Some(Duration::from_secs(2)))?;
         codec::write_frame(&mut s, &Header::new(MsgType::Hello, token), &[])?;
-        let (reply, _) = codec::read_frame(&mut s)?;
+        let (reply, _) = codec::read_frame_limited(&mut s, codec::MAX_REPLY_PAYLOAD)?;
         let info = reply.info.clone().unwrap_or_default();
         let field = |k: &str| {
             info.get(k)

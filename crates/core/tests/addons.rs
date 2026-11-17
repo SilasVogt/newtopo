@@ -178,3 +178,24 @@ print('ok')
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn bridge_server_hardening_python_tests() {
+    // tests/blender/test_protocol.py: header-first auth, size caps,
+    // connection cap, timeouts, buffer bound (plain Python, stub bpy).
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipped: no python3");
+        return;
+    }
+    let out = Command::new("python3")
+        .arg(root().join("tests/blender/test_protocol.py"))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

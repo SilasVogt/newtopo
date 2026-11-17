@@ -72,6 +72,19 @@ For merging into `docs/PROVENANCE.md` and `docs/QUESTIONS.md`.
     `scale` and convert the up axis. Errors carry `info.code` (`bad_token`,
     `version`, `bad_request`, `internal`). Ack `info`: `{objects: [{name,
     actual}], elapsed_ms, host}`.
+12a. **Bridge limits (hardening).** Add-ons read the 4-byte length, then
+    the JSON header, and check version, token, type and size before reading
+    any payload byte; refused requests get an error frame and the
+    connection is closed. Header cap 4 MiB (the push layout lives in the
+    header per SPEC 9.3, so a 64 KiB cap would limit a push to ~100
+    objects), payload cap 512 MiB, at most 4 open connections (extras get
+    `busy`), 10 s idle / 120 s per-request timeouts, and total buffering
+    capped (reading pauses beyond it). Unauthenticated memory is therefore
+    at most 4 x 4 MiB. Maya's worker thread serves one connection at a time
+    with the same header-first reader. The Rust client checks the caps
+    before sending, never preallocates a declared payload size, caps reply
+    payloads at 1 MiB, and still reports `BadToken` when the host refuses
+    mid-upload.
 13. **Bridge UVs.** `OutputMesh` has no UVs yet, so `BridgeObject` carries
     optional per-corner UVs in `OutputMesh::polygons` corner order.
 14. **probe() takes the token** (`probe(port, token)`), so the panel can

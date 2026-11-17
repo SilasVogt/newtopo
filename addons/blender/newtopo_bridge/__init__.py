@@ -58,7 +58,7 @@ def start_server(port=protocol.DEFAULT_PORTS["blender"], token=""):
     if _server is not None and _server.port != port:
         stop_server()
     if _server is None:
-        _server = protocol.PollingServer(port, _handle)
+        _server = protocol.PollingServer(port, _handle, lambda: _token)
     _server.start()
     return _server
 

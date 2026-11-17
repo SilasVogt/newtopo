@@ -2,6 +2,7 @@
 
 use super::payload::{Layout, read_f32, read_u32};
 use super::*;
+use crate::export::ExportObject;
 use crate::export::samples::SampleScene;
 use std::net::TcpListener;
 use std::thread;
@@ -166,4 +167,37 @@ fn bad_token_and_offline() {
         send(free, "x", &objs),
         Err(BridgeError::NotListening(..))
     ));
+}
+
+#[test]
+fn refusal_after_header_reports_bad_token_on_large_push() {
+    // A host that, like the add-ons, reads only the header, refuses the
+    // token and closes without reading the payload (here ~4 MB).
+    use std::io::{Read, Write};
+    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = l.local_addr().unwrap().port();
+    let h = thread::spawn(move || {
+        let (mut s, _) = l.accept().unwrap();
+        let mut len = [0u8; 4];
+        s.read_exact(&mut len).unwrap();
+        let mut js = vec![0u8; u32::from_le_bytes(len) as usize];
+        s.read_exact(&mut js).unwrap();
+        let mut e = Header::new(MsgType::Error, "");
+        e.info = Some(serde_json::json!({"code": "bad_token", "message": "token mismatch"}));
+        s.write_all(&codec::encode(&e, &[])).unwrap();
+        s.shutdown(std::net::Shutdown::Write).unwrap();
+        // Keep the socket open briefly so the client can read the reply.
+        thread::sleep(Duration::from_millis(300));
+    });
+    let panel = crate::export::samples::grid(200, 200);
+    let objs = [BridgeObject::from(ExportObject {
+        name: "P",
+        layer: "L",
+        color: None,
+        transform: glam::DMat4::IDENTITY,
+        mesh: &panel,
+    })];
+    let r = send(port, "wrong", &objs);
+    h.join().unwrap();
+    assert!(matches!(r, Err(BridgeError::BadToken)), "{r:?}");
 }
