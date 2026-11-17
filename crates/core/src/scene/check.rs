@@ -11,7 +11,7 @@ use crate::doc::{
 use crate::keys::{EdgeKey, EdgeOrSplit, LoopId, VertexKey};
 use anyhow::{Result, bail};
 use newtopo_kernel::{BodyId, BodyTopology, EdgeId, FaceId, VertexId};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Largest line count a rule may ask for in one direction (the UI's count
 /// fields stop at 999).
@@ -23,10 +23,17 @@ pub const MAX_RULE_CROSSINGS: u64 = 250_000;
 /// Largest number of rules, split lines, edits or cut points a document may
 /// hold.
 pub const MAX_DOC_ITEMS: usize = 100_000;
+/// Largest number of generated lines (all rule kinds, split lines and
+/// body-wide rules together) one face may receive. Lines cross pairwise, so
+/// this bounds a face's arrangement at roughly a million crossings.
+pub const MAX_FACE_LINES: u64 = 2048;
+/// Normalised iso values and seeds may run past 0..1 a little (through-iso
+/// continuation, periodic wrap) but never far.
+const ISO_SLACK: f64 = 1.0;
 
 /// Work limits shared by `.ntopo` load and every op (scripts included), so a
 /// compact document can't ask the evaluator for billions of crossings.
-pub(crate) fn work_budget(doc: &Document) -> Result<()> {
+fn work_budget(doc: &Document) -> Result<()> {
     if doc.rules.len() > MAX_DOC_ITEMS
         || doc.split_lines.len() > MAX_DOC_ITEMS
         || doc.edits.len() > MAX_DOC_ITEMS
@@ -72,6 +79,93 @@ pub(crate) fn work_budget(doc: &Document) -> Result<()> {
                 bail!("{what} has more than {MAX_DOC_ITEMS} pieces");
             }
             _ => {}
+        }
+    }
+    // Every line a face receives can cross every other one, so bound the
+    // total per face across all rule kinds (a single Iso rule can list
+    // thousands of pieces on one face).
+    let mut per_face: HashMap<(BodyId, FaceId), u64> = HashMap::new();
+    let mut per_body: HashMap<BodyId, u64> = HashMap::new();
+    let mut add = |b: BodyId, f: Option<FaceId>, n: u64| match f {
+        Some(f) => *per_face.entry((b, f)).or_default() += n,
+        None => *per_body.entry(b).or_default() += n,
+    };
+    for sl in &doc.split_lines {
+        add(sl.body, Some(sl.face), 1);
+    }
+    for r in &doc.rules {
+        match &r.rule {
+            Rule::Connect {
+                patches,
+                count_a,
+                count_b,
+                ..
+            } => {
+                for p in patches {
+                    add(
+                        p.body,
+                        Some(p.face),
+                        u64::from(*count_a) + u64::from(*count_b),
+                    );
+                }
+            }
+            Rule::Grid {
+                patch,
+                count_u,
+                count_v,
+                ..
+            } => {
+                add(
+                    patch.body,
+                    Some(patch.face),
+                    u64::from(*count_u) + u64::from(*count_v),
+                );
+            }
+            Rule::Slice {
+                scope,
+                count: c,
+                frozen_planes,
+                ..
+            } => {
+                let n = frozen_planes
+                    .as_ref()
+                    .map_or(u64::from(*c), |p| p.len() as u64);
+                match scope {
+                    SliceScope::Body(b) => add(*b, None, n),
+                    SliceScope::Patches(l) => l.iter().for_each(|p| add(p.body, Some(p.face), n)),
+                }
+            }
+            Rule::Iso { pieces, .. } => pieces.iter().for_each(|p| add(p.body, Some(p.face), 1)),
+            Rule::Cut { points, .. } => {
+                for p in points {
+                    match p {
+                        CutPoint::Face { body, face, .. } => add(*body, Some(*face), 1),
+                        CutPoint::CadEdge { body, .. } | CutPoint::Vertex { body, .. } => {
+                            add(*body, None, 1)
+                        }
+                    }
+                }
+            }
+            Rule::Join { body, .. } => add(*body, None, 1),
+        }
+    }
+    let body_wide = |b: BodyId| per_body.get(&b).copied().unwrap_or(0);
+    for (&(b, f), &n) in &per_face {
+        if n + body_wide(b) > MAX_FACE_LINES {
+            bail!(
+                "face {} of body {} would get {} lines (at most {MAX_FACE_LINES})",
+                f.0,
+                b.0,
+                n + body_wide(b)
+            );
+        }
+    }
+    for (&b, &n) in &per_body {
+        if n > MAX_FACE_LINES {
+            bail!(
+                "body {} would get {n} body-wide lines (at most {MAX_FACE_LINES})",
+                b.0
+            );
         }
     }
     Ok(())
@@ -151,9 +245,20 @@ impl Topo<'_> {
     }
 }
 
-fn finite(x: f64, what: &str) -> Result<()> {
-    if !x.is_finite() {
-        bail!("{what} has a non-finite number");
+/// A normalised (0..1) iso value or seed, with a little slack.
+fn norm(x: f64, what: &str) -> Result<()> {
+    if !(x.is_finite() && (-ISO_SLACK..=1.0 + ISO_SLACK).contains(&x)) {
+        bail!("{what} has an iso value {x} outside the face");
+    }
+    Ok(())
+}
+
+/// A parameter that must lie on (or just past) its range: within one range
+/// width of either end.
+fn near_range(x: f64, (lo, hi): (f64, f64), what: &str) -> Result<()> {
+    let w = (hi - lo).abs().max(1e-9);
+    if !(x.is_finite() && x >= lo.min(hi) - w && x <= lo.max(hi) + w) {
+        bail!("{what} has a parameter {x} outside its range {lo}..{hi}");
     }
     Ok(())
 }
@@ -219,8 +324,8 @@ pub(super) fn check_document<'a>(
         let what = format!("split line {}", s.id.0);
         topo(s.body, &what)?.face(s.face, &what)?;
         let SplitKind::Iso { value, seed, .. } = s.kind;
-        finite(value, &what)?;
-        finite(seed.unwrap_or(0.0), &what)?;
+        norm(value, &what)?;
+        norm(seed.unwrap_or(0.0), &what)?;
     }
     let mut rule_ids = HashSet::new();
     for r in &doc.rules {
@@ -279,22 +384,24 @@ pub(super) fn check_document<'a>(
             Rule::Iso { pieces, .. } => {
                 for p in pieces {
                     topo(p.body, &what)?.face(p.face, &what)?;
-                    finite(p.value, &what)?;
-                    finite(p.seed.unwrap_or(0.0), &what)?;
+                    norm(p.value, &what)?;
+                    norm(p.seed.unwrap_or(0.0), &what)?;
                 }
             }
             Rule::Cut { points, .. } => {
                 for p in points {
                     match p {
                         CutPoint::Face { body, face, uv } => {
-                            topo(*body, &what)?.face(*face, &what)?;
-                            if !uv.is_finite() {
-                                bail!("{what} has a non-finite cut point");
-                            }
+                            let tp = topo(*body, &what)?;
+                            tp.face(*face, &what)?;
+                            let sf = &tp.t.face(*face).surface;
+                            near_range(uv.x, sf.u_range, &what)?;
+                            near_range(uv.y, sf.v_range, &what)?;
                         }
                         CutPoint::CadEdge { body, edge, t } => {
-                            topo(*body, &what)?.edge(*edge, &what)?;
-                            finite(*t, &what)?;
+                            let tp = topo(*body, &what)?;
+                            tp.edge(*edge, &what)?;
+                            near_range(*t, tp.t.edge(*edge).t_range, &what)?;
                         }
                         CutPoint::Vertex { body, key } => topo(*body, &what)?.vkey(key, &what)?,
                     }

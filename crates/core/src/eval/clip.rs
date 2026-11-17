@@ -127,6 +127,9 @@ fn rotate_closed(pts: &[DVec2], s0: f64) -> Vec<DVec2> {
     out
 }
 
+/// Most seam crossings one polyline segment may have (see `domain_pieces`).
+const MAX_SEAM_CROSSINGS: f64 = 64.0;
+
 /// Split a cover polyline into domain pieces at seam lines.
 fn domain_pieces(fg: &FaceGeom, pts: &[DVec2]) -> (Vec<Piece>, Vec<(f64, u8)>) {
     let per = fg.periods();
@@ -145,6 +148,11 @@ fn domain_pieces(fg: &FaceGeom, pts: &[DVec2]) -> (Vec<Piece>, Vec<(f64, u8)>) {
             let o = if dir == 0 { lo.x } else { lo.y };
             let (k0, k1) = (((ca - o) / p), ((cb - o) / p));
             let (kmin, kmax) = (k0.min(k1), k0.max(k1));
+            // Validated input spans a few periods at most; never loop on
+            // coordinates so large that `k + 1.0 == k`.
+            if !(kmin.is_finite() && kmax.is_finite()) || kmax - kmin > MAX_SEAM_CROSSINGS {
+                continue;
+            }
             let mut k = kmin.ceil();
             while k <= kmax + 1e-12 {
                 let c = o + k * p;

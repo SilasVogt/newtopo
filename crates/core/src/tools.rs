@@ -597,7 +597,8 @@ impl Scene {
     /// exceed the evaluator's work limits.
     pub(crate) fn run_op(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
         let (doc, out) = self.run_op_inner(op)?;
-        crate::scene::work_budget(&doc).map_err(|e| Refusal::new(format!("{e:#}")))?;
+        self.check_document(&doc)
+            .map_err(|e| Refusal::new(format!("{e:#}")))?;
         Ok((doc, out))
     }
 

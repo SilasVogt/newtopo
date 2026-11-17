@@ -31,7 +31,6 @@ use std::sync::Arc;
 
 mod check;
 mod ext;
-pub(crate) use check::work_budget;
 pub use check::{MAX_RULE_COUNT, MAX_RULE_CROSSINGS};
 pub use ext::{BendArrow, BendInfo, ReplaceReport};
 

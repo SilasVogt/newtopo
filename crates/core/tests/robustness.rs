@@ -5,8 +5,8 @@ mod common;
 use common::*;
 use glam::{DVec2, DVec3};
 use newtopo_core::doc::{
-    CutPoint, Document, Edit, EditEntry, IsoDir, PatchId, PhaseTarget, Rule, RuleEntry, Spacing,
-    SplitKind, SplitLine,
+    CutPoint, Document, Edit, EditEntry, IsoDir, IsoPiece, PatchId, PhaseTarget, Rule, RuleEntry,
+    Spacing, SplitKind, SplitLine,
 };
 use newtopo_core::keys::{RuleId, SplitId, VertexKey};
 use newtopo_core::ops::PatchSel;
@@ -250,6 +250,50 @@ fn malformed_scene_is_refused() {
         }));
         assert!(msg.contains("lines"), "{u}x{v}: {msg}");
     }
+    // One Iso rule with thousands of pieces on one face: each piece is a line
+    // and lines cross pairwise, so the per-face line budget refuses it.
+    let piece = |dir, value| IsoPiece {
+        body: b,
+        face: FaceId(0),
+        dir,
+        value,
+        seed: None,
+    };
+    let many: Vec<IsoPiece> = (0..3000)
+        .map(|i| {
+            piece(
+                if i % 2 == 0 { IsoDir::U } else { IsoDir::V },
+                (i as f64 + 0.5) / 3000.0,
+            )
+        })
+        .collect();
+    let msg = bad(&with_rule(Rule::Iso {
+        pieces: many,
+        through: false,
+    }));
+    assert!(msg.contains("lines"), "{msg}");
+    // Finite but absurd parameters (would never finish clipping at seams).
+    let msg = bad(&with_rule(Rule::Iso {
+        pieces: vec![piece(IsoDir::U, 1e100)],
+        through: false,
+    }));
+    assert!(msg.contains("outside"), "{msg}");
+    let msg = bad(&with_rule(Rule::Cut {
+        points: vec![
+            CutPoint::Face {
+                body: b,
+                face: FaceId(0),
+                uv: DVec2::new(1e100, 0.5),
+            },
+            CutPoint::Face {
+                body: b,
+                face: FaceId(0),
+                uv: DVec2::new(0.5, 0.5),
+            },
+        ],
+        closed: false,
+    }));
+    assert!(msg.contains("outside"), "{msg}");
     // Settings that size allocations are bounded too.
     let mut d = s.doc().clone();
     d.settings.min_closed_segments = u32::MAX;
