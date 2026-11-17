@@ -34,7 +34,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 
 ## Test inventory
 
-`cargo test --workspace` (with `OCCT_DIR` set): 220 passing, 5 ignored
+`cargo test --workspace` (with `OCCT_DIR` set): 221 passing, 5 ignored
 opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`, and perf timings).
 
 - Engine ACs (§4.6), tool ACs (§6.2–§6.14), API tests (Link 4×4 holes,

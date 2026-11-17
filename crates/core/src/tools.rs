@@ -593,8 +593,15 @@ impl Scene {
         Ok(n + self.check_edits(doc, body, required, &rest)?)
     }
 
-    /// Run one op against the current document.
+    /// Run one op against the current document, refusing results that
+    /// exceed the evaluator's work limits.
     pub(crate) fn run_op(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
+        let (doc, out) = self.run_op_inner(op)?;
+        crate::scene::work_budget(&doc).map_err(|e| Refusal::new(format!("{e:#}")))?;
+        Ok((doc, out))
+    }
+
+    fn run_op_inner(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
         let mut doc = self.doc().clone();
         let mut out = OpOutcome::default();
         match op {

@@ -13,10 +13,69 @@ use anyhow::{Result, bail};
 use newtopo_kernel::{BodyId, BodyTopology, EdgeId, FaceId, VertexId};
 use std::collections::HashSet;
 
-/// Largest line count a loaded rule may ask for. Op handlers clamp far
-/// below this; a larger value can only come from a hand-edited file and
-/// would make evaluation run out of memory.
-pub const MAX_RULE_COUNT: u32 = 100_000;
+/// Largest line count a rule may ask for in one direction (the UI's count
+/// fields stop at 999).
+pub const MAX_RULE_COUNT: u32 = 1000;
+/// Largest number of crossings one two-direction rule may produce
+/// (count A × count B for Connect, U × V for Grid): bounds the arrangement
+/// work and memory for a single patch.
+pub const MAX_RULE_CROSSINGS: u64 = 250_000;
+/// Largest number of rules, split lines, edits or cut points a document may
+/// hold.
+pub const MAX_DOC_ITEMS: usize = 100_000;
+
+/// Work limits shared by `.ntopo` load and every op (scripts included), so a
+/// compact document can't ask the evaluator for billions of crossings.
+pub(crate) fn work_budget(doc: &Document) -> Result<()> {
+    if doc.rules.len() > MAX_DOC_ITEMS
+        || doc.split_lines.len() > MAX_DOC_ITEMS
+        || doc.edits.len() > MAX_DOC_ITEMS
+    {
+        bail!("the scene has more than {MAX_DOC_ITEMS} rules, split lines or edits");
+    }
+    for r in &doc.rules {
+        let what = format!("rule {}", r.id.0);
+        let pair = |a: u32, b: u32| -> Result<()> {
+            count(a, &what)?;
+            count(b, &what)?;
+            if u64::from(a.max(1)) * u64::from(b.max(1)) > MAX_RULE_CROSSINGS {
+                bail!(
+                    "{what} asks for {a} × {b} lines (at most {MAX_RULE_CROSSINGS} crossings per patch)"
+                );
+            }
+            Ok(())
+        };
+        match &r.rule {
+            Rule::Connect {
+                count_a, count_b, ..
+            } => pair(*count_a, *count_b)?,
+            Rule::Grid {
+                count_u, count_v, ..
+            } => pair(*count_u, *count_v)?,
+            Rule::Slice {
+                count: c,
+                frozen_planes,
+                ..
+            } => {
+                count(*c, &what)?;
+                if frozen_planes
+                    .as_ref()
+                    .is_some_and(|p| p.len() > MAX_RULE_COUNT as usize)
+                {
+                    bail!("{what} has more than {MAX_RULE_COUNT} planes");
+                }
+            }
+            Rule::Cut { points, .. } if points.len() > MAX_DOC_ITEMS => {
+                bail!("{what} has more than {MAX_DOC_ITEMS} cut points");
+            }
+            Rule::Iso { pieces, .. } if pieces.len() > MAX_DOC_ITEMS => {
+                bail!("{what} has more than {MAX_DOC_ITEMS} pieces");
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
 
 struct Topo<'a> {
     body: BodyId,
@@ -114,6 +173,7 @@ pub(super) fn check_document<'a>(
     doc: &Document,
     topo_of: impl Fn(BodyId) -> Option<&'a BodyTopology>,
 ) -> Result<()> {
+    work_budget(doc)?;
     if crate::export::unit_metres(&doc.settings.units).is_none() {
         bail!("unknown scene unit `{}`", doc.settings.units);
     }

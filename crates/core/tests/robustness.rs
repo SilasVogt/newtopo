@@ -238,6 +238,18 @@ fn malformed_scene_is_refused() {
         },
     });
     assert!(bad(&d).contains("CAD vertex 999"));
+    // Compact input that would ask the evaluator for billions of crossings
+    // (each count in range, the product not; or both far out of range).
+    for (u, v) in [(100_000, 100_000), (600, 600)] {
+        let msg = bad(&with_rule(Rule::Grid {
+            patch: PatchId::whole(b, FaceId(0)),
+            count_u: u,
+            count_v: v,
+            start_on_seam: false,
+            spacing: Spacing::ArcLength,
+        }));
+        assert!(msg.contains("lines"), "{u}x{v}: {msg}");
+    }
     // Settings that size allocations are bounded too.
     let mut d = s.doc().clone();
     d.settings.min_closed_segments = u32::MAX;
@@ -420,4 +432,26 @@ fn units_are_fixed_once_the_scene_has_bodies() {
     .unwrap();
     assert!(s.apply(Op::SetUnits { units: "m".into() }).is_err());
     s.apply(Op::SetUnits { units: "cm".into() }).unwrap();
+}
+
+/// The same work limits apply to ops (scripts can send any count).
+#[test]
+fn oversized_counts_are_refused_as_ops() {
+    let (mut s, b) = scene_with(MockBody::cylinder(2.0, 5.0));
+    let grid = |u, v| Op::Grid {
+        patches: PatchSel {
+            body: Some(b),
+            faces: vec![0],
+            patches: vec![],
+        },
+        u,
+        v,
+        start_on_seam: false,
+        spacing: Spacing::ArcLength,
+    };
+    let before = s.doc().clone();
+    assert!(s.apply(grid(100_000, 100_000)).is_err());
+    assert!(s.apply(grid(600, 600)).is_err());
+    assert_eq!(*s.doc(), before, "refused ops change nothing");
+    s.apply(grid(8, 4)).unwrap();
 }
