@@ -2485,6 +2485,7 @@ dependencies = [
  "log",
  "newtopo-core",
  "newtopo-kernel",
+ "newtopo-occt-shim",
  "newtopo-render",
  "pollster 1.0.1",
  "rfd",

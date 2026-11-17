@@ -7,11 +7,12 @@ description = "Turn CAD solids into clean, game-ready polygon meshes"
 
 [features]
 default = ["occt"]
-occt = ["newtopo-kernel/occt"]
+occt = ["newtopo-kernel/occt", "dep:newtopo-occt-shim"]
 
 [dependencies]
 newtopo-kernel.workspace = true
 newtopo-core.workspace = true
+newtopo-occt-shim = { workspace = true, optional = true }
 newtopo-render = { workspace = true, features = ["egui"] }
 eframe.workspace = true
 egui.workspace = true

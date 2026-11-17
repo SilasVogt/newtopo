@@ -1,3 +1,5 @@
+// Release builds on Windows are GUI apps without a console window.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! newtopo desktop app (SPEC §5): eframe + wgpu, docked panels.
 //!
 //! Flags:
