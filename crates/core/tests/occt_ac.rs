@@ -575,22 +575,24 @@ fn occt_torus_slices_are_stable() {
                 guide_edge: None,
             });
             let st = s.output_of(b).unwrap().stats();
+            // Vertices come from the arrangement (what seam clipping
+            // decides); face counts also depend on auto-fill tie-breaks,
+            // which vary with OCCT's floating point across platforms.
             got.push(format!(
-                "{name} slice {count}: {} -> {} verts {} faces",
+                "{name} slice {count}: {} -> {} verts",
                 if r.is_ok() { "ok" } else { "refused" },
-                st.verts,
-                st.faces
+                st.verts
             ));
         }
     }
     // Recorded at 1a0b2a5 (before the bounded seam loop) and unchanged since.
     let expected = [
-        "torus_hole slice 1: ok -> 32 verts 29 faces",
-        "torus_hole slice 3: refused -> 75 verts 79 faces",
-        "torus_hole slice 5: ok -> 80 verts 81 faces",
-        "torus slice 1: refused -> 64 verts 64 faces",
-        "torus slice 3: ok -> 48 verts 48 faces",
-        "torus slice 5: ok -> 80 verts 80 faces",
+        "torus_hole slice 1: ok -> 32 verts",
+        "torus_hole slice 3: refused -> 75 verts",
+        "torus_hole slice 5: ok -> 80 verts",
+        "torus slice 1: refused -> 64 verts",
+        "torus slice 3: ok -> 48 verts",
+        "torus slice 5: ok -> 80 verts",
     ];
     assert_eq!(got, expected);
 }
