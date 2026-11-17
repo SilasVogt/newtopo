@@ -134,8 +134,7 @@ scripts/build-occt.sh "$HOME/.cache/newtopo-occt/install"         # Linux, macOS
 scripts\build-occt.ps1 -Prefix "$env:LOCALAPPDATA\newtopo-occt"    # Windows
 ```
 
-If `scripts/` doesn't have these yet, use the identical CI copies in
-`.github/scripts/`. The build takes 20 to 60 minutes.
+CI uses the same scripts. The build takes 20 to 60 minutes.
 
 **2. Point the build at it and build:**
 
