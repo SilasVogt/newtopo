@@ -32,6 +32,7 @@ use std::sync::Arc;
 mod check;
 mod ext;
 pub use check::{MAX_RULE_COUNT, MAX_RULE_CROSSINGS};
+pub(crate) use check::{near_range, norm};
 pub use ext::{BendArrow, BendInfo, ReplaceReport};
 
 /// Undo depth (SPEC §4.7).

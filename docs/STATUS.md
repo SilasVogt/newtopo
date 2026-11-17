@@ -24,7 +24,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 - **Connect** doesn't yet flag patches whose direction disagrees with their selected neighbours (the warning tint).
 - **Picking** is CPU ray casting, not the GPU id buffer of §5.2.
 - **Quick UV unwrap (§9.2)** and xatlas binding: not started. Exports carry no UVs.
-- **Density limits:** to keep hostile or hand-edited scenes from hanging the app, a rule may ask for at most 1000 lines per direction and 300 x 300 crossings, a face at most 600 generated lines across all rules, and a scene at most 200,000 lines. The worst allowed case (a 300 x 300 grid on one face) evaluates in about 5 s with 1.6 GB peak memory: the evaluator is memory-hungry at high density, and per-face caching does not help a single huge face.
+- **Density limits and untrusted scenes:** a rule may ask for at most 1000 lines per direction and 300 x 300 crossings, a face at most 600 generated lines across all rules, and a scene at most 200,000 lines. These bound the work per face (worst single face: a 300 x 300 grid, about 5 s and 1.6 GB peak), not per document: a crafted `.ntopo` with many bodies at the limit can still freeze the app for minutes or exhaust memory, and the B-rep inside a `.ntopo` is loaded by OCCT in-process. **Don't open `.ntopo` files from untrusted sources.** The real fix is evaluating off the UI thread with cancel (follow-up).
 - **In-process CAD loading:** STEP/IGES files are read in the crash-isolated import helper, but the healed B-rep inside a `.ntopo` is loaded by OCCT inside the app process (SPEC §14 allows this). Scene JSON is size-limited and every reference is validated before use.
 - **Fuzzing** of the STEP/IGES path (§11) is covered by malformed-file tests, not a fuzzer.
 - **Perf regressions in CI** (criterion, §11): benches exist, the 20% regression gate doesn't.
@@ -35,7 +35,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 
 ## Test inventory
 
-`cargo test --workspace` (with `OCCT_DIR` set): 221 passing, 5 ignored
+`cargo test --workspace` (with `OCCT_DIR` set): 225 passing, 5 ignored
 opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`, and perf timings).
 
 - Engine ACs (§4.6), tool ACs (§6.2–§6.14), API tests (Link 4×4 holes,

@@ -153,8 +153,12 @@ fn domain_pieces(fg: &FaceGeom, pts: &[DVec2]) -> (Vec<Piece>, Vec<(f64, u8)>) {
             if !(kmin.is_finite() && kmax.is_finite()) || kmax - kmin > MAX_SEAM_CROSSINGS {
                 continue;
             }
-            let mut k = kmin.ceil();
-            while k <= kmax + 1e-12 {
+            // Iterate a bounded integer count: at huge magnitudes `k + 1.0`
+            // can equal `k`, so float stepping alone may never finish.
+            let k0 = kmin.ceil();
+            let steps = ((kmax + 1e-12).floor() - k0).max(-1.0) as i64;
+            for j in 0..=steps {
+                let k = k0 + j as f64;
                 let c = o + k * p;
                 if (cb - ca).abs() > tiny {
                     let f = ((c - ca) / (cb - ca)).clamp(0.0, 1.0);
@@ -162,7 +166,6 @@ fn domain_pieces(fg: &FaceGeom, pts: &[DVec2]) -> (Vec<Piece>, Vec<(f64, u8)>) {
                 } else if (ca - c).abs() <= tiny {
                     // Segment lies on the seam; no crossing.
                 }
-                k += 1.0;
             }
         }
     }

@@ -557,3 +557,40 @@ fn occt_plate_link_remove_edge() {
         assert_eq!(line_edges_on(&m, *w).len(), 7, "wall {w}");
     }
 }
+
+/// Body-wide Slices on the periodic OCCT models: pins the seam-clipping
+/// output (a loop-variable bug once changed these silently while every
+/// result still validated).
+#[test]
+fn occt_torus_slices_are_stable() {
+    let mut got = Vec::new();
+    for name in ["torus_hole", "torus"] {
+        for count in [1u32, 3, 5] {
+            let (mut s, b) = occt_scene(name);
+            let r = s.apply(Op::Slice {
+                body: Some(b),
+                patches: None,
+                count,
+                through: false,
+                guide_edge: None,
+            });
+            let st = s.output_of(b).unwrap().stats();
+            got.push(format!(
+                "{name} slice {count}: {} -> {} verts {} faces",
+                if r.is_ok() { "ok" } else { "refused" },
+                st.verts,
+                st.faces
+            ));
+        }
+    }
+    // Recorded at 1a0b2a5 (before the bounded seam loop) and unchanged since.
+    let expected = [
+        "torus_hole slice 1: ok -> 32 verts 29 faces",
+        "torus_hole slice 3: refused -> 75 verts 79 faces",
+        "torus_hole slice 5: ok -> 80 verts 81 faces",
+        "torus slice 1: refused -> 64 verts 64 faces",
+        "torus slice 3: ok -> 48 verts 48 faces",
+        "torus slice 5: ok -> 80 verts 80 faces",
+    ];
+    assert_eq!(got, expected);
+}

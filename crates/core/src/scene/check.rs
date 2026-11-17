@@ -36,7 +36,7 @@ const ISO_SLACK: f64 = 1.0;
 
 /// Work limits shared by `.ntopo` load and every op (scripts included), so a
 /// compact document can't ask the evaluator for billions of crossings.
-fn work_budget(doc: &Document) -> Result<()> {
+fn work_budget(doc: &Document, faces_of: impl Fn(BodyId) -> u64) -> Result<()> {
     if doc.rules.len() > MAX_DOC_ITEMS
         || doc.split_lines.len() > MAX_DOC_ITEMS
         || doc.edits.len() > MAX_DOC_ITEMS
@@ -91,6 +91,9 @@ fn work_budget(doc: &Document) -> Result<()> {
     // thousands of pieces on one face).
     let mut per_face: HashMap<(BodyId, FaceId), u64> = HashMap::new();
     let mut per_body: HashMap<BodyId, u64> = HashMap::new();
+    // Body-scope Slice planes are evaluated on every face of the body; other
+    // body-wide items (snapped cut points, Joins) touch only a few faces.
+    let mut body_slices: HashMap<BodyId, u64> = HashMap::new();
     let mut add = |b: BodyId, f: Option<FaceId>, n: u64| match f {
         Some(f) => *per_face.entry((b, f)).or_default() += n,
         None => *per_body.entry(b).or_default() += n,
@@ -136,7 +139,10 @@ fn work_budget(doc: &Document) -> Result<()> {
                     .as_ref()
                     .map_or(u64::from(*c), |p| p.len() as u64);
                 match scope {
-                    SliceScope::Body(b) => add(*b, None, n),
+                    SliceScope::Body(b) => {
+                        add(*b, None, n);
+                        *body_slices.entry(*b).or_default() += n;
+                    }
                     SliceScope::Patches(l) => l.iter().for_each(|p| add(p.body, Some(p.face), n)),
                 }
             }
@@ -154,7 +160,14 @@ fn work_budget(doc: &Document) -> Result<()> {
             Rule::Join { body, .. } => add(*body, None, 1),
         }
     }
-    let total: u64 = per_face.values().sum::<u64>() + per_body.values().sum::<u64>();
+    // Body-scope Slice planes are evaluated on every face of the body, so
+    // they count once per face; other body-wide items count once.
+    let total: u64 = per_face.values().sum::<u64>()
+        + per_body.values().sum::<u64>()
+        + body_slices
+            .iter()
+            .map(|(b, n)| n.saturating_mul(faces_of(*b).saturating_sub(1)))
+            .sum::<u64>();
     if total > MAX_DOC_LINES {
         bail!("the scene asks for {total} lines in total (at most {MAX_DOC_LINES})");
     }
@@ -315,7 +328,7 @@ impl Topo<'_> {
 }
 
 /// A normalised (0..1) iso value or seed, with a little slack.
-fn norm(x: f64, what: &str) -> Result<()> {
+pub(crate) fn norm(x: f64, what: &str) -> Result<()> {
     if !(x.is_finite() && (-ISO_SLACK..=1.0 + ISO_SLACK).contains(&x)) {
         bail!("{what} has an iso value {x} outside the face");
     }
@@ -324,7 +337,7 @@ fn norm(x: f64, what: &str) -> Result<()> {
 
 /// A parameter that must lie on (or just past) its range: within one range
 /// width of either end.
-fn near_range(x: f64, (lo, hi): (f64, f64), what: &str) -> Result<()> {
+pub(crate) fn near_range(x: f64, (lo, hi): (f64, f64), what: &str) -> Result<()> {
     let w = (hi - lo).abs().max(1e-9);
     if !(x.is_finite() && x >= lo.min(hi) - w && x <= lo.max(hi) + w) {
         bail!("{what} has a parameter {x} outside its range {lo}..{hi}");
@@ -347,7 +360,7 @@ pub(super) fn check_document<'a>(
     doc: &Document,
     topo_of: impl Fn(BodyId) -> Option<&'a BodyTopology>,
 ) -> Result<()> {
-    work_budget(doc)?;
+    work_budget(doc, |b| topo_of(b).map_or(0, |t| t.faces.len() as u64))?;
     if crate::export::unit_metres(&doc.settings.units).is_none() {
         bail!("unknown scene unit `{}`", doc.settings.units);
     }

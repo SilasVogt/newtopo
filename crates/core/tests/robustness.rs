@@ -539,3 +539,139 @@ fn oversized_counts_are_refused_as_ops() {
     assert_eq!(*s.doc(), before, "refused ops change nothing");
     s.apply(grid(8, 4)).unwrap();
 }
+
+fn split_face(s: &mut Scene, b: BodyId, face: u32, value: f64) {
+    s.apply(Op::Iso {
+        body: Some(b),
+        face,
+        dir: IsoDir::U,
+        value,
+        seed: None,
+        split: true,
+        through: false,
+    })
+    .unwrap();
+}
+
+fn patches_of(s: &mut Scene, b: BodyId, face: u32) -> Vec<PatchId> {
+    s.patches(b)
+        .into_iter()
+        .filter(|p| p.face == FaceId(face))
+        .map(|p| p.id)
+        .collect()
+}
+
+/// Splitting a flipped Connect patch keeps a valid document: the flip
+/// passes to the pieces (council round 4).
+#[test]
+fn split_keeps_connect_flip() {
+    let (mut s, b) = scene_with(MockBody::cylinder(2.0, 5.0));
+    s.apply(Op::Connect {
+        patches: PatchSel {
+            body: Some(b),
+            faces: vec![0],
+            patches: vec![],
+        },
+        a: 6,
+        b: 0,
+        start_on_seam: false,
+    })
+    .unwrap();
+    let p = patches_of(&mut s, b, 0)[0];
+    s.apply(Op::FlipConnect { patch: p }).unwrap();
+    split_face(&mut s, b, 0, 0.5);
+    for r in &s.doc().rules {
+        if let Rule::Connect {
+            patches, flipped, ..
+        } = &r.rule
+        {
+            assert!(
+                flipped.iter().all(|f| patches.contains(f)),
+                "flips stay owned"
+            );
+            assert!(!flipped.is_empty(), "the flip is kept on the pieces");
+        }
+    }
+    assert_valid(&mut s, b, "split flipped connect");
+}
+
+/// Removing a split between two separate Slice rules leaves one owner of
+/// the merged patch (council round 4).
+#[test]
+fn remove_split_between_slices() {
+    let (mut s, b) = scene_with(MockBody::make_box(DVec3::new(10.0, 6.0, 2.0)));
+    split_face(&mut s, b, 0, 0.5);
+    let ps = patches_of(&mut s, b, 0);
+    assert_eq!(ps.len(), 2);
+    for (p, n) in ps.iter().zip([2, 3]) {
+        s.apply(Op::Slice {
+            body: None,
+            patches: Some(PatchSel {
+                body: Some(b),
+                faces: vec![],
+                patches: vec![*p],
+            }),
+            count: n,
+            through: false,
+            guide_edge: None,
+        })
+        .unwrap();
+    }
+    let m = s.output_of(b).unwrap().clone();
+    let split = m
+        .edges
+        .iter()
+        .find(|e| matches!(e.kind, newtopo_core::mesh::OutEdgeKind::Split(_)))
+        .and_then(|e| e.key.clone())
+        .unwrap();
+    s.apply(Op::RemoveEdge {
+        body: Some(b),
+        edge: split,
+    })
+    .unwrap();
+    assert_valid(&mut s, b, "merged slices");
+}
+
+/// Scripted ops with absurd parameters are refused before evaluation, and a
+/// body-wide Slice is charged once per face it reaches.
+#[test]
+fn absurd_op_parameters_and_body_slices_are_refused() {
+    let (mut s, b) = scene_with(MockBody::cylinder(2.0, 5.0));
+    let cut = Op::Cut {
+        points: vec![
+            CutPoint::Face {
+                body: b,
+                face: FaceId(0),
+                uv: DVec2::new(1e100, 1.0),
+            },
+            CutPoint::Face {
+                body: b,
+                face: FaceId(0),
+                uv: DVec2::new(1e100, 3.0),
+            },
+        ],
+        closed: false,
+    };
+    assert!(s.apply(cut).unwrap_err().reason.contains("outside"));
+    let iso = Op::Iso {
+        body: Some(b),
+        face: 0,
+        dir: IsoDir::U,
+        value: 1e100,
+        seed: None,
+        split: false,
+        through: false,
+    };
+    assert!(s.apply(iso).unwrap_err().reason.contains("outside"));
+
+    // 20 x 20 holes: 406 faces, so 600 body-wide planes are ~240k lines.
+    let (mut s, b) = scene_with(MockBody::plate_with_holes(20, 20));
+    let slice = Op::Slice {
+        body: Some(b),
+        patches: None,
+        count: 600,
+        through: false,
+        guide_edge: None,
+    };
+    assert!(s.apply(slice).unwrap_err().reason.contains("lines"));
+}

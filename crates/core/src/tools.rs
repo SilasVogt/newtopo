@@ -596,10 +596,59 @@ impl Scene {
     /// Run one op against the current document, refusing results that
     /// exceed the evaluator's work limits.
     pub(crate) fn run_op(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
+        // Parameters some ops evaluate before the document check runs.
+        self.precheck_op(op)
+            .map_err(|e| Refusal::new(format!("{e:#}")))?;
         let (doc, out) = self.run_op_inner(op)?;
         self.check_document(&doc)
             .map_err(|e| Refusal::new(format!("{e:#}")))?;
         Ok((doc, out))
+    }
+
+    /// Range checks for op inputs that are evaluated while the op runs (cut
+    /// points, iso values), so absurd scripted values are refused up front.
+    fn precheck_op(&self, op: &Op) -> anyhow::Result<()> {
+        use crate::scene::{near_range, norm};
+        match op {
+            Op::Cut { points, .. } => {
+                if points.len() > 100_000 {
+                    anyhow::bail!("a cut may have at most 100000 points");
+                }
+                for p in points {
+                    match p {
+                        CutPoint::Face { body, face, uv } => {
+                            let t = &self
+                                .ctx_of(*body)
+                                .map_err(|r| anyhow::anyhow!(r.reason))?
+                                .topo;
+                            let f = t
+                                .faces
+                                .get(face.idx())
+                                .ok_or_else(|| anyhow::anyhow!("there is no face {}", face.0))?;
+                            near_range(uv.x, f.surface.u_range, "the cut point")?;
+                            near_range(uv.y, f.surface.v_range, "the cut point")?;
+                        }
+                        CutPoint::CadEdge { body, edge, t } => {
+                            let tp = &self
+                                .ctx_of(*body)
+                                .map_err(|r| anyhow::anyhow!(r.reason))?
+                                .topo;
+                            let e = tp.edges.get(edge.idx()).ok_or_else(|| {
+                                anyhow::anyhow!("there is no CAD edge {}", edge.0)
+                            })?;
+                            near_range(*t, e.t_range, "the cut point")?;
+                        }
+                        CutPoint::Vertex { .. } => {}
+                    }
+                }
+            }
+            Op::Iso { value, seed, .. } => {
+                norm(*value, "the iso line")?;
+                norm(seed.unwrap_or(0.0), "the iso line")?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn run_op_inner(&mut self, op: &Op) -> R<(Document, OpOutcome)> {
@@ -1445,16 +1494,23 @@ impl Scene {
                             let b_par = bend == Bend::Two && !a_par;
                             let mut rest = patches.clone();
                             rest.retain(|p| *p != o.id);
+                            // The split patch's flip passes to its pieces.
+                            let mut rest_flipped: Vec<PatchId> =
+                                flipped.iter().copied().filter(|p| *p != o.id).collect();
                             if !a_par && !b_par {
                                 // Counts are copied: pieces join the same rule.
                                 rest.extend(piece_ids.iter().copied());
                                 rest.sort();
+                                if flip {
+                                    rest_flipped.extend(piece_ids.iter().copied());
+                                    rest_flipped.sort();
+                                }
                                 doc.rules[i].rule = Rule::Connect {
                                     patches: rest,
                                     count_a,
                                     count_b,
                                     start_on_seam,
-                                    flipped: flipped.clone(),
+                                    flipped: rest_flipped,
                                 };
                             } else {
                                 let da = if a_par {
@@ -1475,7 +1531,7 @@ impl Scene {
                                         count_a,
                                         count_b,
                                         start_on_seam,
-                                        flipped: flipped.clone(),
+                                        flipped: rest_flipped,
                                     };
                                 }
                                 for (k, pid) in piece_ids.iter().enumerate() {
@@ -1486,7 +1542,7 @@ impl Scene {
                                             count_a: da[k],
                                             count_b: db[k],
                                             start_on_seam,
-                                            flipped: vec![],
+                                            flipped: if flip { vec![*pid] } else { vec![] },
                                         },
                                     );
                                 }
@@ -1692,8 +1748,12 @@ impl Scene {
                         msgs.push(format!("Connect merged to A = {ca}, B = {cb}"));
                     }
                     Some(Rule::Slice { .. }) => {
-                        // Slices are geometry: replace pieces by the merged patch.
+                        // Slices are geometry: the largest piece's Slice owns the
+                        // merged patch; other Slices just lose their pieces
+                        // (a patch has one spread rule, SPEC §4.3).
+                        let owner = lrule.map(|i| doc.rules[i].id);
                         for r in &mut doc.rules {
+                            let is_owner = Some(r.id) == owner;
                             if let Rule::Slice {
                                 scope: SliceScope::Patches(list),
                                 ..
@@ -1701,10 +1761,15 @@ impl Scene {
                                 && list.iter().any(|p| piece_ids.contains(p))
                             {
                                 list.retain(|p| !piece_ids.contains(p));
-                                list.push(m.id);
-                                list.sort();
+                                if is_owner {
+                                    list.push(m.id);
+                                    list.sort();
+                                }
                             }
                         }
+                        doc.rules.retain(|r| {
+                            !matches!(&r.rule, Rule::Slice { scope: SliceScope::Patches(l), .. } if l.is_empty())
+                        });
                     }
                     _ => {
                         // No rule on the largest piece: drop the pieces' rules.
