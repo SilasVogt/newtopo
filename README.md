@@ -15,7 +15,7 @@ and the mesh regenerates.
 [`SPEC.md`](SPEC.md). What's done and what's still open is tracked in
 [`docs/STATUS.md`](docs/STATUS.md).
 
-![newtopo with Connect lines on a part](docs/screenshots/02-connect-tool.png)
+![newtopo: Connect with Link on a plate with 16 holes](docs/screenshots/14-plate-link-tint.png)
 
 ## Install
 
