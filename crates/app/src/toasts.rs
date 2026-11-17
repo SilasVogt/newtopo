@@ -6,7 +6,7 @@ use crate::theme::Palette;
 use egui::{Align2, RichText, Stroke, vec2};
 
 const LIFETIME: f64 = 4.5;
-const MAX_SHOWN: usize = 4;
+const MAX_SHOWN: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastKind {
@@ -43,7 +43,10 @@ impl Toasts {
         );
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, pal: &Palette, now: f64) {
+    /// Toasts stack in the bottom-right corner of the viewport (`area`),
+    /// clear of the tool status pill at its bottom centre and of the
+    /// side panels; with no viewport they use the window corner.
+    pub fn show(&mut self, ctx: &egui::Context, pal: &Palette, now: f64, area: egui::Rect) {
         self.items.retain(|t| {
             now - t.born < LIFETIME + if t.kind == ToastKind::Error { 3.0 } else { 0.0 }
         });
@@ -52,53 +55,85 @@ impl Toasts {
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
         let screen = ctx.content_rect();
+        let area = if area.is_positive() && screen.contains_rect(area) {
+            area
+        } else {
+            screen.shrink2(vec2(0.0, 24.0))
+        };
+        let corner = area.right_bottom() - vec2(14.0, 14.0);
         let start = self.items.len().saturating_sub(MAX_SHOWN);
         egui::Area::new(egui::Id::new("toasts"))
             .order(egui::Order::Tooltip)
-            .anchor(Align2::CENTER_BOTTOM, vec2(0.0, -40.0))
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(corner)
             .interactable(false)
             .show(ctx, |ui| {
-                ui.set_max_width((screen.width() - 80.0).min(560.0));
-                for t in &self.items[start..] {
-                    let age = now - t.born;
-                    let fade = (1.0 - ((age - LIFETIME + 0.6) / 0.6).clamp(0.0, 1.0)) as f32;
-                    let (icon, col) = match t.kind {
-                        ToastKind::Info => (Icon::Info, pal.accent),
-                        ToastKind::Warn => (Icon::Warning, pal.warn),
-                        ToastKind::Error => (Icon::Warning, pal.error),
-                    };
-                    egui::Frame::new()
-                        .fill(pal.panel_raised.gamma_multiply(fade.max(0.05)))
-                        .stroke(Stroke::new(1.0, pal.border.gamma_multiply(fade)))
-                        .corner_radius(10)
-                        .inner_margin(egui::Margin {
-                            left: 12,
-                            right: 14,
-                            top: 8,
-                            bottom: 8,
-                        })
-                        .shadow(egui::Shadow {
-                            offset: [0, 4],
-                            blur: 14,
-                            spread: 0,
-                            color: egui::Color32::from_black_alpha((70.0 * fade) as u8),
-                        })
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let (r, _) =
-                                    ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-                                icons::paint(ui.painter(), r, icon, col.gamma_multiply(fade));
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&t.text)
-                                            .color(pal.text_strong.gamma_multiply(fade)),
+                ui.set_max_width((area.width() * 0.45).clamp(220.0, 420.0));
+                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                    for t in &self.items[start..] {
+                        let age = now - t.born;
+                        let fade = (1.0 - ((age - LIFETIME + 0.6) / 0.6).clamp(0.0, 1.0)) as f32;
+                        let (icon, col) = match t.kind {
+                            ToastKind::Info => (Icon::Info, pal.accent),
+                            ToastKind::Warn => (Icon::Warning, pal.warn),
+                            ToastKind::Error => (Icon::Warning, pal.error),
+                        };
+                        egui::Frame::new()
+                            .fill(pal.panel_raised.gamma_multiply(fade.max(0.05)))
+                            .stroke(Stroke::new(1.0, pal.border.gamma_multiply(fade)))
+                            .corner_radius(10)
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 14,
+                                top: 8,
+                                bottom: 8,
+                            })
+                            .shadow(egui::Shadow {
+                                offset: [0, 4],
+                                blur: 14,
+                                spread: 0,
+                                color: egui::Color32::from_black_alpha((70.0 * fade) as u8),
+                            })
+                            .show(ui, |ui| {
+                                // Size each toast to its text, up to the area width.
+                                let text_w = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        t.text.clone(),
+                                        egui::TextStyle::Body.resolve(ui.style()),
+                                        pal.text_strong,
                                     )
-                                    .wrap(),
+                                    .size()
+                                    .x;
+                                let w = (16.0 + ui.spacing().item_spacing.x + text_w + 2.0)
+                                    .min(ui.available_width());
+                                ui.allocate_ui_with_layout(
+                                    vec2(w, 0.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let (r, _) = ui.allocate_exact_size(
+                                            vec2(16.0, 16.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        icons::paint(
+                                            ui.painter(),
+                                            r,
+                                            icon,
+                                            col.gamma_multiply(fade),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&t.text)
+                                                    .color(pal.text_strong.gamma_multiply(fade)),
+                                            )
+                                            .wrap(),
+                                        );
+                                    },
                                 );
                             });
-                        });
-                    ui.add_space(6.0);
-                }
+                        ui.add_space(6.0);
+                    }
+                });
             });
     }
 }

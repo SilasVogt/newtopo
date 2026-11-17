@@ -13,6 +13,7 @@ mod docstate;
 mod icons;
 mod jobs;
 mod keymap;
+mod kit;
 mod launch;
 mod palette;
 mod panels;

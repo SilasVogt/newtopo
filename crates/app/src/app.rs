@@ -351,7 +351,7 @@ impl App {
 
         let st = &mut self.st;
         st.overlays(&ctx);
-        st.toasts.show(&ctx, &st.pal, st.time);
+        st.toasts.show(&ctx, &st.pal, st.time, st.view.rect);
 
         // Dock actions queued during the frame.
         let actions = std::mem::take(&mut st.ui.dock_actions);
@@ -1265,6 +1265,16 @@ impl AppState {
             self.ui.radial.close();
         } else if self.ui.confirm.is_some() {
             self.ui.confirm = None;
+        } else if self.ui.unsaved_prompt.is_some() {
+            self.ui.unsaved_prompt = None;
+        } else if self.ui.export.is_some() {
+            self.ui.export = None;
+        } else if self.ui.import_list.is_some() {
+            self.ui.import_list = None;
+        } else if self.ui.import_report.is_some() {
+            self.ui.import_report = None;
+        } else if self.ui.about_open {
+            self.ui.about_open = false;
         } else if self.ui.prefs_open {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {

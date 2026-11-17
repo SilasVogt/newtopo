@@ -1,4 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0284c7"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">N</text>
+  <!-- newtopo mark: a quad split by a straight line and a curved line (the
+       same drawing as paint_logo in crates/app/src/app.rs). -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="#3ec7a5"/>
+  <g fill="none" stroke="#0a1612" stroke-width="5" stroke-linecap="round">
+    <path d="M21.5 13V51"/>
+    <path d="M43 13Q34 32 43 51"/>
+    <path d="M12 32H52"/>
+  </g>
 </svg>

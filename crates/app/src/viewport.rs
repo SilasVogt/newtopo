@@ -1032,9 +1032,23 @@ impl AppState {
                 }
             }
             Mode::Edge => {
+                // A contrasting halo under the selection keeps it readable
+                // over CAD edges and generated lines in both themes.
+                let bg = c.background_top;
+                let light = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2] > 0.5;
+                let halo = if light {
+                    [1.0, 1.0, 1.0, 0.95]
+                } else {
+                    [0.0, 0.0, 0.0, 0.55]
+                };
                 for e in &self.sel.edges {
                     if let Some(i) = self.vd.edge_index(e) {
-                        o.add_polyline(&self.vd.edges[i].path, c.selection, 3.2);
+                        o.add_polyline(&self.vd.edges[i].path, halo, 6.5);
+                    }
+                }
+                for e in &self.sel.edges {
+                    if let Some(i) = self.vd.edge_index(e) {
+                        o.add_polyline(&self.vd.edges[i].path, c.selection, 4.0);
                     }
                 }
             }
@@ -1438,7 +1452,7 @@ impl AppState {
         let pal = self.pal;
         let card = Rect::from_center_size(
             rect.center(),
-            vec2(380.0_f32.min(rect.width() - 32.0), 250.0),
+            vec2(440.0_f32.min(rect.width() - 32.0), 250.0),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()

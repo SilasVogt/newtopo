@@ -5,6 +5,7 @@ use crate::app::AppState;
 use crate::commands::Cmd;
 use crate::docstate::guard;
 use crate::icons::{self, Icon};
+use crate::kit;
 use crate::prefs::StatsShow;
 use crate::selection::{Combine, Mode, combine};
 use crate::strings as S;
@@ -753,10 +754,18 @@ impl AppState {
             .show(ui, |ui| {
                 ui.label("");
                 if show != StatsShow::Selection {
-                    ui.label(RichText::new(S::STAT_TOTAL).small().color(pal.text_dim));
+                    kit::right_cell(
+                        ui,
+                        64.0,
+                        RichText::new(S::STAT_TOTAL).small().color(pal.text_dim),
+                    );
                 }
                 if show != StatsShow::Totals {
-                    ui.label(RichText::new(S::STAT_SELECTED).small().color(pal.text_dim));
+                    kit::right_cell(
+                        ui,
+                        64.0,
+                        RichText::new(S::STAT_SELECTED).small().color(pal.text_dim),
+                    );
                 }
                 ui.end_row();
                 for (label, t, s, on) in rows {
@@ -765,14 +774,18 @@ impl AppState {
                     }
                     ui.label(RichText::new(label).color(pal.text));
                     if show != StatsShow::Selection {
-                        ui.label(
+                        kit::right_cell(
+                            ui,
+                            64.0,
                             RichText::new(fmt_count(t))
-                                .color(pal.text_strong)
+                                .color(if t > 0 { pal.text_strong } else { pal.text_dim })
                                 .monospace(),
                         );
                     }
                     if show != StatsShow::Totals {
-                        ui.label(
+                        kit::right_cell(
+                            ui,
+                            64.0,
                             RichText::new(fmt_count(s))
                                 .color(if s > 0 { pal.accent } else { pal.text_dim })
                                 .monospace(),
@@ -782,7 +795,9 @@ impl AppState {
                 }
                 if p.dormant {
                     ui.label(RichText::new(S::STAT_DORMANT).color(pal.text));
-                    ui.label(
+                    kit::right_cell(
+                        ui,
+                        64.0,
                         RichText::new(fmt_count(dormant))
                             .color(if dormant > 0 { pal.warn } else { pal.text_dim })
                             .monospace(),
@@ -972,24 +987,50 @@ impl AppState {
         ui.add_space(4.0);
         match self.tool.active {
             Tool::Select => {
-                ui.label(RichText::new(S::EMPTY_TOOL).color(pal.text_dim));
+                ui.label(
+                    RichText::new(S::EMPTY_TOOL_TITLE)
+                        .small()
+                        .color(pal.text_dim),
+                );
+                ui.add_space(4.0);
+                for (t, icon, cmd, help) in [
+                    (
+                        Tool::Connect,
+                        Icon::Connect,
+                        Cmd::Connect,
+                        S::TOOL_HELP_CONNECT,
+                    ),
+                    (Tool::Grid, Icon::Grid, Cmd::Grid, S::TOOL_HELP_GRID),
+                    (Tool::Slice, Icon::Slice, Cmd::Slice, S::TOOL_HELP_SLICE),
+                    (Tool::Iso, Icon::Iso, Cmd::Iso, S::TOOL_HELP_ISO),
+                    (Tool::Cut, Icon::Cut, Cmd::Cut, S::TOOL_HELP_CUT),
+                    (Tool::Weld, Icon::Weld, Cmd::Weld, S::TOOL_HELP_WELD),
+                ] {
+                    if tool_row(ui, &pal, icon, cmd.label(), help, &self.keymap.label(cmd))
+                        .clicked()
+                    {
+                        self.activate_tool(t);
+                    }
+                }
             }
             Tool::Connect | Tool::Grid | Tool::Slice => self.segment_panel(ui),
             Tool::Iso => {
                 ui.horizontal(|ui| {
                     ui.label(S::ISO_DIR);
                     let mut d = self.tool.iso_dir;
-                    ui.selectable_value(&mut d, IsoDirSel::U, "U");
-                    ui.selectable_value(&mut d, IsoDirSel::V, "V");
+                    kit::segmented(ui, &pal, |ui| {
+                        ui.selectable_value(&mut d, IsoDirSel::U, "U");
+                        ui.selectable_value(&mut d, IsoDirSel::V, "V");
+                    });
                     if d != self.tool.iso_dir {
                         self.tool.iso_dir = d;
                         self.on_hover_changed();
                     }
                     ui.label(RichText::new("Tab").small().color(pal.text_dim));
                 });
-                ui.checkbox(&mut self.tool.iso_split, S::ISO_SPLIT);
-                ui.checkbox(&mut self.tool.iso_through, S::SEG_THROUGH);
-                ui.checkbox(&mut self.tool.snap, S::ISO_SNAP);
+                crate::kit::checkbox(ui, &mut self.tool.iso_split, S::ISO_SPLIT);
+                crate::kit::checkbox(ui, &mut self.tool.iso_through, S::SEG_THROUGH);
+                crate::kit::checkbox(ui, &mut self.tool.snap, S::ISO_SNAP);
                 if self.tool.iso_split {
                     ui.label(
                         RichText::new(
@@ -1019,7 +1060,7 @@ impl AppState {
                         self.tool.cut.pop();
                     }
                 });
-                ui.checkbox(&mut self.tool.snap, S::ISO_SNAP);
+                crate::kit::checkbox(ui, &mut self.tool.snap, S::ISO_SNAP);
             }
             Tool::Weld => {
                 let from = self.tool.weld_from.is_some();
@@ -1081,25 +1122,31 @@ impl AppState {
             Tool::Connect => {
                 count_row(ui, S::SEG_A, &mut self.tool.seg.a, ca);
                 count_row(ui, S::SEG_B, &mut self.tool.seg.b, cb);
-                ui.checkbox(&mut self.tool.seg.start_on_seam, S::SEG_START_ON_SEAM);
+                crate::kit::checkbox(ui, &mut self.tool.seg.start_on_seam, S::SEG_START_ON_SEAM);
             }
             Tool::Grid => {
                 count_row(ui, S::SEG_U, &mut self.tool.seg.u, ca);
                 count_row(ui, S::SEG_V, &mut self.tool.seg.v, cb);
                 ui.horizontal(|ui| {
                     ui.label(S::SEG_SPACING);
-                    ui.selectable_value(&mut self.tool.seg.spacing, Spacing::ArcLength, S::SEG_ARC);
-                    ui.selectable_value(
-                        &mut self.tool.seg.spacing,
-                        Spacing::Parametric,
-                        S::SEG_PARAM,
-                    );
+                    kit::segmented(ui, &pal, |ui| {
+                        ui.selectable_value(
+                            &mut self.tool.seg.spacing,
+                            Spacing::ArcLength,
+                            S::SEG_ARC,
+                        );
+                        ui.selectable_value(
+                            &mut self.tool.seg.spacing,
+                            Spacing::Parametric,
+                            S::SEG_PARAM,
+                        );
+                    });
                 });
-                ui.checkbox(&mut self.tool.seg.start_on_seam, S::SEG_START_ON_SEAM);
+                crate::kit::checkbox(ui, &mut self.tool.seg.start_on_seam, S::SEG_START_ON_SEAM);
             }
             Tool::Slice => {
                 count_row(ui, S::SEG_COUNT, &mut self.tool.seg.slice, ca);
-                ui.checkbox(&mut self.tool.seg.through, S::SEG_THROUGH);
+                crate::kit::checkbox(ui, &mut self.tool.seg.through, S::SEG_THROUGH);
                 ui.horizontal(|ui| {
                     ui.label(S::SEG_GUIDE);
                     let label = match self.tool.seg.guide {
@@ -1110,7 +1157,7 @@ impl AppState {
                 });
                 ui.horizontal(|ui| {
                     if ui
-                        .selectable_label(self.tool.picking_guide, S::SEG_GUIDE_PICK)
+                        .add(egui::Button::new(S::SEG_GUIDE_PICK).selected(self.tool.picking_guide))
                         .clicked()
                     {
                         self.tool.picking_guide = !self.tool.picking_guide;
@@ -1303,6 +1350,67 @@ fn rule_summary(r: &Rule) -> (Icon, String) {
         ),
         Rule::Join { .. } => (Icon::Weld, "2 vertices".into()),
     }
+}
+
+/// One row of the idle tool list: icon, name, one-line help, shortcut.
+fn tool_row(
+    ui: &mut Ui,
+    pal: &crate::theme::Palette,
+    icon: Icon,
+    name: &str,
+    help: &str,
+    key: &str,
+) -> egui::Response {
+    let w = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 42.0), Sense::click());
+    if ui.is_rect_visible(r) {
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(r, pal.rounding, pal.widget);
+        }
+        let ic = egui::Rect::from_center_size(
+            egui::pos2(r.left() + 18.0, r.center().y),
+            vec2(18.0, 18.0),
+        );
+        icons::paint(
+            p,
+            ic,
+            icon,
+            if resp.hovered() { pal.accent } else { pal.text },
+        );
+        let x = r.left() + 40.0;
+        p.text(
+            egui::pos2(x, r.top() + 5.0),
+            egui::Align2::LEFT_TOP,
+            name,
+            egui::FontId::proportional(13.5),
+            pal.text_strong,
+        );
+        p.text(
+            egui::pos2(x, r.top() + 23.0),
+            egui::Align2::LEFT_TOP,
+            help,
+            egui::FontId::proportional(12.0),
+            pal.text_dim,
+        );
+        if !key.is_empty() {
+            let font = egui::FontId::monospace(11.0);
+            let g = p.layout_no_wrap(key.to_owned(), font, pal.text_dim);
+            let kr = egui::Rect::from_min_size(
+                egui::pos2(r.right() - 8.0 - g.size().x - 10.0, r.center().y - 9.0),
+                vec2(g.size().x + 10.0, 18.0),
+            );
+            p.rect(
+                kr,
+                4.0,
+                pal.inset,
+                egui::Stroke::new(1.0, pal.border),
+                egui::StrokeKind::Inside,
+            );
+            p.galley(kr.center() - g.size() * 0.5, g, pal.text_dim);
+        }
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 #[cfg(test)]

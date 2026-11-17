@@ -196,7 +196,7 @@ pub fn apply(ctx: &egui::Context, theme: &Theme, scale: f32) {
     });
     ctx.all_styles_mut(|style| {
         style.text_styles = [
-            (TextStyle::Small, FontId::proportional(11.0)),
+            (TextStyle::Small, FontId::proportional(12.0)),
             (TextStyle::Body, FontId::proportional(13.5)),
             (TextStyle::Button, FontId::proportional(13.5)),
             (TextStyle::Heading, medium(17.0)),

@@ -49,7 +49,7 @@
       </nav>
       <div class="nav__end">
         <a class="nav__src" href="https://github.com/SilasVogt/newtopo">GitHub</a>
-        <a class="btn btn--small" href="#download">Download</a>
+        <a class="btn btn--small" href="#download" data-download-cta>Download</a>
       </div>
     </div>
   </header>
@@ -61,7 +61,7 @@
         <h1 id="hero-title">Clean quad meshes from CAD solids.</h1>
         <p class="hero__sub">Lay edge lines on the exact surfaces of a STEP or IGES model. newtopo fills the rest with quads and exports game-ready meshes.</p>
         <div class="hero__cta">
-          <a class="btn" href="#download">Download</a>
+          <a class="btn" href="#download" data-download-cta>Download</a>
           <a class="btn btn--ghost" href="#loop">How it works</a>
         </div>
       </div>
@@ -81,8 +81,12 @@
     <section class="appshot wrap" aria-labelledby="appshot-title">
       <h2 id="appshot-title" class="visually-hidden">The app</h2>
       <figure class="appshot__frame">
-        <img src="assets/screens/app-slice.webp" width="1800" height="1125" loading="lazy"
+        <picture>
+          <!-- Phones: a crop of the viewport and Slice panel, so the UI stays legible. -->
+          <source media="(max-width: 599px)" srcset="assets/screens/app-slice-detail.webp" width="960" height="860">
+          <img src="assets/screens/app-slice.webp" width="1800" height="1125" loading="lazy"
              alt="The newtopo app: a filleted box with ten Slice planes drawn across its faces and fillets, the outliner on the left and the Slice panel and output-mesh statistics on the right.">
+        </picture>
         <figcaption>The v0.1 app: a Slice rule with 10 planes on a filleted box. Every line sits on the exact CAD surface.</figcaption>
       </figure>
     </section>
@@ -103,10 +107,10 @@
         <span class="compare__handle" aria-hidden="true"></span>
         <input class="compare__range" type="range" min="0" max="100" value="50" step="1"
                aria-label="Slide to compare the tessellated export with the newtopo mesh">
-      </div>
-      <div class="compare__labels" aria-hidden="true">
-        <span>Tessellated export</span>
-        <span>newtopo output</span>
+        <div class="compare__labels" aria-hidden="true">
+          <span>Tessellated export</span>
+          <span>newtopo output</span>
+        </div>
       </div>
     </section>
 
@@ -191,8 +195,8 @@
       <div class="bento">
         <article class="tile tile--connect">
           <figure class="tile__art shot" data-shot="tool-connect">
-            <!-- SCREENSHOT: tool-connect. Connect on a cylinder face, lines along its length. 800x560. -->
-            <img src="assets/art/tool-connect.svg" width="400" height="280" loading="lazy" alt="A cylinder with evenly spaced lines along its length.">
+            <!-- SCREENSHOT: tool-connect. Connect on a filleted boss: lines along the cylinder that carry on across both fillets. 1040x680. -->
+            <img src="assets/art/tool-connect.svg" width="520" height="340" loading="lazy" alt="A round boss on a plate with lines running down its side and on across the fillets at its top and base.">
           </figure>
           <div class="tile__text">
             <h3>Connect <kbd>C</kbd></h3>
@@ -337,6 +341,7 @@
         <p>Version 0.1 is free and open source under the MIT licence. Expect rough edges, and expect your OS to ask before it runs an unsigned app.</p>
       </div>
       <div class="os">
+        <p class="os__handheld" hidden>newtopo is a desktop app for Windows, macOS and Linux. Open this page on your computer to download it.</p>
         <a class="os__card" data-os="windows" href="https://github.com/SilasVogt/newtopo/releases/latest">
           <span class="os__name">Windows</span>
           <span class="os__detail">Installer for Windows 10 and 11, x64</span>
@@ -369,7 +374,7 @@
         <div class="reqs__grid">
           <div class="req">
             <h4>Operating system</h4>
-            <p>Windows 10 or 11, x64<br>Linux x86-64, Wayland or X11<br>macOS on Apple silicon (later in early access)</p>
+            <p>Windows 10 or 11, x64<br>Linux x86-64, Wayland or X11<br>macOS 11 or later on Apple silicon</p>
           </div>
           <div class="req">
             <h4>Graphics</h4>

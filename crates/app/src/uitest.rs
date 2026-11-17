@@ -456,3 +456,19 @@ fn spread_tools_build_one_op_per_body() {
     h.app.st.tool.active = Tool::Grid;
     assert_eq!(h.app.st.segment_ops().len(), 2);
 }
+
+#[test]
+fn escape_closes_dialog_before_leaving_the_tool() {
+    let mut h = Harness::new(true);
+    h.key(Key::C, Modifiers::NONE);
+    assert_eq!(h.app.st.tool.active, Tool::Connect);
+    h.app.st.ui.about_open = true;
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open, "Esc closes the dialog");
+    assert_eq!(
+        h.app.st.tool.active,
+        Tool::Connect,
+        "the same Esc doesn't also leave the tool"
+    );
+}

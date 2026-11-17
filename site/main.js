@@ -38,8 +38,20 @@
   }
 
   /* ---------------------------------------------------------- OS detection for downloads */
+  // Phones and tablets get no "Your system" badge (there is no build for
+  // them); they get a note to download on a computer instead.
   const ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || "";
-  const os = /win/i.test(ua) ? "windows" : /mac|iphone|ipad/i.test(ua) ? "mac" : /linux|x11/i.test(ua) && !/android/i.test(navigator.userAgent) ? "linux" : null;
+  const handheld = (navigator.userAgentData && navigator.userAgentData.mobile) ||
+    /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent) ||
+    (/mac/i.test(ua) && navigator.maxTouchPoints > 1);
+  const os = handheld ? null : /win/i.test(ua) ? "windows" : /mac/i.test(ua) ? "mac" : /linux|x11/i.test(ua) ? "linux" : null;
+  if (handheld) {
+    const note = document.querySelector(".os__handheld");
+    if (note) note.hidden = false;
+    // The download buttons still lead to the download section, which
+    // explains that the app needs a computer; say so on the button.
+    document.querySelectorAll("[data-download-cta]").forEach((a) => { a.textContent = "Get it for desktop"; });
+  }
   if (os) {
     const card = document.querySelector(`.os__card[data-os="${os}"]`);
     if (card) card.classList.add("is-mine");

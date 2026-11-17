@@ -540,7 +540,7 @@ def style(levels=LEVELS, anim=""):
     lv = "".join(
         f".l{i}{{--f:color-mix(in oklab,var(--hi) {round(100 * i / levels)}%,var(--lo))}}" for i in range(levels + 1))
     return f"""<style>
-svg{{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#c9d0d6}}
+svg{{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#1a2026}}
 @media (prefers-color-scheme:light){{svg{{--lo:#6b7883;--hi:#e3e8ec;--cad:#20272d;--ln:#0b72b5;--fe:#b0620c;--edge:#e9edf0;--edge-q:#0b72b5;--soup:#3a434b}}}}
 {lv}
 [class^=l]{{fill:var(--f);stroke:var(--f);stroke-width:.7;stroke-linejoin:round}}
@@ -549,7 +549,7 @@ svg{{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0
 .ln{{stroke:var(--ln);stroke-width:1.15}}
 .fe{{stroke:var(--fe);stroke-width:1.1;opacity:.95}}
 .q [class^=l]{{stroke:var(--edge-q);stroke-width:.85}}
-.t [class^=l]{{stroke:var(--soup);stroke-width:.45;stroke-opacity:.75}}
+.t [class^=l]{{stroke:var(--soup);stroke-width:.6;stroke-opacity:.8}}
 .mk{{stroke:var(--ln);stroke-width:2}}
 .dot{{fill:var(--ln)}}
 .dotc{{fill:var(--cad)}}
@@ -715,6 +715,29 @@ def iso_scene():
     return [top, bf, cyl, tf, cap]
 
 
+def connect_scene(count=16):
+    # the filleted boss on a patch of plate: Connect lines run along the
+    # cylinder and carry straight on across both fillets as one line each
+    pl = 1.75
+    sq = [(-pl, -pl, H), (pl, -pl, H), (pl, pl, H), (-pl, pl, H)]
+    sq = [(x + C[0], y + C[1], z) for x, y, z in sq]
+    top = Planar([sq, circle(R + RBF, H)], (0, 0, 1))
+    top.lines3d.append(("cad", circle(R + RBF, H, 128) + [circle(R + RBF, H, 128)[0]]))
+    bf = Surface(*BASE_FILLET, (0, TAU), (0, math.pi / 2), 128, 8)
+    cyl = Surface(*BOSS_CYL, (0, TAU), (H + RBF, ZT - RTF), 128, 1)
+    tf = Surface(*TOP_FILLET, (0, TAU), (0, math.pi / 2), 128, 4)
+    bf.lines.append(("cad", polyline_u(0, TAU, math.pi / 2, 160)))
+    cyl.lines.append(("cad", polyline_u(0, TAU, ZT - RTF, 160)))
+    tf.lines.append(("cad", polyline_u(0, TAU, 0, 160)))
+    cap = Planar([circle(R - RTF, ZT)], (0, 0, 1))
+    for k in range(count):
+        t = TAU * k / count + 0.1
+        bf.lines.append(("ln", polyline_v(t, 0, math.pi / 2, 16)))
+        cyl.lines.append(("ln", polyline_v(t, H + RBF, ZT - RTF, 2)))
+        tf.lines.append(("ln", polyline_v(t, 0, math.pi / 2, 16)))
+    return [top, bf, cyl, tf, cap]
+
+
 def link_scene():
     a, b, t, hr = 3.0, 1.9, 0.35, 0.42
     centres = [(x, y) for y in (-0.85, 0.85) for x in (-1.9, 0.0, 1.9)]
@@ -790,8 +813,8 @@ def build():
 
     # ---------- tool glyphs
     cam_t = Camera(yaw_deg=-34, elev_deg=28, scale=64, cx=200, cy=168)
-    write("tool-connect.svg", svg_doc(400, 280, render_items(Camera(-34, 24, 62, 200, 205), cyl_scene()),
-                                      "Connect: lines along a cylinder"))
+    write("tool-connect.svg", svg_doc(520, 340, render_items(Camera(-36, 32, 96, 196, 262), connect_scene()),
+                                      "Connect: lines along a boss and across both of its fillets"))
     write("tool-grid.svg", svg_doc(400, 280, render_items(Camera(-30, 38, 72, 200, 150), plate_hole_scene()),
                                    "Surface Grid: a grid that stops at a hole"))
     write("tool-slice.svg", svg_doc(400, 280, render_items(Camera(-34, 30, 52, 200, 150), slice_scene()),

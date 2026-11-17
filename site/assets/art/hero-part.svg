@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 640" width="940" height="640" role="img"><title>A filleted CAD part with lines drawn on its exact surfaces</title><style>
-svg{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#c9d0d6}
+svg{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f1317;--edge-q:#5ab3e8;--soup:#1a2026}
 @media (prefers-color-scheme:light){svg{--lo:#6b7883;--hi:#e3e8ec;--cad:#20272d;--ln:#0b72b5;--fe:#b0620c;--edge:#e9edf0;--edge-q:#0b72b5;--soup:#3a434b}}
 .l0{--f:color-mix(in oklab,var(--hi) 0%,var(--lo))}.l1{--f:color-mix(in oklab,var(--hi) 4%,var(--lo))}.l2{--f:color-mix(in oklab,var(--hi) 8%,var(--lo))}.l3{--f:color-mix(in oklab,var(--hi) 12%,var(--lo))}.l4{--f:color-mix(in oklab,var(--hi) 17%,var(--lo))}.l5{--f:color-mix(in oklab,var(--hi) 21%,var(--lo))}.l6{--f:color-mix(in oklab,var(--hi) 25%,var(--lo))}.l7{--f:color-mix(in oklab,var(--hi) 29%,var(--lo))}.l8{--f:color-mix(in oklab,var(--hi) 33%,var(--lo))}.l9{--f:color-mix(in oklab,var(--hi) 38%,var(--lo))}.l10{--f:color-mix(in oklab,var(--hi) 42%,var(--lo))}.l11{--f:color-mix(in oklab,var(--hi) 46%,var(--lo))}.l12{--f:color-mix(in oklab,var(--hi) 50%,var(--lo))}.l13{--f:color-mix(in oklab,var(--hi) 54%,var(--lo))}.l14{--f:color-mix(in oklab,var(--hi) 58%,var(--lo))}.l15{--f:color-mix(in oklab,var(--hi) 62%,var(--lo))}.l16{--f:color-mix(in oklab,var(--hi) 67%,var(--lo))}.l17{--f:color-mix(in oklab,var(--hi) 71%,var(--lo))}.l18{--f:color-mix(in oklab,var(--hi) 75%,var(--lo))}.l19{--f:color-mix(in oklab,var(--hi) 79%,var(--lo))}.l20{--f:color-mix(in oklab,var(--hi) 83%,var(--lo))}.l21{--f:color-mix(in oklab,var(--hi) 88%,var(--lo))}.l22{--f:color-mix(in oklab,var(--hi) 92%,var(--lo))}.l23{--f:color-mix(in oklab,var(--hi) 96%,var(--lo))}.l24{--f:color-mix(in oklab,var(--hi) 100%,var(--lo))}
 [class^=l]{fill:var(--f);stroke:var(--f);stroke-width:.7;stroke-linejoin:round}
@@ -8,7 +8,7 @@ svg{--lo:#161b20;--hi:#a7b2bc;--cad:#d8dee4;--ln:#57b6ee;--fe:#e7a65a;--edge:#0f
 .ln{stroke:var(--ln);stroke-width:1.15}
 .fe{stroke:var(--fe);stroke-width:1.1;opacity:.95}
 .q [class^=l]{stroke:var(--edge-q);stroke-width:.85}
-.t [class^=l]{stroke:var(--soup);stroke-width:.45;stroke-opacity:.75}
+.t [class^=l]{stroke:var(--soup);stroke-width:.6;stroke-opacity:.8}
 .mk{stroke:var(--ln);stroke-width:2}
 .dot{fill:var(--ln)}
 .dotc{fill:var(--cad)}
