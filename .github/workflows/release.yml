@@ -123,6 +123,8 @@ jobs:
         run: |
           $T = "$env:RUNNER_TEMP\smoke"
           $M = (Resolve-Path models).Path
+          # WARP (software DirectX 12) renders the headless GUI shots.
+          $env:NEWTOPO_SMOKE_GPU = '1'
           New-Item -ItemType Directory -Force $T | Out-Null
 
           Write-Host "::group::zip"
