@@ -10,12 +10,16 @@ use newtopo_kernel::{EdgeId, FaceId, VertexId};
 use serde::{Deserialize, Serialize};
 
 /// Id of a rule in the document.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct RuleId(pub u32);
 
 /// Id of a split line in the document.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct SplitId(pub u32);
 
@@ -47,6 +51,8 @@ pub enum LoopId {
     Cad(Vec<EdgeId>),
     Split(SplitId),
     Line(LineKey),
+    /// A seam kept by the topology guard (`face`, 0 = u-seam, 1 = v-seam).
+    Seam(FaceId, u8),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -58,15 +64,65 @@ pub enum VertexKey {
     /// another line it does not continue through. `end` is 0 for the line's
     /// start, 1 for its end, and counts up for interior boundary crossings
     /// of through-lines.
-    OnBoundary { line: LineKey, on: EdgeOrSplit, end: u32 },
+    OnBoundary {
+        line: LineKey,
+        on: EdgeOrSplit,
+        end: u32,
+    },
     /// Crossing of two lines; `a < b` canonical; `occurrence` counts
     /// crossings of the same two lines in order along `a`.
-    Crossing { a: LineKey, b: LineKey, occurrence: u32 },
-    CutPoint { rule: RuleId, i: u32 },
-    Placeholder { lp: LoopId, i: u32 },
+    Crossing {
+        a: LineKey,
+        b: LineKey,
+        occurrence: u32,
+    },
+    CutPoint {
+        rule: RuleId,
+        i: u32,
+    },
+    Placeholder {
+        lp: LoopId,
+        i: u32,
+    },
+    /// Where a split line ends on (or crosses) a CAD edge, seam or another
+    /// boundary; `end` as for `OnBoundary`.
+    SplitEnd {
+        split: SplitId,
+        on: EdgeOrSplit,
+        end: u32,
+    },
+    /// Crossing of two split lines (`a < b`).
+    SplitCross {
+        a: SplitId,
+        b: SplitId,
+        occurrence: u32,
+    },
 }
 
 impl VertexKey {
+    /// Transient keys (crossings of a seam) lose to any other key naming
+    /// the same vertex.
+    pub fn is_seam_crossing(&self) -> bool {
+        matches!(
+            self,
+            VertexKey::OnBoundary {
+                on: EdgeOrSplit::Seam(..),
+                ..
+            } | VertexKey::SplitEnd {
+                on: EdgeOrSplit::Seam(..),
+                ..
+            }
+        )
+    }
+
+    /// Pick the canonical key among aliases: the smallest non-seam key.
+    pub fn canonical(keys: &[VertexKey]) -> Option<&VertexKey> {
+        keys.iter()
+            .filter(|k| !k.is_seam_crossing())
+            .min()
+            .or_else(|| keys.iter().min())
+    }
+
     /// True for keys anchored to CAD topology (used by collapse priority).
     pub fn is_cad(&self) -> bool {
         matches!(self, VertexKey::Cad(_) | VertexKey::Pole(..))
@@ -77,9 +133,21 @@ impl VertexKey {
 /// (sorted), or the CAD edge / split line segment between two vertices.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EdgeKey {
-    Line { line: LineKey, a: VertexKey, b: VertexKey },
-    Cad { edge: EdgeId, a: VertexKey, b: VertexKey },
-    Split { split: SplitId, a: VertexKey, b: VertexKey },
+    Line {
+        line: LineKey,
+        a: VertexKey,
+        b: VertexKey,
+    },
+    Cad {
+        edge: EdgeId,
+        a: VertexKey,
+        b: VertexKey,
+    },
+    Split {
+        split: SplitId,
+        a: VertexKey,
+        b: VertexKey,
+    },
 }
 
 impl EdgeKey {
@@ -97,7 +165,9 @@ impl EdgeKey {
     }
     pub fn ends(&self) -> (&VertexKey, &VertexKey) {
         match self {
-            EdgeKey::Line { a, b, .. } | EdgeKey::Cad { a, b, .. } | EdgeKey::Split { a, b, .. } => (a, b),
+            EdgeKey::Line { a, b, .. }
+            | EdgeKey::Cad { a, b, .. }
+            | EdgeKey::Split { a, b, .. } => (a, b),
         }
     }
 }

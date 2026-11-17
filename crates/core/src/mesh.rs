@@ -96,7 +96,12 @@ pub struct MeshStats {
 
 impl OutputMesh {
     pub fn stats(&self) -> MeshStats {
-        let mut s = MeshStats { verts: self.vertices.len(), edges: self.edges.len(), faces: self.polygons.len(), ..Default::default() };
+        let mut s = MeshStats {
+            verts: self.vertices.len(),
+            edges: self.edges.len(),
+            faces: self.polygons.len(),
+            ..Default::default()
+        };
         for p in &self.polygons {
             match p.verts.len() {
                 3 => s.tris += 1,

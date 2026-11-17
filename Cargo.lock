@@ -2566,6 +2566,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "spade",
  "thiserror 2.0.21",
 ]
 

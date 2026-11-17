@@ -1,5 +1,5 @@
-//! The procedural document (SPEC §4): B-rep references + split lines + rules
-//! + edits. The output mesh is a cache computed by [`crate::eval`]; it is
+//! The procedural document (SPEC §4): B-rep references, split lines, rules
+//! and edits. The output mesh is a cache computed by [`crate::eval`]; it is
 //! never stored.
 //!
 //! The document is a plain value type. Undo (SPEC §4.7) snapshots it behind
@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 
 pub const FORMAT_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct LayerId(pub u32);
 
@@ -126,7 +128,11 @@ pub enum IsoDir {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SplitKind {
-    Iso { dir: IsoDir, value: f64, seed: Option<f64> },
+    Iso {
+        dir: IsoDir,
+        value: f64,
+        seed: Option<f64>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -174,9 +180,20 @@ pub struct IsoPiece {
 /// Where a cut point sits.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CutPoint {
-    Face { body: BodyId, face: FaceId, uv: glam::DVec2 },
-    CadEdge { body: BodyId, edge: EdgeId, t: f64 },
-    Vertex { body: BodyId, key: VertexKey },
+    Face {
+        body: BodyId,
+        face: FaceId,
+        uv: glam::DVec2,
+    },
+    CadEdge {
+        body: BodyId,
+        edge: EdgeId,
+        t: f64,
+    },
+    Vertex {
+        body: BodyId,
+        key: VertexKey,
+    },
 }
 
 /// SPEC §4.3.
@@ -221,7 +238,10 @@ pub enum Rule {
 impl Rule {
     /// Spread rules own patches (SPEC §4.3).
     pub fn is_spread(&self) -> bool {
-        matches!(self, Rule::Connect { .. } | Rule::Grid { .. } | Rule::Slice { .. })
+        matches!(
+            self,
+            Rule::Connect { .. } | Rule::Grid { .. } | Rule::Slice { .. }
+        )
     }
     pub fn kind_name(&self) -> &'static str {
         match self {
@@ -248,11 +268,28 @@ pub struct RuleEntry {
 /// SPEC §4.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Edit {
-    RemoveEdge { body: BodyId, edge: EdgeKey },
-    RemoveCadEdge { body: BodyId, edge: EdgeId },
-    Collapse { body: BodyId, edge: EdgeKey },
-    Weld { body: BodyId, from: VertexKey, to: VertexKey },
-    SetHard { body: BodyId, edge: EdgeKey, hard: bool },
+    RemoveEdge {
+        body: BodyId,
+        edge: EdgeKey,
+    },
+    RemoveCadEdge {
+        body: BodyId,
+        edge: EdgeId,
+    },
+    Collapse {
+        body: BodyId,
+        edge: EdgeKey,
+    },
+    Weld {
+        body: BodyId,
+        from: VertexKey,
+        to: VertexKey,
+    },
+    SetHard {
+        body: BodyId,
+        edge: EdgeKey,
+        hard: bool,
+    },
 }
 
 impl Edit {
@@ -292,7 +329,13 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Camera { target: DVec3::ZERO, yaw: 0.6, pitch: 0.5, distance: 100.0, ortho: false }
+        Camera {
+            target: DVec3::ZERO,
+            yaw: 0.6,
+            pitch: 0.5,
+            distance: 100.0,
+            ortho: false,
+        }
     }
 }
 
@@ -316,7 +359,12 @@ impl Default for Document {
         Document {
             format_version: FORMAT_VERSION,
             settings: SceneSettings::default(),
-            layers: vec![Layer { id: LayerId(0), name: "Default".into(), visible: true, locked: false }],
+            layers: vec![Layer {
+                id: LayerId(0),
+                name: "Default".into(),
+                visible: true,
+                locked: false,
+            }],
             active_layer: LayerId(0),
             bodies: vec![],
             split_lines: vec![],

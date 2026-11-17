@@ -82,13 +82,24 @@ pub enum Op {
         b: VertexKey,
     },
     /// Remove a spread rule's lines from patches (count 0, SPEC §6.1).
-    ClearPatches { patches: PatchSel },
-    DeleteRule { rule: RuleId },
+    ClearPatches {
+        patches: PatchSel,
+    },
+    DeleteRule {
+        rule: RuleId,
+    },
     /// SPEC §6.7.
     RemoveEdge {
         #[serde(default)]
         body: Option<BodyId>,
         edge: EdgeKey,
+    },
+    /// Remove several generated edges as one step (a selection + Delete,
+    /// SPEC §6.7); only the final result has to validate.
+    RemoveEdges {
+        #[serde(default)]
+        body: Option<BodyId>,
+        edges: Vec<EdgeKey>,
     },
     /// SPEC §6.10. `confirmed` must be true (the UI asks first).
     RemoveCadEdge {
@@ -122,11 +133,25 @@ pub enum Op {
         hard: bool,
     },
     PurgeDormant,
-    SetAutofill { on: bool },
-    SetLink { on: bool },
-    SetSymmetry { on: bool, #[serde(default)] axes: Vec<Axis> },
-    RenameBody { body: BodyId, name: String },
-    SetBodyVisible { body: BodyId, visible: bool },
+    SetAutofill {
+        on: bool,
+    },
+    SetLink {
+        on: bool,
+    },
+    SetSymmetry {
+        on: bool,
+        #[serde(default)]
+        axes: Vec<Axis>,
+    },
+    RenameBody {
+        body: BodyId,
+        name: String,
+    },
+    SetBodyVisible {
+        body: BodyId,
+        visible: bool,
+    },
 }
 
 fn default_spacing() -> Spacing {
@@ -166,10 +191,16 @@ pub struct Refusal {
 
 impl Refusal {
     pub fn new(reason: impl Into<String>) -> Self {
-        Refusal { reason: reason.into(), needs_confirmation: false }
+        Refusal {
+            reason: reason.into(),
+            needs_confirmation: false,
+        }
     }
     pub fn confirm(reason: impl Into<String>) -> Self {
-        Refusal { reason: reason.into(), needs_confirmation: true }
+        Refusal {
+            reason: reason.into(),
+            needs_confirmation: true,
+        }
     }
 }
 
