@@ -58,6 +58,9 @@ pub fn dialog_header(ui: &mut Ui, pal: &Palette, title: &str, subtitle: Option<&
 /// The small "x" used by dialog headers.
 pub fn close_button(ui: &mut Ui, pal: &Palette) -> Response {
     let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Close")
+    });
     if ui.is_rect_visible(r) {
         if resp.hovered() {
             ui.painter()

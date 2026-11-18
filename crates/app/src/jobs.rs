@@ -192,6 +192,18 @@ pub fn unit_mm(u: &str) -> f64 {
     newtopo_core::export::unit_metres(u).map_or(1.0, |m| m * 1000.0)
 }
 
+/// The app's modal dialogs, in the order [`AppState::active_modal`] picks them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Modal {
+    Confirm,
+    Unsaved,
+    Recovery,
+    ImportList,
+    ImportReport,
+    Export,
+    About,
+}
+
 impl AppState {
     /// The open scene's length unit (what its geometry is stored in), or the
     /// preferred unit for new scenes when nothing is open.
@@ -832,10 +844,50 @@ impl AppState {
 
     // ------------------------------------------------------------ dialogs
 
+    /// The app modal to show this frame. Only one is shown at a time, in
+    /// this priority order; the others wait. `AppState::escape` closes the
+    /// same one, so Esc always acts on the visible dialog.
+    pub fn active_modal(&self) -> Option<Modal> {
+        if self.ui.confirm.is_some() {
+            Some(Modal::Confirm)
+        } else if self.ui.unsaved_prompt.is_some() {
+            Some(Modal::Unsaved)
+        } else if !self.ui.recovery.is_empty() {
+            Some(Modal::Recovery)
+        } else if self.ui.import_list.is_some() {
+            Some(Modal::ImportList)
+        } else if self.ui.import_report.is_some() {
+            Some(Modal::ImportReport)
+        } else if self.ui.export.is_some() {
+            Some(Modal::Export)
+        } else if self.ui.about_open {
+            Some(Modal::About)
+        } else {
+            None
+        }
+    }
+
+    /// Esc on `m`: closes it like its Cancel/Close button. The recovery
+    /// offer has no cancel, so Esc leaves it open.
+    pub fn dismiss_modal(&mut self, m: Modal) {
+        match m {
+            Modal::Confirm => self.ui.confirm = None,
+            Modal::Unsaved => self.ui.unsaved_prompt = None,
+            Modal::Recovery => {}
+            Modal::ImportList => self.ui.import_list = None,
+            Modal::ImportReport => self.ui.import_report = None,
+            Modal::Export => self.ui.export = None,
+            Modal::About => self.ui.about_open = false,
+        }
+    }
+
     pub fn dialogs_ui(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
+        let active = self.active_modal();
         // Confirmation for ops that need it (SPEC §6.8–6.10).
-        if let Some(c) = self.ui.confirm.clone() {
+        if active == Some(Modal::Confirm)
+            && let Some(c) = self.ui.confirm.clone()
+        {
             let mut close = false;
             let mut ok = false;
             kit::modal("confirm", &pal).show(ctx, |ui| {
@@ -862,7 +914,9 @@ impl AppState {
         }
 
         // Unsaved changes.
-        if let Some(pending) = self.ui.unsaved_prompt.clone() {
+        if active == Some(Modal::Unsaved)
+            && let Some(pending) = self.ui.unsaved_prompt.clone()
+        {
             let quitting = matches!(pending, PendingAfterPrompt::Quit);
             let mut choice = None;
             kit::modal("unsaved", &pal).show(ctx, |ui| {
@@ -905,7 +959,7 @@ impl AppState {
         }
 
         // Crash recovery offer.
-        if !self.ui.recovery.is_empty() {
+        if active == Some(Modal::Recovery) {
             let list = self.ui.recovery.clone();
             let mut recover: Option<PathBuf> = None;
             let mut discard_all = false;
@@ -951,7 +1005,7 @@ impl AppState {
         }
 
         // About.
-        if self.ui.about_open {
+        if active == Some(Modal::About) {
             let mut close = false;
             kit::modal("about", &pal).show(ctx, |ui| {
                 ui.set_width(380.0);
@@ -979,9 +1033,12 @@ impl AppState {
             }
         }
 
-        self.import_list_ui(ctx);
-        self.import_report_ui(ctx);
-        self.export_dialog_ui(ctx);
+        match active {
+            Some(Modal::ImportList) => self.import_list_ui(ctx),
+            Some(Modal::ImportReport) => self.import_report_ui(ctx),
+            Some(Modal::Export) => self.export_dialog_ui(ctx),
+            _ => {}
+        }
     }
 
     fn import_list_ui(&mut self, ctx: &egui::Context) {

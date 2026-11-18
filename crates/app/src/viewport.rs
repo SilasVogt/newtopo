@@ -117,6 +117,7 @@ impl AppState {
     pub fn viewport_ui(&mut self, ui: &mut Ui) {
         let rect = ui.available_rect_before_wrap();
         self.view.rect = rect;
+        self.view.shown = true;
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         self.ensure_view_data();
         if self.view.needs_frame && self.vd.bounds.is_some() && rect.width() > 10.0 {
@@ -1321,6 +1322,7 @@ impl AppState {
                 egui::StrokeKind::Inside,
             );
             p.galley(r.min + vec2(14.0, 6.0), galley, pal.text_strong);
+            self.view.chip_rect = Some(r);
         }
     }
 

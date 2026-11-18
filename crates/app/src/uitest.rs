@@ -472,3 +472,24 @@ fn escape_closes_dialog_before_leaving_the_tool() {
         "the same Esc doesn't also leave the tool"
     );
 }
+
+#[test]
+fn one_modal_at_a_time_and_esc_closes_the_visible_one() {
+    use crate::jobs::{ExportDialog, Modal};
+    let mut h = Harness::new(true);
+    h.app.st.ui.about_open = true;
+    h.app.st.ui.export = Some(ExportDialog {
+        format: h.app.st.prefs.export_format,
+        opts: h.app.st.prefs.export.clone(),
+        units: h.app.st.prefs.units.clone(),
+    });
+    h.frames(1);
+    assert_eq!(h.app.st.active_modal(), Some(Modal::Export));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.export.is_none(), "Esc closes the shown dialog");
+    assert!(h.app.st.ui.about_open, "the waiting dialog is untouched");
+    assert_eq!(h.app.st.active_modal(), Some(Modal::About));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open);
+    assert_eq!(h.app.st.active_modal(), None);
+}

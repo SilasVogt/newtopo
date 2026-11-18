@@ -1363,6 +1363,13 @@ fn tool_row(
 ) -> egui::Response {
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 42.0), Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            format!("{name}: {help}"),
+        )
+    });
     if ui.is_rect_visible(r) {
         let p = ui.painter();
         if resp.hovered() {
