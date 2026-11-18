@@ -24,6 +24,8 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | Decimate (collapse, planar) | 🟡 | Engine done and tested; no UI. |
 | Cleanup | 🟡 | Engine done and tested; no UI. |
 | Resample | 🟡 | Engine done and tested; no UI. |
+| Vertex Slide | 🟡 | Engine done and tested (one-shot call and a reusable plan for dragging); no UI. |
+| Merge by Distance | 🟡 | Engine done and tested; no UI. |
 
 ## Known gaps
 

@@ -1093,7 +1093,8 @@ mesh, never back to rules; the rules are locked once the body is baked.
   Corners never move or disappear. Feature-curve vertices move or merge only
   along their curve. A closed feature loop keeps at least three vertices.
 - **Never**: change the topology (Euler characteristic, number of open
-  boundary loops, number of connected parts), create a non-manifold edge or
+  boundary loops, number of connected parts; the one exception is Merge by
+  Distance welding open boundaries together, §9.5.7), create a non-manifold edge or
   vertex, a duplicate polygon, a zero-length edge or zero-area polygon, a
   concave triangle or quad, or a polygon whose normal is more than the
   normal limit (default 60°) away from the CAD normals at its corners
@@ -1103,10 +1104,13 @@ mesh, never back to rules; the rules are locked once the body is baked.
   interpolated along them, per side of each seam. Polygons keep their group.
 - **Selection**: edge runs (chains of selected edges, split where three or
   more selected edges meet; a run that leaves a junction and returns to it
-  is closed), or **all feature runs** of the mesh.
+  is closed), or **all feature runs** of the mesh, for Cleanup and
+  Resample; vertices for Vertex Slide and Merge by Distance (the result
+  carries the vertex selection after the edit too).
 - Refused with a reason: empty mesh, invalid mesh (first problem named),
   parameters out of range, empty selection, a selected pair that is not an
-  edge, "all feature runs" on a mesh without feature edges.
+  edge, a vertex that is not in the mesh, "all feature runs" on a mesh
+  without feature edges.
 
 #### 9.5.3 Decimate
 Reduces the polygon count while keeping the shape, boundaries and feature
@@ -1234,7 +1238,112 @@ vertex count or edge length.
   cube with Edge length 0.5, every cube edge has 4 edges and the cube is
   unchanged.
 
-#### 9.5.6 Testing
+#### 9.5.6 Vertex Slide
+Moves vertices along one of their edges, for example to line a vertex up
+with a neighbouring loop. Built for dragging: the edges are chosen once
+(a *plan*), then the factor changes on every mouse move.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| Edge | (from the drag) | Per vertex, an explicit neighbour; or the allowed edge whose direction is closest to a direction hint (the drag direction) |
+| Factor | 0.5 | 0 = where the vertex is, 1 = on the neighbour |
+| Even | off | Off: every vertex moves the same fraction of its own edge. On: every vertex moves the same distance, the factor times the shortest slide edge |
+| Clamp | on | Keep the factor in [0, 1]. Off: vertices may move past either end of their edge, along its line |
+| Preserve CAD / hard edges, normal limit | on / on, 60° | §9.5.2 |
+
+- **Which edges**: a free vertex may slide along any of its edges; a vertex
+  on a feature curve only along its two curve edges (so a boundary vertex
+  stays on the boundary, a CAD/hard-edge vertex on its edge; switching the
+  Preserve toggle off for CAD or hard edges is the explicit override);
+  corners never slide. With a direction hint, edges that lead to another
+  sliding vertex are not candidates, so a selected loop slides along its
+  cross edges. Ties go to the lower vertex index.
+- **Skipped** (listed in the report): corners, an explicit neighbour that
+  the feature rules don't allow, a vertex whose neighbour also slides. If
+  every vertex is skipped the tool refuses with the first reason.
+- **Validity**: the polygons around the moving vertices may not become
+  degenerate, concave (triangles and quads), tilted past the normal limit,
+  or flipped. A polygon that was already concave or past the limit before
+  the slide may change, but its normal may not turn further from its CAD
+  normal and it must keep a non-zero area and its orientation. If the factor
+  is not valid, the slide stops at the largest valid factor between 0 and
+  the asked one (bisection) and reports "stopped at factor F (asked G)";
+  it refuses only if no movement at all is possible.
+- **Landing**: a vertex that reaches exactly 1 merges into its neighbour
+  (same feature and topology checks as every merge); if that merge is not
+  allowed the slide refuses. Positions just short of 1 are plain moves.
+- **Attributes**: within the edge, normals and UVs interpolate along it
+  (per side of each seam); past either end, the vertex keeps the
+  attributes of the nearer end.
+- A slide along an edge in [0, 1] keeps every vertex on the old surface;
+  the topology never changes.
+- **AC**: factor 0 returns the input unchanged; factor t on a plane puts
+  the vertex at exactly `lerp(from, to, t)` and moves nothing else; factor
+  1 removes the vertex and leaves its neighbour where it was; Even moves
+  two vertices with 1.5- and 0.5-long edges by 0.25 each at factor 0.5;
+  unclamped, −0.5 extends backwards and −3 stops just before the polygons
+  behind the vertex fold; a plane border vertex slides only along the
+  border, a cube-edge vertex only along the cube edge (the cube stays
+  exactly the cube) unless CAD and hard edges are not preserved; a pinned
+  corner is refused; repeated applies of one plan equal one-shot calls.
+
+#### 9.5.7 Merge by Distance
+Merges vertices that are closer than a distance: duplicates, cracks between
+parts that should be one surface, and very short edges.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| Scope | whole mesh | The whole mesh or the selected vertices |
+| Distance | 0.01 % of the bounding-box diagonal | Vertices closer than this merge |
+| Mode | All | All pairs; Connected (only pairs joined by an edge); Unconnected (only pairs that share no polygon: welds, never collapses an existing polygon) |
+| Position | Centroid | Centroid (free survivors move to the mean of their cluster) or Survivor (the survivor stays) |
+| With unselected | off | With a vertex scope: also merge selected vertices with unselected ones |
+| Preserve CAD / hard edges, normal limit | on / on, 60° | §9.5.2 |
+
+- **Clusters**: vertices are visited strongest first (pinned, corner,
+  feature curve, free; then lower index). Each vertex not yet in a cluster
+  becomes a *survivor* and takes every vertex closer than the distance to
+  it that may join: a pinned vertex never does; a vertex sharing a polygon
+  with the survivor follows the merge rules of §9.5.2 (feature-curve
+  vertices only along their curve, corners never); a vertex sharing no
+  polygon (a weld) may join unless it is pinned. Members are within the
+  distance of their survivor, so a dense row can't chain into one point.
+- **All at once**: every cluster is applied together, because closing a
+  crack needs both ends of every glued edge at the same time. Polygons that
+  lose corners shrink, polygons left with fewer than three corners
+  disappear, a polygon pinched at a repeated corner splits, and two polygons
+  left on the same corners with opposite winding (a closed pocket) both go.
+  Edge flags follow their vertices; collapsed edges lose theirs; edges
+  whose two sides now carry different UVs become seams.
+- **Refusals per cluster**: the result around every changed polygon must
+  stay manifold (edges used at most twice and once per direction, one fan
+  per vertex), without duplicate polygons, degenerate, concave or flipped
+  polygons, and within the normal limit. Clusters around a failure are
+  dropped and the rest is tried again; the report counts the dropped
+  clusters by reason ("2 cluster(s) not merged: it would make a
+  non-manifold vertex"). Nothing to merge is not a refusal.
+- **Centroid**: after merging, a survivor that is free moves to the mean of
+  its cluster if that move is valid; a survivor on a feature or a corner
+  stays, so features never move. The rounds repeat until nothing merges, so
+  the tool applied to its own result changes nothing.
+- **Attributes**: a corner that was a merged vertex keeps the normal and UV
+  it had when the survivor has none in that polygon's CAD face or UV chart
+  (welds across charts); otherwise it takes the survivor's.
+- **Topology**: merges inside the surface keep it (§9.5.2); welds change
+  it only by joining open boundaries (fewer boundary loops or parts).
+- **AC**: two sheets with duplicated vertices 1e-6 apart along one edge
+  weld into one sheet (5 vertices removed, one boundary loop, one part, the
+  topology of the uncut sheet), each side keeps its own UVs and the glued
+  edges are seams; interior seam vertices end halfway (Centroid) or on the
+  first sheet (Survivor); Connected merges nothing there; a 1e-5 edge in a
+  plane collapses (Connected, the topology unchanged, no seam appears);
+  a pinned cube corner with an edge neighbour 1e-6 away keeps its exact
+  position and the cube keeps its edges; two triangles touching at one
+  corner are not welded (non-manifold, reported); a mesh with nothing that
+  close comes back unchanged with "No vertices closer than the merge
+  distance"; applying the tool to its own result changes nothing.
+
+#### 9.5.8 Testing
 In addition to the ACs above (unit tests on synthetic meshes with exact
 normals: height fields, cubes, cylinders with UVs, UV spheres, tori):
 - **Baked models**: every mock reference model with a Grid on every face,
@@ -1245,7 +1354,10 @@ normals: height fields, cubes, cylinders with UVs, UV spheres, tori):
   valid (§9.5.2), unflipped, has the same topology and pinned vertices,
   is identical when the call is repeated, and keeps its tool-specific
   guarantee (Decimate: vertices are a subset of the input, triangle count
-  never grows; Cleanup: deviation within the tolerance).
+  never grows; Cleanup: deviation within the tolerance; Vertex Slide,
+  clamped: every vertex on the input surface; Merge by Distance: vertex
+  count never grows, applying it again at the same distance changes
+  nothing).
 
 ---
 
@@ -1290,7 +1402,7 @@ deterministic:
   the step with a reason (Collapse and Weld must refuse results that flip a
   face against the CAD normal or are non-manifold); undoing everything returns the
   initial document exactly; save → load → evaluate gives the same output.
-- **Mesh mode** (§9.5.6): baked reference models through every mesh tool,
+- **Mesh mode** (§9.5.8): baked reference models through every mesh tool,
   and property tests with random meshes and random tool sequences.
 - **Golden tests**: CLI scripts → exported OBJ compared by topology hash and
   positions within tolerance (`insta`).
