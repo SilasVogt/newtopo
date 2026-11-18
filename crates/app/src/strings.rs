@@ -349,3 +349,12 @@ pub const UPDATE_ASK_NO: &str = "Don't check";
 pub const PREFS_UPDATES: &str = "Updates";
 pub const PREFS_UPDATE_DAILY: &str = "Check for a new release once a day";
 pub const PREFS_UPDATE_NOW: &str = "Check now";
+
+// Preview → Apply (every mesh change is previewed first).
+pub const PREVIEW_TITLE: &str = "Preview";
+pub const PREVIEW_NOTE: &str = "Not applied yet";
+pub const PREVIEW_APPLY: &str = "Apply";
+pub const PREVIEW_DISCARD: &str = "Discard";
+pub const PREVIEW_COMPARE: &str = "Compare";
+pub const PREVIEW_PENDING: &str = "Apply or discard the preview first";
+pub const PREVIEW_DISCARDED: &str = "Preview discarded";

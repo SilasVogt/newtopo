@@ -634,6 +634,9 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
             return;
         }
+        if self.blocked_by_preview() {
+            return;
+        }
         let path = match (&self.doc.path, save_as) {
             (Some(p), false) => p.clone(),
             _ => {
@@ -693,7 +696,8 @@ impl AppState {
             return;
         }
         self.next_autosave = self.time + interval;
-        if !self.doc.is_dirty() {
+        // An open preview isn't written anywhere, autosave included.
+        if !self.doc.is_dirty() || self.doc.in_preview() {
             return;
         }
         let Some(p) = autosave_path(&self.paths, self.doc.path.as_deref()) else {
@@ -737,6 +741,9 @@ impl AppState {
     pub fn open_export_dialog(&mut self) {
         if !self.doc.has_scene() {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
+            return;
+        }
+        if self.blocked_by_preview() {
             return;
         }
         self.ui.export = Some(ExportDialog {
@@ -794,6 +801,9 @@ impl AppState {
 
     /// Export to `path` on a worker thread (no file dialog).
     pub fn export_to(&mut self, path: PathBuf, d: ExportDialog) {
+        if self.blocked_by_preview() {
+            return;
+        }
         let Some(objects) = self.export_items() else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;

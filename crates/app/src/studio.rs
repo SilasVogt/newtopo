@@ -398,6 +398,9 @@ impl AppState {
     }
 
     fn bridge_send(&mut self, host: Host) {
+        if self.blocked_by_preview() {
+            return;
+        }
         let Some(items) = self.export_items() else {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
             return;

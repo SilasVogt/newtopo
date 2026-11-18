@@ -99,30 +99,36 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let ring = |x: f32, y: f32, r: f32| painter.circle_stroke(g.p(x, y), g.r(r), st);
     let faint = color.gamma_multiply(0.35);
     match icon {
+        // Component modes share one quad (newtopo makes quad meshes).
         Icon::Vertex => {
             poly(
-                &[(3.0, 12.5), (8.0, 3.5), (13.0, 12.5)],
+                &[(2.5, 12.5), (4.5, 3.5), (13.5, 3.5), (11.5, 12.5)],
                 true,
                 Stroke::new(w * 0.7, faint),
             );
-            dot(3.0, 12.5, 1.6);
-            dot(8.0, 3.5, 2.3);
-            dot(13.0, 12.5, 1.6);
+            dot(2.5, 12.5, 1.5);
+            dot(4.5, 3.5, 1.5);
+            dot(13.5, 3.5, 2.3);
+            dot(11.5, 12.5, 1.5);
         }
         Icon::Edge => {
             poly(
-                &[(3.0, 12.5), (8.0, 3.5), (13.0, 12.5)],
+                &[(2.5, 12.5), (4.5, 3.5), (13.5, 3.5), (11.5, 12.5)],
                 true,
                 Stroke::new(w * 0.7, faint),
             );
-            painter.line_segment([g.p(3.0, 12.5), g.p(8.0, 3.5)], Stroke::new(w * 1.6, color));
+            painter.line_segment([g.p(4.5, 3.5), g.p(13.5, 3.5)], Stroke::new(w * 1.6, color));
         }
         Icon::Face => {
             fill(
-                &[(3.0, 12.5), (8.0, 3.5), (13.0, 12.5)],
+                &[(2.5, 12.5), (4.5, 3.5), (13.5, 3.5), (11.5, 12.5)],
                 color.gamma_multiply(0.75),
             );
-            poly(&[(3.0, 12.5), (8.0, 3.5), (13.0, 12.5)], true, thin);
+            poly(
+                &[(2.5, 12.5), (4.5, 3.5), (13.5, 3.5), (11.5, 12.5)],
+                true,
+                thin,
+            );
         }
         Icon::Object | Icon::Cube | Icon::Body => {
             poly(

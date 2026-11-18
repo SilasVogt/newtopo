@@ -191,6 +191,50 @@ impl DocState {
         }
     }
 
+    /// Open a preview (no-op without a scene or if one is open).
+    pub fn begin_preview(&mut self) {
+        if let Some(s) = self.scene.as_mut() {
+            let _ = guard(|| s.begin_preview());
+        }
+    }
+
+    pub fn in_preview(&self) -> bool {
+        self.scene
+            .as_ref()
+            .is_some_and(|s| guard(|| s.in_preview()).unwrap_or(false))
+    }
+
+    /// Keep the previewed changes (one undo step).
+    pub fn commit_preview(&mut self) {
+        if let Some(s) = self.scene.as_mut() {
+            let _ = guard(|| s.commit_preview());
+            self.bump();
+        }
+    }
+
+    /// Throw the previewed changes away.
+    pub fn cancel_preview(&mut self) {
+        if let Some(s) = self.scene.as_mut() {
+            if !guard(|| s.in_preview()).unwrap_or(false) {
+                return;
+            }
+            let _ = guard(|| s.cancel_preview());
+            self.bump();
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.scene
+            .as_ref()
+            .is_some_and(|s| guard(|| s.can_undo()).unwrap_or(false))
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.scene
+            .as_ref()
+            .is_some_and(|s| guard(|| s.can_redo()).unwrap_or(false))
+    }
+
     pub fn undo(&mut self) -> Result<bool, String> {
         let Some(scene) = self.scene.as_mut() else {
             return Ok(false);
@@ -214,6 +258,10 @@ impl DocState {
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), String> {
+        // A preview is never written (SPEC §5.10).
+        if self.in_preview() {
+            return Err(crate::strings::PREVIEW_PENDING.into());
+        }
         let Some(scene) = self.scene.as_mut() else {
             return Err(crate::strings::TOAST_NO_SCENE.into());
         };

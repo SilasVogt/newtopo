@@ -714,3 +714,48 @@ fn rename_field_can_be_left_and_cancelled() {
     assert!(h.app.st.ui.outliner.renaming.is_none());
     assert_eq!(name(&h).as_deref(), Some("Renamed"));
 }
+
+#[test]
+fn mesh_changes_preview_until_applied() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let autofill = |h: &Harness| h.app.st.scene_toggles().is_some_and(|s| s.autofill);
+    assert!(!autofill(&h), "new scenes start with auto-fill off");
+
+    // A mesh change opens a preview and isn't written yet.
+    h.app.st.apply(Op::SetAutofill { on: true });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    assert!(autofill(&h), "the preview shows the change");
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(
+        h.app.st.doc.save(&tmp.path().join("x.ntopo")).is_err(),
+        "nothing is saved while previewing"
+    );
+    // Enter applies.
+    h.key(Key::Enter, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h));
+    assert!(h.app.st.doc.save(&tmp.path().join("x.ntopo")).is_ok());
+
+    // Esc discards.
+    h.app.st.apply(Op::SetAutofill { on: false });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h), "discarded: still on");
+
+    // Undo discards too, and the applied change undoes in one step.
+    h.app.st.apply(Op::SetAutofill { on: false });
+    h.app.st.run(Cmd::Undo);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h));
+    h.app.st.run(Cmd::Undo);
+    assert!(!autofill(&h), "the applied preview was one undo step");
+}

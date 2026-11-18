@@ -799,6 +799,9 @@ impl AppState {
             }
             _ => {}
         }
+        if ops.iter().any(|o| o.changes_mesh()) {
+            self.doc.begin_preview();
+        }
         // All or nothing, one undo step.
         if !coalesced {
             self.doc.end_gesture();
@@ -835,6 +838,10 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             return None;
         }
+        // Mesh changes are previewed and written only on Apply.
+        if op.changes_mesh() {
+            self.doc.begin_preview();
+        }
         let r = if coalesced {
             self.doc.apply_coalesced(op.clone())
         } else {
@@ -864,6 +871,106 @@ impl AppState {
                 self.toast(kind, e.message());
                 None
             }
+        }
+    }
+
+    /// The Apply / Discard bar shown over the viewport while a preview is
+    /// open.
+    fn preview_bar(&mut self, ctx: &egui::Context) {
+        if !self.doc.in_preview() || !self.view.shown {
+            return;
+        }
+        let pal = self.pal;
+        let rect = self.view.rect;
+        // Above the tool status pill at the bottom centre.
+        let bottom = self
+            .view
+            .chip_rect
+            .map(|c| c.top() - 10.0)
+            .unwrap_or(rect.bottom() - 16.0);
+        let mut apply = false;
+        let mut discard = false;
+        egui::Area::new(egui::Id::new("preview-bar"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(rect.center().x, bottom))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(pal.panel_raised)
+                    .stroke(egui::Stroke::new(1.0, pal.accent.gamma_multiply(0.6)))
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .shadow(egui::Shadow {
+                        offset: [0, 6],
+                        blur: 18,
+                        spread: 0,
+                        color: Color32::from_black_alpha(if pal.dark { 110 } else { 40 }),
+                    })
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(S::PREVIEW_TITLE)
+                                    .font(theme::medium(13.5))
+                                    .color(pal.accent),
+                            );
+                            ui.label(RichText::new(S::PREVIEW_NOTE).small().color(pal.text_dim));
+                            ui.add_space(10.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(S::PREVIEW_DISCARD)
+                                        .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Throw these changes away  (Esc)")
+                                .clicked()
+                            {
+                                discard = true;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(S::PREVIEW_APPLY).color(pal.accent_text),
+                                    )
+                                    .fill(pal.accent)
+                                    .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Keep these changes  (Enter)")
+                                .clicked()
+                            {
+                                apply = true;
+                            }
+                        });
+                    });
+            });
+        if apply {
+            self.apply_preview();
+        } else if discard {
+            self.discard_preview();
+        }
+    }
+
+    /// Write the previewed changes (one undo step).
+    pub fn apply_preview(&mut self) {
+        if self.doc.in_preview() {
+            self.doc.commit_preview();
+        }
+    }
+
+    /// Throw the previewed changes away.
+    pub fn discard_preview(&mut self) {
+        if self.doc.in_preview() {
+            self.doc.cancel_preview();
+            self.toast(ToastKind::Info, S::PREVIEW_DISCARDED);
+        }
+    }
+
+    /// Writing the document (save, export, bridge) waits for an open
+    /// preview to be applied or discarded. Returns true when it's blocked.
+    pub fn blocked_by_preview(&mut self) -> bool {
+        if self.doc.in_preview() {
+            self.toast(ToastKind::Info, S::PREVIEW_PENDING);
+            true
+        } else {
+            false
         }
     }
 
@@ -1264,6 +1371,16 @@ impl AppState {
             if self.tool_key(key, mods) {
                 continue;
             }
+            // Enter applies an open preview (after the tool had its turn,
+            // so Cut's Enter still finishes the path).
+            if key == Key::Enter
+                && mods.is_none()
+                && self.active_modal().is_none()
+                && self.doc.in_preview()
+            {
+                self.apply_preview();
+                continue;
+            }
             let b = Binding::new(key, mods);
             if let Some((cmd, double)) = self.dispatcher.press_ex(&self.keymap, b, self.time) {
                 if double {
@@ -1310,6 +1427,8 @@ impl AppState {
         } else if self.drag.is_some() {
             self.drag = None;
         } else if self.tool.cancel_pending() {
+        } else if self.doc.in_preview() {
+            self.discard_preview();
         } else if self.tool.active != Tool::Select {
             self.tool.active = Tool::Select;
         } else if self.view.isolate.is_some() {
@@ -1343,6 +1462,24 @@ impl AppState {
                         self.menus(ui);
                     });
                     ui.add_space(10.0);
+                    sep(ui, &pal);
+                    // Undo / redo.
+                    for (icon, cmd, can) in [
+                        (Icon::Undo, Cmd::Undo, self.doc.can_undo()),
+                        (Icon::Redo, Cmd::Redo, self.doc.can_redo()),
+                    ] {
+                        let r = ui
+                            .add_enabled_ui(can, |ui| icons::icon_button(ui, icon, false, 26.0))
+                            .inner
+                            .on_hover_text(format!("{}  ({})", cmd.label(), self.keymap.label(cmd)))
+                            .on_disabled_hover_text(format!(
+                                "Nothing to {}",
+                                cmd.label().to_lowercase()
+                            ));
+                        if r.clicked() {
+                            self.run(cmd);
+                        }
+                    }
                     sep(ui, &pal);
                     // Component modes.
                     for (m, icon, label, cmd) in [
@@ -1716,6 +1853,7 @@ impl AppState {
         self.radial_ui(ctx);
         self.key_capture_ui(ctx);
         self.prefs_window(ctx);
+        self.preview_bar(ctx);
         self.dialogs_ui(ctx);
         self.update_dialogs(ctx);
     }

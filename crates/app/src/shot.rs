@@ -532,7 +532,9 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             frames(6),
             &dir.join("10-filleted-box-slice.png"),
         )?;
-        // Save and reopen: same output.
+        // Apply the previewed Slice (nothing is written before Apply), then
+        // save and reopen: same output.
+        app.st.apply_preview();
         let p = tmp.join("filleted_box.ntopo");
         app.st.doc.save(&p).map_err(anyhow::Error::msg)?;
         let before = app.st.doc.scene.as_mut().map(|s| s.stats());
