@@ -8,6 +8,7 @@ pub mod fill;
 pub mod keys;
 pub mod link;
 pub mod mesh;
+pub mod meshedit;
 pub mod ops;
 pub mod rename;
 pub mod scene;

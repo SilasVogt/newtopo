@@ -72,3 +72,22 @@ Where each non-trivial algorithm came from (SPEC §0 rule 4): public papers, ope
 | Edge loop / ring / face strip walks over the output mesh | Own design from SPEC §6.14 |
 | Fuzzy command matching (subsequence with word-start and run bonuses) | Own design |
 | Themes, icons, logo, colours, wording | Own design (no third-party art); fonts: Noto Sans (SIL OFL 1.1) |
+
+
+## Mesh mode (`core/src/meshedit/`, SPEC §9.4)
+
+Behaviour was designed from the SPEC and the papers below. No add-on, plug-in or other implementation of similar tools was read, downloaded or run.
+
+| Area | Source |
+| --- | --- |
+| Decimate cost (`quadric.rs`, `decimate.rs`) | Garland & Heckbert, "Surface Simplification Using Quadric Error Metrics", SIGGRAPH 1997: area-weighted plane quadrics, constraint planes along feature edges (their §6.1), subset placement (their §4). Own code. |
+| Quad-preserving merges (opposite-corner merge in a quad) | Diagonal collapse as described by Daniels, Silva, Shepherd, Cohen, "Quadrilateral mesh simplification", SIGGRAPH Asia 2008, and Tarini, Pietroni, Cignoni, Panozzo, Puppo, "Practical quad mesh simplification", Eurographics 2010. The quad/shape penalty in the cost is own design. |
+| Merge validity (`work.rs`) | Own design: Euler characteristic unchanged plus local manifold checks (edge use counts, single fan per vertex, no duplicate faces), in the spirit of the link condition (Dey, Edelsbrunner, Guha, Nekhayev 1999). |
+| Deviation bound (witness vertices per polygon) | Own design after the error-tracking idea of Klein, Liebich, Straßer, "Mesh Reduction with Error Control", IEEE Visualization 1996 (removed vertices stay attached to the nearest new face). |
+| Point–triangle distance | Ericson, *Real-Time Collision Detection*, §5.1.5. |
+| Planar mode (normal-cone region growing, straight-vertex dissolve) | Own design; refill uses the auto-fill decomposition (SPEC §7, `fill/`). |
+| Triangle pairing into quads | Own design (greedy best-quality pairing, as in the §7 large-polygon path). |
+| Cleanup (merge close vertices, short edges, slide along cross edges, dissolve straight vertices) | Own design from SPEC §9.4.4. Closest point between two lines: standard vector algebra. |
+| Resample (arc-length respacing, corner detection, count distribution, old→new matching) | Own design; count distribution by largest remainder (Hamilton's method); old→new matching by a monotone-assignment dynamic program (standard sequence alignment). |
+| Attribute carry-over (exact for kept corners, interpolated along edges, seam side chosen by nearest UV) | Own design. |
+| Synthetic test meshes and Hausdorff sampling (`synth.rs`) | Textbook parameterisations; own code. |
