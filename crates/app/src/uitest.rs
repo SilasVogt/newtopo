@@ -616,3 +616,22 @@ fn update_dialog_waits_for_other_dialogs() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(!h.app.st.updates.dialog_open);
 }
+
+#[test]
+fn update_dialog_waits_for_shortcut_capture() {
+    use crate::update::{Available, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.key_capture = Some(crate::palette::KeyCapture {
+        cmd: crate::commands::Cmd::Connect,
+        captured: None,
+        double: false,
+    });
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(2);
+    assert!(h.app.st.ui.key_capture.is_some(), "capture keeps the focus");
+    assert!(
+        h.app.st.updates.dialog_open,
+        "update dialog is still pending"
+    );
+}

@@ -112,7 +112,10 @@ pub fn evaluate(json: &str, current: Version) -> Result<Outcome, String> {
     if r.draft || r.prerelease {
         return Err("GitHub's latest release isn't a published stable release".into());
     }
+    // The tag must be exactly `v<canonical version>`, so the link built from
+    // the parsed numbers names the same tag the reply did.
     let v = Version::parse(&r.tag_name)
+        .filter(|v| r.tag_name == format!("v{v}"))
         .ok_or_else(|| "the latest release has an unexpected tag".to_string())?;
     Ok(if v > current {
         Outcome::Newer(Available::for_version(v))
@@ -125,7 +128,7 @@ pub fn evaluate(json: &str, current: Version) -> Result<Outcome, String> {
 /// update UI may open).
 pub fn is_release_page(url: &str) -> bool {
     url.strip_prefix(RELEASE_PAGE)
-        .is_some_and(|tag| Version::parse(tag).is_some() && tag.starts_with('v'))
+        .is_some_and(|tag| Version::parse(tag).is_some_and(|v| tag == format!("v{v}")))
 }
 
 fn fetch() -> Result<String, String> {
@@ -329,7 +332,10 @@ impl AppState {
 
     /// Any dialog or overlay that Esc would close before the update dialogs.
     fn other_modal_open(&self) -> bool {
-        self.ui.palette.open || self.ui.radial.open || self.active_modal().is_some()
+        self.ui.palette.open
+            || self.ui.radial.open
+            || self.ui.key_capture.is_some()
+            || self.active_modal().is_some()
     }
 
     /// Top-bar chip while a newer version is known.
@@ -526,6 +532,9 @@ mod tests {
             r#"{"tag_name":"v9.0.0","draft":true}"#,
             r#"{"tag_name":"v9.0.0","prerelease":true}"#,
             r#"{"tag_name":"v9.0.0-beta"}"#,
+            r#"{"tag_name":"9.0.0"}"#,
+            r#"{"tag_name":"v09.0.0"}"#,
+            r#"{"tag_name":"v9.00.0"}"#,
             r#"{"tag_name":"nightly"}"#,
             r#"{"tag_name":12}"#,
             r#"{"message":"Not Found"}"#,
@@ -546,6 +555,7 @@ mod tests {
         ));
         for bad in [
             "https://github.com/SilasVogt/newtopo/releases/tag/1.2.3",
+            "https://github.com/SilasVogt/newtopo/releases/tag/v01.2.3",
             "https://github.com/SilasVogt/newtopo/releases/tag/v1.2.3/x",
             "https://github.com/SilasVogt/newtopo/releases/tag/v1.2.3?x=1",
             "https://github.com/Other/newtopo/releases/tag/v1.2.3",

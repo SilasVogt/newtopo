@@ -149,6 +149,10 @@ fn main() -> eframe::Result {
             if let Some(p) = open {
                 app.st.open_from_launch(p);
             }
+            // Interactive launches only: never during a --window-shot capture.
+            if window_shot.is_none() {
+                app.st.startup_update_check();
+            }
             Ok(Box::new(EframeApp {
                 app,
                 window_shot,

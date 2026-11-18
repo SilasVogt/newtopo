@@ -307,7 +307,6 @@ impl App {
         };
         st.ui.recovery = recovery;
         st.view.camera.up = st.prefs.up;
-        st.startup_update_check();
         App {
             st,
             dock,
