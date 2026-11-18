@@ -16,6 +16,15 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). Update notice (§9.4): opt-in daily check of this repo's GitHub releases, link only, no self-update. |
 | P7 Polish | 🟡 | Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
 
+## Mesh mode (SPEC §9.4)
+
+| Part | State | Notes |
+| --- | --- | --- |
+| Finish (bake) to `EditMesh` | 🟡 | Engine done (`core/src/meshedit/`): positions, polygons, CAD groups, exact corner normals, CAD/hard flags, pinned CAD vertices. Not wired into the scene, undo, `.ntopo` or export yet. |
+| Decimate (collapse, planar) | 🟡 | Engine done and tested; no UI. |
+| Cleanup | 🟡 | Engine done and tested; no UI. |
+| Resample | 🟡 | Engine done and tested; no UI. |
+
 ## Known gaps
 
 - **Performance budgets (§4.6)** are met on the reference models (a one-patch change takes 3–21 ms) but not on very large multi-hole faces: a 106-face plate with 100 holes in one face needs ~90 ms per change (budget 16 ms). The 2,000-face rebuild budget is unmeasured (no such reference body yet).
@@ -35,7 +44,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 
 ## Test inventory
 
-`cargo test --workspace` (with `OCCT_DIR` set): 225 passing, 5 ignored
+`cargo test --workspace` (with `OCCT_DIR` set): 264 passing, 5 ignored
 opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`, and perf timings).
 
 - Engine ACs (§4.6), tool ACs (§6.2–§6.14), API tests (Link 4×4 holes,
@@ -51,5 +60,8 @@ opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`
   hang, timeout and malformed-file handling.
 - App: UI tests driven with synthetic input; renderer incl. one headless GPU
   render.
+- Mesh mode: tool ACs on synthetic meshes, every mock model baked and run
+  through every tool, property tests with random meshes and tool sequences
+  (`MESHEDIT_CASES=1000` for a longer soak).
 - CLI: `info` on every reference model; `run` → `validate` → `export` end to
   end.
