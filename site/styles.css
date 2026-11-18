@@ -191,7 +191,7 @@ main > section > h2, .compare-sec__head h2, .rules__copy h2, .cli__copy h2, .dow
   border: 1px solid var(--line);
   touch-action: pan-y;
 }
-.compare__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.compare__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; user-select: none; }
 .compare__after { clip-path: inset(0 0 0 var(--pos)); }
 .compare__handle {
   position: absolute; top: 0; bottom: 0; left: var(--pos); width: 2px; margin-left: -1px;
@@ -208,8 +208,9 @@ main > section > h2, .compare-sec__head h2, .rules__copy h2, .cli__copy h2, .dow
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l-6 6 6 6M15 6l6 6-6 6'/%3E%3C/svg%3E");
   }
 }
-.compare__range {
-  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+/* Doubled class so this beats the global input[type=range] height. */
+.compare__range.compare__range {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; z-index: 2;
   opacity: 0; cursor: ew-resize; -webkit-appearance: none; appearance: none;
 }
 .compare:has(.compare__range:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
