@@ -177,6 +177,8 @@ pub struct UiState {
     pub export: Option<crate::jobs::ExportDialog>,
     pub import_list: Option<crate::jobs::ImportList>,
     pub import_report: Option<crate::jobs::ImportReport>,
+    /// The app modal drawn in the last frame (what Esc dismisses).
+    pub shown_modal: Option<crate::jobs::Modal>,
     pub warned_engine: bool,
 }
 
@@ -1277,8 +1279,14 @@ impl AppState {
             self.ui.palette.open = false;
         } else if self.ui.radial.open {
             self.ui.radial.close();
-        } else if let Some(m) = self.active_modal() {
+        } else if let Some(m) = self.ui.shown_modal.filter(|m| self.modal_open(*m)) {
+            // Only the dialog the user has seen; one that arrived this
+            // frame and hasn't been drawn yet is left alone.
             self.dismiss_modal(m);
+            self.ui.shown_modal = None;
+        } else if self.active_modal().is_some() {
+            // A dialog is about to appear; don't let this Esc fall through
+            // to the tool or isolate underneath it.
         } else if self.ui.prefs_open {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {

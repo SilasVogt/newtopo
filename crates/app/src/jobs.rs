@@ -846,7 +846,9 @@ impl AppState {
 
     /// The app modal to show this frame. Only one is shown at a time, in
     /// this priority order; the others wait. `AppState::escape` closes the
-    /// same one, so Esc always acts on the visible dialog.
+    /// one that was last drawn (`UiState::shown_modal`), so Esc always acts
+    /// on the visible dialog, even if a higher-priority one arrived in the
+    /// same frame and hasn't been drawn yet.
     pub fn active_modal(&self) -> Option<Modal> {
         if self.ui.confirm.is_some() {
             Some(Modal::Confirm)
@@ -867,6 +869,19 @@ impl AppState {
         }
     }
 
+    /// Whether modal `m` still has something to show.
+    pub fn modal_open(&self, m: Modal) -> bool {
+        match m {
+            Modal::Confirm => self.ui.confirm.is_some(),
+            Modal::Unsaved => self.ui.unsaved_prompt.is_some(),
+            Modal::Recovery => !self.ui.recovery.is_empty(),
+            Modal::ImportList => self.ui.import_list.is_some(),
+            Modal::ImportReport => self.ui.import_report.is_some(),
+            Modal::Export => self.ui.export.is_some(),
+            Modal::About => self.ui.about_open,
+        }
+    }
+
     /// Esc on `m`: closes it like its Cancel/Close button. The recovery
     /// offer has no cancel, so Esc leaves it open.
     pub fn dismiss_modal(&mut self, m: Modal) {
@@ -884,6 +899,8 @@ impl AppState {
     pub fn dialogs_ui(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
         let active = self.active_modal();
+        // Esc acts on what the user saw: the modal drawn this frame.
+        self.ui.shown_modal = active;
         // Confirmation for ops that need it (SPEC §6.8–6.10).
         if active == Some(Modal::Confirm)
             && let Some(c) = self.ui.confirm.clone()
