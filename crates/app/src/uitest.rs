@@ -597,3 +597,20 @@ fn esc_spares_a_dialog_that_arrived_unseen() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(h.app.st.ui.import_report.is_none());
 }
+
+#[test]
+fn update_dialog_waits_for_other_dialogs() {
+    use crate::update::{Available, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.about_open = true;
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(1);
+    // About is the visible dialog, so Esc closes About and the update
+    // dialog is still pending.
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open);
+    assert!(h.app.st.updates.dialog_open);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open);
+}

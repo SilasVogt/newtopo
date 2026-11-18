@@ -327,6 +327,19 @@ impl AppState {
         }
     }
 
+    /// Any dialog or overlay that Esc would close before the update dialogs.
+    fn other_modal_open(&self) -> bool {
+        self.ui.palette.open
+            || self.ui.radial.open
+            || self.ui.confirm.is_some()
+            || self.ui.unsaved_prompt.is_some()
+            || self.ui.export.is_some()
+            || self.ui.import_list.is_some()
+            || self.ui.import_report.is_some()
+            || self.ui.about_open
+            || !self.ui.recovery.is_empty()
+    }
+
     /// Top-bar chip while a newer version is known.
     pub fn update_chip(&mut self, ui: &mut egui::Ui) {
         let Some(a) = &self.updates.available else {
@@ -350,12 +363,13 @@ impl AppState {
 
     pub fn update_dialogs(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
-        // Don't stack the question on top of another dialog; it waits.
-        let busy = !self.ui.recovery.is_empty()
-            || self.ui.unsaved_prompt.is_some()
-            || self.ui.confirm.is_some()
-            || self.ui.import_list.is_some();
-        if self.updates.ask_open && !busy {
+        // Update dialogs never stack on another modal or overlay: they wait
+        // until it closes, so the dialog Esc closes is always the visible one
+        // (see `AppState::escape`).
+        if self.other_modal_open() {
+            return;
+        }
+        if self.updates.ask_open {
             let mut answer = None;
             kit::modal("update-ask", &pal).show(ctx, |ui| {
                 ui.set_width(440.0);
