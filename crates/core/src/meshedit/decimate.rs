@@ -114,7 +114,9 @@ pub fn decimate(mesh: &EditMesh, p: &DecimateParams) -> Result<EditOutcome, Refu
             }
             collapse(&mut w, target, p.keep_quads);
             let reached = w.tri_count() <= target;
-            if p.keep_quads {
+            // Joining triangle pairs is part of reducing; a target the input
+            // already meets leaves the mesh exactly as it was.
+            if p.keep_quads && target < tris {
                 pair_triangles(&mut w, 40.0);
             }
             let msg = if reached {
@@ -466,7 +468,9 @@ fn plan_join(
     cone: &[Vec<DVec3>],
     cos: f64,
 ) -> Option<(Vec<u32>, Vec<u32>)> {
-    if a == b {
+    // Polygons keep their group (material, export grouping): never join
+    // across groups, even where the shared edge is not a preserved one.
+    if a == b || w.polys[a as usize].group != w.polys[b as usize].group {
         return None;
     }
     let pa = &w.polys[a as usize].verts;
@@ -477,6 +481,11 @@ fn plan_join(
         .collect();
     let count = shared.iter().filter(|&&s| s).count();
     if count == 0 || count == n {
+        return None;
+    }
+    // Every shared edge disappears, so none of them may be a feature edge
+    // (not just the candidate edge the join was found from).
+    if (0..n).any(|i| shared[i] && w.is_feature(pa[i], pa[(i + 1) % n])) {
         return None;
     }
     // Start of the run: shared edge whose predecessor is not shared.

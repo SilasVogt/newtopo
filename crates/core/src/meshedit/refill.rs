@@ -60,7 +60,7 @@ pub(crate) fn fill_touched_ngons(w: &mut Work) -> usize {
             let pp = w.poly_pos(p);
             let n = area_vec(&pp).normalize_or_zero();
             let r = w.reference_normal(p, &w.polys[q as usize]);
-            if !polygon_shape_ok(&pp, w.diag) || n.dot(r) < w.min_cos.min(0.0) {
+            if !polygon_shape_ok(&pp, w.diag) || n.dot(r) < w.min_cos {
                 ok = false;
             }
         }

@@ -1,5 +1,6 @@
 //! Unit tests for the mesh tools on synthetic meshes (SPEC §9.5.6).
 
+use super::mesh::area_vec;
 use super::synth::*;
 use super::*;
 use glam::DVec3;
@@ -403,6 +404,84 @@ fn bad_parameters_are_refused() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn decimate_ratio_one_is_a_no_op_on_triangles() {
+    // Two triangles that pairing would join into a quad.
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let m = raw(
+        vec![p(0., 0.), p(1., 0.), p(1., 1.), p(0., 1.)],
+        vec![vec![0, 1, 2], vec![0, 2, 3]],
+    );
+    let r = decimate(&m, &collapse(1.0)).unwrap();
+    assert_eq!(r.mesh, m);
+    assert!(r.report.reached_target);
+}
+
+#[test]
+fn planar_keeps_groups_apart() {
+    // Without CAD/hard preservation the group border is no feature edge,
+    // but polygons of different groups must still not merge.
+    let mut m = plane(4, 1.0);
+    for (i, q) in m.polygons.iter_mut().enumerate() {
+        q.group = newtopo_kernel::FaceId((i % 2) as u32);
+    }
+    let p = DecimateParams {
+        mode: DecimateMode::Planar,
+        preserve: Preserve {
+            cad_edges: false,
+            hard_edges: false,
+        },
+        ..Default::default()
+    };
+    let r = decimate(&m, &p).unwrap();
+    assert_sound(&m, &r.mesh, "planar groups");
+    let area = |m: &EditMesh, g: u32| -> f64 {
+        (0..m.polygons.len())
+            .filter(|&i| m.polygons[i].group.0 == g)
+            .map(|i| area_vec(&m.polygon_positions(i)).length() / 2.0)
+            .sum()
+    };
+    for g in 0..2 {
+        assert!((area(&m, g) - area(&r.mesh, g)).abs() < 1e-12, "group {g}");
+    }
+}
+
+#[test]
+fn planar_never_removes_a_flagged_edge_in_a_shared_chain() {
+    // Two pentagons share the chain 4-5-6; only 5-6 is hard.
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let mut m = raw(
+        vec![
+            p(0., 0.),
+            p(1., 0.),
+            p(1., 1.),
+            p(0., 1.),
+            p(0.5, 0.),
+            p(0.5, 0.5),
+            p(0.5, 1.),
+        ],
+        vec![vec![0, 4, 5, 6, 3], vec![4, 1, 2, 6, 5]],
+    );
+    m.flagged = vec![FlaggedEdge {
+        a: 5,
+        b: 6,
+        flags: EdgeFlags {
+            hard: true,
+            ..EdgeFlags::NONE
+        },
+    }];
+    let p = DecimateParams {
+        mode: DecimateMode::Planar,
+        ..Default::default()
+    };
+    let r = decimate(&m, &p).unwrap();
+    assert_sound(&m, &r.mesh, "shared chain");
+    let at = |q: DVec3| r.mesh.positions.iter().position(|&x| x.distance(q) < 1e-12);
+    let (a, b) = (at(DVec3::new(0.5, 0.5, 0.0)), at(DVec3::new(0.5, 1.0, 0.0)));
+    let (a, b) = (a.expect("5 kept") as u32, b.expect("6 kept") as u32);
+    assert!(r.mesh.flags(a, b).hard, "hard edge lost");
 }
 
 // ------------------------------------------------------------------- cleanup
