@@ -87,13 +87,19 @@ pub struct SlidePlan<'a> {
 }
 
 /// A polygon around the moving vertices, as it was before the slide.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Around {
     poly: u32,
     /// Geometric unit normal.
     normal: DVec3,
-    /// CAD reference normal.
+    /// CAD reference normal before the slide.
     reference: DVec3,
+    /// Sum of the CAD normals of the corners that don't move.
+    fixed: DVec3,
+    /// Moving corners: (index into `moves`, CAD normal at the vertex, CAD
+    /// normal at its neighbour, both seen from this polygon). The result
+    /// interpolates between them, so the reference normal does too.
+    moving: Vec<(usize, DVec3, DVec3)>,
     /// Smallest allowed cosine to the reference: the normal limit, or the
     /// polygon's own cosine if it is already beyond the limit (it may
     /// change but not get worse).
@@ -105,6 +111,8 @@ struct Around {
 
 /// Iterations of the bisection that finds the largest valid factor.
 const BISECT_STEPS: usize = 48;
+/// A stopped slide ends this fraction short of the limit it found.
+const BACK_OFF: f64 = 1e-4;
 
 impl<'a> SlidePlan<'a> {
     pub fn new(
@@ -237,6 +245,11 @@ impl<'a> SlidePlan<'a> {
         for m in &moves {
             polys.extend(w.vpolys[m.vertex as usize].iter().copied());
         }
+        let index: HashMap<u32, usize> = moves
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.vertex, i))
+            .collect();
         let around = polys
             .into_iter()
             .map(|q| {
@@ -244,10 +257,23 @@ impl<'a> SlidePlan<'a> {
                 let pos = w.poly_pos(&p.verts);
                 let normal = area_vec(&pos).normalize_or_zero();
                 let reference = w.reference_normal(&p.verts, p);
+                let (mut fixed, mut moving) = (DVec3::ZERO, Vec::new());
+                for &v in &p.verts {
+                    let nv = w.corner_normal(v, p).unwrap_or(normal);
+                    match index.get(&v) {
+                        Some(&i) => {
+                            let ny = w.corner_normal(moves[i].toward, p).unwrap_or(nv);
+                            moving.push((i, nv, ny));
+                        }
+                        None => fixed += nv,
+                    }
+                }
                 Around {
                     poly: q,
                     normal,
                     reference,
+                    fixed,
+                    moving,
                     min_cos: w.min_cos.min(normal.dot(reference) - 1e-12),
                     shape_ok: polygon_shape_ok(&pos, w.diag),
                 }
@@ -257,11 +283,6 @@ impl<'a> SlidePlan<'a> {
             .iter()
             .map(SlideMove::length)
             .fold(f64::INFINITY, f64::min);
-        let index = moves
-            .iter()
-            .enumerate()
-            .map(|(i, m)| (m.vertex, i))
-            .collect();
         Ok(SlidePlan {
             mesh,
             work: w,
@@ -315,6 +336,7 @@ impl<'a> SlidePlan<'a> {
             return false;
         }
         let pos = self.positions(factor, even, false);
+        let fr: Vec<f64> = self.fractions(factor, even).collect();
         let w = &self.work;
         let at = |v: u32| -> DVec3 {
             self.index
@@ -328,7 +350,7 @@ impl<'a> SlidePlan<'a> {
                 .iter()
                 .map(|&v| at(v))
                 .collect();
-            a.accepts(&p, w.diag)
+            a.accepts(&p, a.reference_at(&fr), w.diag)
         })
     }
 
@@ -352,7 +374,10 @@ impl<'a> SlidePlan<'a> {
                 bad = mid;
             }
         }
-        ok
+        // Stay clear of the boundary: right at it an edge or polygon is
+        // only just above the degeneracy threshold.
+        let backed = ok * (1.0 - BACK_OFF);
+        if self.valid(backed, even) { backed } else { ok }
     }
 
     /// Slide to `factor`. Factor 0 returns the input unchanged; a factor
@@ -488,7 +513,7 @@ impl<'a> SlidePlan<'a> {
             let p = &w.polys[q as usize];
             let pos = w.poly_pos(&p.verts);
             match self.around.iter().find(|a| a.poly == q) {
-                Some(a) => a.accepts(&pos, w.diag),
+                Some(a) => a.accepts(&pos, w.reference_normal(&p.verts, p), w.diag),
                 // A polygon the landing merge replaced: the usual checks
                 // (try_merge ran them already).
                 None => {
@@ -520,8 +545,21 @@ impl<'a> SlidePlan<'a> {
 }
 
 impl Around {
-    /// May the polygon take these corner positions?
-    fn accepts(&self, p: &[DVec3], diag: f64) -> bool {
+    /// The CAD reference normal once the moving corners are at fractions
+    /// `fr` of their edges (attributes clamp to the ends past them), as
+    /// the result's corner normals will be.
+    fn reference_at(&self, fr: &[f64]) -> DVec3 {
+        let mut s = self.fixed;
+        for &(i, a, b) in &self.moving {
+            s += a.lerp(b, fr[i].clamp(0.0, 1.0)).normalize_or_zero();
+        }
+        let s = s.normalize_or_zero();
+        if s == DVec3::ZERO { self.reference } else { s }
+    }
+
+    /// May the polygon take these corner positions, against this CAD
+    /// reference normal?
+    fn accepts(&self, p: &[DVec3], reference: DVec3, diag: f64) -> bool {
         let av = area_vec(p);
         if self.shape_ok {
             if !polygon_shape_ok(p, diag) {
@@ -531,7 +569,7 @@ impl Around {
             return false;
         }
         let n = av.normalize_or_zero();
-        n.dot(self.reference) >= self.min_cos && n.dot(self.normal) > 0.0
+        n.dot(reference) >= self.min_cos && n.dot(self.normal) > 0.0
     }
 }
 
