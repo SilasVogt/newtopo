@@ -1,4 +1,4 @@
-//! Cleanup (SPEC §9.4.4): tidy dense or jagged edge runs, for example
+//! Cleanup (SPEC §9.5.4): tidy dense or jagged edge runs, for example
 //! where two parts of a model were joined. Own design:
 //!
 //! 1. merge vertices that share a polygon and are closer than a distance;

@@ -1,4 +1,4 @@
-//! Mesh mode (SPEC §9.4): after Finish (bake) the rule-stage output becomes
+//! Mesh mode (SPEC §9.5): after Finish (bake) the rule-stage output becomes
 //! a plain [`EditMesh`], and these tools edit it directly:
 //!
 //! - [`decimate`]: reduce the polygon count (quadric-ordered merges, or

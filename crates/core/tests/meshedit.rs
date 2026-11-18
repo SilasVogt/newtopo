@@ -1,4 +1,4 @@
-//! Mesh mode (SPEC §9.4): Finish (bake) real evaluated meshes from the mock
+//! Mesh mode (SPEC §9.5): Finish (bake) real evaluated meshes from the mock
 //! kernel and run every mesh tool on them; property tests with random
 //! meshes and random tool sequences.
 mod common;

@@ -1,4 +1,4 @@
-//! Resample (SPEC §9.4.5): respace the vertices of edge runs evenly by arc
+//! Resample (SPEC §9.5.5): respace the vertices of edge runs evenly by arc
 //! length, optionally to a new vertex count or target edge length. Run ends,
 //! pinned vertices, feature junctions and corners sharper than an angle
 //! stay fixed; the pieces between them are resampled independently. Own

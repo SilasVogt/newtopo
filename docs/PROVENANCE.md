@@ -74,7 +74,7 @@ Where each non-trivial algorithm came from (SPEC §0 rule 4): public papers, ope
 | Themes, icons, logo, colours, wording | Own design (no third-party art); fonts: Noto Sans (SIL OFL 1.1) |
 
 
-## Mesh mode (`core/src/meshedit/`, SPEC §9.4)
+## Mesh mode (`core/src/meshedit/`, SPEC §9.5)
 
 Behaviour was designed from the SPEC and the papers below. No add-on, plug-in or other implementation of similar tools was read, downloaded or run.
 
@@ -87,7 +87,7 @@ Behaviour was designed from the SPEC and the papers below. No add-on, plug-in or
 | Point–triangle distance | Ericson, *Real-Time Collision Detection*, §5.1.5. |
 | Planar mode (normal-cone region growing, straight-vertex dissolve) | Own design; refill uses the auto-fill decomposition (SPEC §7, `fill/`). |
 | Triangle pairing into quads | Own design (greedy best-quality pairing, as in the §7 large-polygon path). |
-| Cleanup (merge close vertices, short edges, slide along cross edges, dissolve straight vertices) | Own design from SPEC §9.4.4. Closest point between two lines: standard vector algebra. |
+| Cleanup (merge close vertices, short edges, slide along cross edges, dissolve straight vertices) | Own design from SPEC §9.5.4. Closest point between two lines: standard vector algebra. |
 | Resample (arc-length respacing, corner detection, count distribution, old→new matching) | Own design; count distribution by largest remainder (Hamilton's method); old→new matching by a monotone-assignment dynamic program (standard sequence alignment). |
 | Attribute carry-over (exact for kept corners, interpolated along edges, seam side chosen by nearest UV) | Own design. |
 | Synthetic test meshes and Hausdorff sampling (`synth.rs`) | Textbook parameterisations; own code. |

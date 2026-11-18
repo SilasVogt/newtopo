@@ -1,4 +1,4 @@
-//! Decimate (SPEC §9.4.3).
+//! Decimate (SPEC §9.5.3).
 //!
 //! **Collapse** mode: greedy vertex merges ordered by quadric error
 //! (Garland & Heckbert 1997) with *subset placement*: a vertex is merged

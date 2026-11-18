@@ -1,4 +1,4 @@
-//! The baked, plain polygon mesh that mesh mode edits (SPEC §9.4).
+//! The baked, plain polygon mesh that mesh mode edits (SPEC §9.5).
 //!
 //! Unlike [`OutputMesh`] it has no anchors, keys or surface paths: once the
 //! user presses Finish, vertices are just positions. What survives from the

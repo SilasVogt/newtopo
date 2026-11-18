@@ -1,4 +1,4 @@
-//! Unit tests for the mesh tools on synthetic meshes (SPEC §9.4.6).
+//! Unit tests for the mesh tools on synthetic meshes (SPEC §9.5.6).
 
 use super::synth::*;
 use super::*;

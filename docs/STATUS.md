@@ -16,7 +16,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). Update notice (§9.4): opt-in daily check of this repo's GitHub releases, link only, no self-update. |
 | P7 Polish | 🟡 | Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
 
-## Mesh mode (SPEC §9.4)
+## Mesh mode (SPEC §9.5)
 
 | Part | State | Notes |
 | --- | --- | --- |
