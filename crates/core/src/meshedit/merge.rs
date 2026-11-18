@@ -300,7 +300,15 @@ fn clusters(w: &Work, in_scope: &[bool], with_unselected: bool, p: &MergeParams)
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    if let Some(list) = grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                    // Saturating: a tiny distance can put coordinates at the
+                    // ends of the i64 range (the exact distance test below
+                    // still decides).
+                    let k = (
+                        cx.saturating_add(dx),
+                        cy.saturating_add(dy),
+                        cz.saturating_add(dz),
+                    );
+                    if let Some(list) = grid.get(&k) {
                         near.extend(list.iter().copied());
                     }
                 }
@@ -378,7 +386,8 @@ fn apply_clusters(w: &mut Work, clusters: &[Cluster]) -> (Vec<Cluster>, Vec<Stri
         }
         let mut trial = w.clone();
         let changed = commit(&mut trial, &to);
-        match check(&trial, w, &changed) {
+        let survivors: BTreeSet<u32> = live.iter().map(|&i| clusters[i].survivor).collect();
+        match check(&trial, w, &changed, &survivors) {
             Ok(()) => {
                 *w = trial;
                 // Input vertices merged into each survivor, including the
@@ -520,7 +529,12 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
 
 /// Validate the changed region of `trial` (`base` is the state before).
 /// On failure returns the vertices involved and a reason.
-fn check(trial: &Work, base: &Work, changed: &[u32]) -> Result<(), (Vec<u32>, String)> {
+fn check(
+    trial: &Work,
+    base: &Work,
+    changed: &[u32],
+    survivors: &BTreeSet<u32>,
+) -> Result<(), (Vec<u32>, String)> {
     let mut verts: BTreeSet<u32> = BTreeSet::new();
     for &q in changed {
         // Corners before and after: vertices that lost polygons too.
@@ -531,6 +545,15 @@ fn check(trial: &Work, base: &Work, changed: &[u32]) -> Result<(), (Vec<u32>, St
                 .unwrap_or_default(),
         );
         verts.extend(trial.polys[q as usize].verts.iter().copied());
+    }
+    // Collapses: a survivor or a pinned vertex left without polygons means
+    // a whole piece of the surface collapsed (and a pinned vertex would be
+    // lost); vertices of cancelled pockets may go.
+    for &x in &verts {
+        let gone = trial.vpolys[x as usize].is_empty() && !base.vpolys[x as usize].is_empty();
+        if gone && (survivors.contains(&x) || base.pinned[x as usize]) {
+            return Err((vec![x], "it would collapse part of the mesh".into()));
+        }
     }
     // Geometry of the changed polygons that survive.
     for &q in changed {

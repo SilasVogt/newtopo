@@ -1408,3 +1408,52 @@ fn merge_without_close_vertices_changes_nothing() {
         );
     }
 }
+
+#[test]
+fn merge_never_collapses_a_part_or_loses_a_pinned_vertex() {
+    // A tetrahedron with one pinned vertex, merge distance above its size.
+    let p = [
+        DVec3::new(1., 1., 1.),
+        DVec3::new(1., -1., -1.),
+        DVec3::new(-1., 1., -1.),
+        DVec3::new(-1., -1., 1.),
+    ];
+    let faces = [[0u32, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
+    let mut m = raw(p.to_vec(), faces.iter().map(|f| f.to_vec()).collect());
+    for q in &mut m.polygons {
+        let n = m.positions[q.verts[0] as usize]
+            + m.positions[q.verts[1] as usize]
+            + m.positions[q.verts[2] as usize];
+        q.normals = vec![n.normalize(); 3];
+    }
+    m.pinned[0] = true;
+    assert!(m.issues().is_empty() && m.flipped_polygons().is_empty());
+    let r = merge_by_distance(
+        &m,
+        &VertexScope::All,
+        &MergeParams {
+            distance: 10.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(r.mesh, m, "{}", r.report.message);
+    assert!(!r.report.skipped.is_empty());
+}
+
+#[test]
+fn merge_with_a_tiny_distance_does_not_overflow() {
+    let m = plane(3, 1.0);
+    for d in [1e-20, 1e-300, f64::MIN_POSITIVE] {
+        let r = merge_by_distance(
+            &m,
+            &VertexScope::All,
+            &MergeParams {
+                distance: d,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(r.mesh, m);
+    }
+}

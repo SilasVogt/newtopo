@@ -1329,7 +1329,9 @@ parts that should be one surface, and very short edges.
 - **Refusals per cluster**: the result around every changed polygon must
   stay manifold (edges used at most twice and once per direction, one fan
   per vertex), without duplicate polygons, degenerate, concave or flipped
-  polygons, and within the normal limit. Clusters around a failure are
+  polygons, and within the normal limit; no survivor or pinned vertex may
+  be left without polygons (a whole piece of the surface collapsing).
+  Clusters around a failure are
   dropped and the rest is tried again; the report counts the dropped
   clusters by reason ("2 cluster(s) not merged: it would make a
   non-manifold vertex"). Nothing to merge is not a refusal.
