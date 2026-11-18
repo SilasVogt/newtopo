@@ -119,6 +119,36 @@ fn baked_models_survive_every_tool() {
         assert_sound(&m, &pl.mesh, &format!("{name} planar"));
         cad_edges_on_cad(&m, &pl.mesh, tol);
 
+        // Vertex Slide: every seventh vertex, half way along its best edge
+        // towards a fixed direction (corners skip, feature vertices stay on
+        // their curves).
+        let verts: Vec<u32> = (0..m.positions.len() as u32).step_by(7).collect();
+        let e = SlideEdge::Direction {
+            vertices: verts,
+            dir: glam::DVec3::new(1.0, 0.3, 0.1),
+        };
+        let s = vertex_slide(&m, &e, &SlideParams::default()).unwrap();
+        assert_sound(&m, &s.mesh, &format!("{name} slide"));
+        cad_edges_on_cad(&m, &s.mesh, 1e-6 * m.diagonal());
+        assert!(
+            vertex_deviation(&s.mesh, &m) < tol,
+            "{name}: slide left the surface"
+        );
+        assert!(s.mesh != m, "{name}: nothing moved: {}", s.report.message);
+
+        // Merge by Distance: nothing is that close in a baked mesh; with a
+        // large distance short edges collapse, and the result is stable.
+        let md = merge_by_distance(&m, &VertexScope::All, &MergeParams::for_mesh(&m)).unwrap();
+        assert_eq!(md.mesh, m, "{name}: {}", md.report.message);
+        let big = MergeParams {
+            distance: 0.03 * m.diagonal(),
+            ..MergeParams::for_mesh(&m)
+        };
+        let md = merge_by_distance(&m, &VertexScope::All, &big).unwrap();
+        assert_sound(&m, &md.mesh, &format!("{name} merge"));
+        let again = merge_by_distance(&md.mesh, &VertexScope::All, &big).unwrap();
+        assert_eq!(again.mesh, md.mesh, "{name}: merge not idempotent");
+
         let has_features = !m.flagged.is_empty() || !m.boundary_edges().is_empty();
         let c = cleanup(&m, &Selection::AllFeatures, &CleanupParams::for_mesh(&m));
         if !has_features {
@@ -176,6 +206,10 @@ enum Tool {
     Planar(f64),
     Cleanup(bool, f64),
     Resample(u8, u32),
+    /// Vertex seed, factor, even, clamp.
+    Slide(u32, f64, bool, bool),
+    /// Distance in mean edge lengths, mode, centroid.
+    Merge(f64, u8, bool),
 }
 
 fn arb_tool() -> impl Strategy<Value = Tool> {
@@ -184,6 +218,9 @@ fn arb_tool() -> impl Strategy<Value = Tool> {
         (0.5f64..20.0).prop_map(Tool::Planar),
         (any::<bool>(), 1.0f64..30.0).prop_map(|(s, a)| Tool::Cleanup(s, a)),
         (0u8..3, 3u32..40).prop_map(|(k, n)| Tool::Resample(k, n)),
+        (any::<u32>(), -1.5f64..2.0, any::<bool>(), any::<bool>())
+            .prop_map(|(v, t, e, c)| Tool::Slide(v, t, e, c)),
+        (0.0f64..0.6, 0u8..3, any::<bool>()).prop_map(|(d, k, c)| Tool::Merge(d, k, c)),
     ]
 }
 
@@ -312,6 +349,57 @@ fn run_tool(m: &EditMesh, t: &Tool) -> Result<EditOutcome, newtopo_core::Refusal
                 },
             )
         }
+        Tool::Slide(seed, t, even, clamp) => vertex_slide(
+            m,
+            &slide_pick(m, seed),
+            &SlideParams {
+                factor: t,
+                even,
+                clamp,
+                ..Default::default()
+            },
+        ),
+        Tool::Merge(..) => merge_by_distance(m, &VertexScope::All, &merge_params(m, t)),
+    }
+}
+
+/// Merge by Distance parameters for `Tool::Merge`, scaled to `m`.
+fn merge_params(m: &EditMesh, t: &Tool) -> MergeParams {
+    let Tool::Merge(d, k, centroid) = *t else {
+        unreachable!()
+    };
+    MergeParams {
+        distance: (d * mean_edge(m)).max(1e-12),
+        mode: [MergeMode::All, MergeMode::Connected, MergeMode::Unconnected][k as usize],
+        position: if centroid {
+            MergePosition::Centroid
+        } else {
+            MergePosition::Survivor
+        },
+        ..Default::default()
+    }
+}
+
+fn mean_edge(m: &EditMesh) -> f64 {
+    let edges = m.edges();
+    edges
+        .iter()
+        .map(|&(a, b)| m.positions[a as usize].distance(m.positions[b as usize]))
+        .sum::<f64>()
+        / edges.len() as f64
+}
+
+/// A few vertices picked from a seed, and a direction from it.
+fn slide_pick(m: &EditMesh, seed: u32) -> SlideEdge {
+    let n = m.positions.len() as u32;
+    let k = 1 + seed % 4;
+    let vertices = (0..k)
+        .map(|i| seed.wrapping_mul(2654435761).wrapping_add(i * 7919) % n)
+        .collect();
+    let h = |a: f64| ((seed as f64 * a).sin() * 43758.5453).fract();
+    SlideEdge::Direction {
+        vertices,
+        dir: glam::DVec3::new(h(12.9898), h(78.233), h(37.719)) + glam::DVec3::splat(1e-3),
     }
 }
 
@@ -365,6 +453,16 @@ proptest! {
                     if let Tool::Decimate(..) = t {
                         prop_assert!(r.mesh.tri_count() <= m.tri_count());
                         prop_assert!(vertex_deviation(&r.mesh, &m) < 1e-9, "decimate keeps vertices on the input");
+                    }
+                    if let Tool::Slide(_, _, _, true) = t {
+                        // Clamped slides move along input edges only.
+                        prop_assert!(vertex_deviation(&r.mesh, &m) < 1e-9, "slide left the surface");
+                    }
+                    if let Tool::Merge(..) = t {
+                        prop_assert!(r.mesh.stats().verts <= m.stats().verts);
+                        // Idempotent at the same distance.
+                        let again = merge_by_distance(&r.mesh, &VertexScope::All, &merge_params(&m, t)).unwrap();
+                        prop_assert_eq!(&again.mesh, &r.mesh, "merge by distance not idempotent");
                     }
                     m = r.mesh;
                 }
