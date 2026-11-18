@@ -1450,6 +1450,7 @@ impl AppState {
             if key == Key::Enter
                 && mods.is_none()
                 && self.active_modal().is_none()
+                && self.updates.shown.is_none()
                 && self.doc.in_preview()
             {
                 self.apply_preview();
