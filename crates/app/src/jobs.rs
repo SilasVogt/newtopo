@@ -4,6 +4,7 @@
 
 use crate::app::{AppState, PendingAfterPrompt};
 use crate::docstate::guard;
+use crate::kit;
 use crate::prefs::Paths;
 use crate::strings as S;
 use crate::toasts::ToastKind;
@@ -189,6 +190,18 @@ pub struct ExportDialog {
 /// Millimetres per unit for "mm", "cm", "m", "in" (anything else: mm).
 pub fn unit_mm(u: &str) -> f64 {
     newtopo_core::export::unit_metres(u).map_or(1.0, |m| m * 1000.0)
+}
+
+/// The app's modal dialogs, in the order [`AppState::active_modal`] picks them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Modal {
+    Confirm,
+    Unsaved,
+    Recovery,
+    ImportList,
+    ImportReport,
+    Export,
+    About,
 }
 
 impl AppState {
@@ -831,38 +844,78 @@ impl AppState {
 
     // ------------------------------------------------------------ dialogs
 
+    /// The app modal to show this frame. Only one is shown at a time, in
+    /// this priority order; the others wait. `AppState::escape` closes the
+    /// one that was last drawn (`UiState::shown_modal`), so Esc always acts
+    /// on the visible dialog, even if a higher-priority one arrived in the
+    /// same frame and hasn't been drawn yet.
+    pub fn active_modal(&self) -> Option<Modal> {
+        if self.ui.confirm.is_some() {
+            Some(Modal::Confirm)
+        } else if self.ui.unsaved_prompt.is_some() {
+            Some(Modal::Unsaved)
+        } else if !self.ui.recovery.is_empty() {
+            Some(Modal::Recovery)
+        } else if self.ui.import_list.is_some() {
+            Some(Modal::ImportList)
+        } else if self.ui.import_report.is_some() {
+            Some(Modal::ImportReport)
+        } else if self.ui.export.is_some() {
+            Some(Modal::Export)
+        } else if self.ui.about_open {
+            Some(Modal::About)
+        } else {
+            None
+        }
+    }
+
+    /// Whether modal `m` still has something to show.
+    pub fn modal_open(&self, m: Modal) -> bool {
+        match m {
+            Modal::Confirm => self.ui.confirm.is_some(),
+            Modal::Unsaved => self.ui.unsaved_prompt.is_some(),
+            Modal::Recovery => !self.ui.recovery.is_empty(),
+            Modal::ImportList => self.ui.import_list.is_some(),
+            Modal::ImportReport => self.ui.import_report.is_some(),
+            Modal::Export => self.ui.export.is_some(),
+            Modal::About => self.ui.about_open,
+        }
+    }
+
+    /// Esc on `m`: closes it like its Cancel/Close button. The recovery
+    /// offer has no cancel, so Esc leaves it open.
+    pub fn dismiss_modal(&mut self, m: Modal) {
+        match m {
+            Modal::Confirm => self.ui.confirm = None,
+            Modal::Unsaved => self.ui.unsaved_prompt = None,
+            Modal::Recovery => {}
+            Modal::ImportList => self.ui.import_list = None,
+            Modal::ImportReport => self.ui.import_report = None,
+            Modal::Export => self.ui.export = None,
+            Modal::About => self.ui.about_open = false,
+        }
+    }
+
     pub fn dialogs_ui(&mut self, ctx: &egui::Context) {
         let pal = self.pal;
+        let active = self.active_modal();
+        // Esc acts on what the user saw: the modal drawn this frame.
+        self.ui.shown_modal = active;
         // Confirmation for ops that need it (SPEC §6.8–6.10).
-        if let Some(c) = self.ui.confirm.clone() {
+        if active == Some(Modal::Confirm)
+            && let Some(c) = self.ui.confirm.clone()
+        {
             let mut close = false;
             let mut ok = false;
-            egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
-                ui.set_width(380.0);
-                ui.label(
-                    RichText::new(&c.title)
-                        .font(crate::theme::medium(16.0))
-                        .color(pal.text_strong),
-                );
-                ui.add_space(6.0);
+            kit::modal("confirm", &pal).show(ctx, |ui| {
+                ui.set_width(400.0);
+                close |= kit::dialog_header(ui, &pal, &c.title, None);
                 ui.label(&c.body);
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new(S::DLG_CONTINUE).color(pal.accent_text),
-                            )
-                            .fill(pal.accent),
-                        )
-                        .clicked()
-                    {
-                        ok = true;
-                    }
-                    if ui.button(S::DLG_CANCEL).clicked() {
-                        close = true;
-                    }
-                });
+                match kit::dialog_footer(ui, &pal, S::DLG_CONTINUE, true, &[S::DLG_CANCEL]) {
+                    Some(0) => ok = true,
+                    Some(_) => close = true,
+                    None => {}
+                }
             });
             if ok {
                 self.ui.confirm = None;
@@ -878,35 +931,29 @@ impl AppState {
         }
 
         // Unsaved changes.
-        if let Some(pending) = self.ui.unsaved_prompt.clone() {
+        if active == Some(Modal::Unsaved)
+            && let Some(pending) = self.ui.unsaved_prompt.clone()
+        {
             let quitting = matches!(pending, PendingAfterPrompt::Quit);
             let mut choice = None;
-            egui::Modal::new(egui::Id::new("unsaved")).show(ctx, |ui| {
-                ui.set_width(360.0);
-                ui.label(
-                    RichText::new(S::DLG_UNSAVED_TITLE)
-                        .font(crate::theme::medium(16.0))
-                        .color(pal.text_strong),
-                );
+            kit::modal("unsaved", &pal).show(ctx, |ui| {
+                ui.set_width(400.0);
+                if kit::dialog_header(ui, &pal, S::DLG_UNSAVED_TITLE, None) {
+                    choice = Some(2);
+                }
                 ui.label(S::DLG_UNSAVED_BODY);
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new(S::DLG_SAVE).color(pal.accent_text))
-                                .fill(pal.accent),
-                        )
-                        .clicked()
-                    {
-                        choice = Some(0);
-                    }
-                    if ui.button(S::DLG_DISCARD).clicked() {
-                        choice = Some(1);
-                    }
-                    if ui.button(S::DLG_CANCEL).clicked() {
-                        choice = Some(2);
-                    }
-                });
+                match kit::dialog_footer(
+                    ui,
+                    &pal,
+                    S::DLG_SAVE,
+                    true,
+                    &[S::DLG_CANCEL, S::DLG_DISCARD],
+                ) {
+                    Some(0) => choice = Some(0),
+                    Some(1) => choice = Some(2),
+                    Some(_) => choice = Some(1),
+                    None => {}
+                }
             });
             match choice {
                 Some(0) => {
@@ -929,19 +976,19 @@ impl AppState {
         }
 
         // Crash recovery offer.
-        if !self.ui.recovery.is_empty() {
+        if active == Some(Modal::Recovery) {
             let list = self.ui.recovery.clone();
             let mut recover: Option<PathBuf> = None;
             let mut discard_all = false;
-            egui::Modal::new(egui::Id::new("recovery")).show(ctx, |ui| {
-                ui.set_width(440.0);
+            kit::modal("recovery", &pal).show(ctx, |ui| {
+                ui.set_width(460.0);
                 ui.label(
                     RichText::new(S::DLG_RECOVER_TITLE)
                         .font(crate::theme::medium(16.0))
                         .color(pal.text_strong),
                 );
                 ui.label(RichText::new(S::DLG_RECOVER_BODY).color(pal.text_dim));
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 for p in &list {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -949,15 +996,19 @@ impl AppState {
                                 .map(|s| s.to_string_lossy().into_owned())
                                 .unwrap_or_default(),
                         );
-                        if ui.button(S::DLG_RECOVER).clicked() {
-                            recover = Some(p.clone());
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(S::DLG_RECOVER).clicked() {
+                                recover = Some(p.clone());
+                            }
+                        });
                     });
                 }
-                ui.add_space(8.0);
-                if ui.button(S::DLG_DISCARD).clicked() {
-                    discard_all = true;
-                }
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(S::DLG_DISCARD).clicked() {
+                        discard_all = true;
+                    }
+                });
             });
             if let Some(p) = recover {
                 self.ui.recovery.clear();
@@ -971,24 +1022,26 @@ impl AppState {
         }
 
         // About.
-        if self.ui.about_open {
+        if active == Some(Modal::About) {
             let mut close = false;
-            egui::Modal::new(egui::Id::new("about")).show(ctx, |ui| {
-                ui.set_width(360.0);
+            kit::modal("about", &pal).show(ctx, |ui| {
+                ui.set_width(380.0);
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), egui::Sense::hover());
+                    let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
                     crate::app::paint_logo(ui.painter(), r, pal.accent);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(S::APP_NAME).font(crate::theme::medium(18.0)).color(pal.text_strong));
                         ui.label(RichText::new(format!("version {}", env!("CARGO_PKG_VERSION"))).small().color(pal.text_dim));
                     });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        close |= kit::close_button(ui, &pal).clicked();
+                    });
                 });
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 ui.label(S::DLG_ABOUT_BODY);
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 ui.label(RichText::new("CAD kernel: Open CASCADE Technology (LGPL-2.1 with exception), loaded in a separate helper process. UI font: Noto Sans (SIL OFL 1.1).").small().color(pal.text_dim));
-                ui.add_space(10.0);
-                if ui.button(S::DLG_CLOSE).clicked() {
+                if kit::dialog_footer(ui, &pal, S::DLG_CLOSE, true, &[]).is_some() {
                     close = true;
                 }
             });
@@ -997,9 +1050,12 @@ impl AppState {
             }
         }
 
-        self.import_list_ui(ctx);
-        self.import_report_ui(ctx);
-        self.export_dialog_ui(ctx);
+        match active {
+            Some(Modal::ImportList) => self.import_list_ui(ctx),
+            Some(Modal::ImportReport) => self.import_report_ui(ctx),
+            Some(Modal::Export) => self.export_dialog_ui(ctx),
+            _ => {}
+        }
     }
 
     fn import_list_ui(&mut self, ctx: &egui::Context) {
@@ -1008,121 +1064,156 @@ impl AppState {
         };
         let pal = self.pal;
         let mut done: Option<bool> = None;
-        egui::Modal::new(egui::Id::new("import-list")).show(ctx, |ui| {
-            ui.set_width(560.0);
-            ui.label(
-                RichText::new(S::IMPORT_LIST_TITLE)
-                    .font(crate::theme::medium(16.0))
-                    .color(pal.text_strong),
-            );
-            ui.label(
-                RichText::new(list.path.display().to_string())
-                    .small()
-                    .color(pal.text_dim),
-            );
-            ui.add_space(6.0);
+        kit::modal("import-list", &pal).show(ctx, |ui| {
+            ui.set_width(600.0);
+            let path = list.path.display().to_string();
+            if kit::dialog_header(ui, &pal, S::IMPORT_LIST_TITLE, Some(&path)) {
+                done = Some(false);
+            }
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut list.search)
                         .hint_text(S::IMPORT_SEARCH)
-                        .desired_width(200.0),
+                        .desired_width(180.0),
                 );
-                let q = list.search.to_lowercase();
-                let visible = |r: &ImportRow| q.is_empty() || r.name.to_lowercase().contains(&q);
-                if ui.button(S::IMPORT_ALL).clicked() {
-                    list.rows
-                        .iter_mut()
-                        .filter(|r| visible(r))
-                        .for_each(|r| r.selected = true);
-                }
-                if ui.button(S::IMPORT_NONE).clicked() {
-                    list.rows.iter_mut().for_each(|r| r.selected = false);
-                }
-                ui.separator();
-                for (c, l) in [
-                    (ImportChoice::Keep, S::IMPORT_KEEP),
-                    (ImportChoice::Exclude, S::IMPORT_EXCLUDE),
-                    (ImportChoice::Replace, S::IMPORT_REPLACE),
-                ] {
-                    if ui
-                        .button(l)
-                        .on_hover_text("Set for the selected rows")
-                        .clicked()
-                    {
-                        list.rows
-                            .iter_mut()
-                            .filter(|r| r.selected)
-                            .for_each(|r| r.choice = c);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Bulk actions appear once rows are ticked, and say how many.
+                    let n = list.rows.iter().filter(|r| r.selected).count();
+                    if n == 0 {
+                        ui.label(
+                            RichText::new(S::IMPORT_BULK_HINT)
+                                .small()
+                                .color(pal.text_dim),
+                        );
+                        return;
                     }
-                }
-            });
-            ui.add_space(6.0);
-            let q = list.search.to_lowercase();
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    egui::Grid::new("import-rows")
-                        .num_columns(4)
-                        .striped(true)
-                        .spacing(vec2(10.0, 4.0))
-                        .show(ui, |ui| {
-                            for r in list
-                                .rows
+                    for (c, l) in [
+                        (ImportChoice::Replace, S::IMPORT_REPLACE),
+                        (ImportChoice::Exclude, S::IMPORT_EXCLUDE),
+                        (ImportChoice::Keep, S::IMPORT_KEEP),
+                    ] {
+                        if ui
+                            .add(egui::Button::new(l).small())
+                            .on_hover_text("Set for the ticked rows")
+                            .clicked()
+                        {
+                            list.rows
                                 .iter_mut()
-                                .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
-                            {
-                                ui.checkbox(&mut r.selected, "");
-                                ui.label(&r.name);
-                                ui.label(
-                                    RichText::new(r.layer.clone().unwrap_or_default())
-                                        .small()
-                                        .color(pal.text_dim),
-                                );
-                                ui.horizontal(|ui| {
-                                    ui.selectable_value(
-                                        &mut r.choice,
-                                        ImportChoice::Keep,
-                                        S::IMPORT_KEEP,
-                                    );
-                                    ui.selectable_value(
-                                        &mut r.choice,
-                                        ImportChoice::Exclude,
-                                        S::IMPORT_EXCLUDE,
-                                    );
-                                    ui.selectable_value(
-                                        &mut r.choice,
-                                        ImportChoice::Replace,
-                                        S::IMPORT_REPLACE,
-                                    );
+                                .filter(|r| r.selected)
+                                .for_each(|r| r.choice = c);
+                        }
+                    }
+                    ui.label(
+                        RichText::new(format!("{n} {}", S::IMPORT_SET_TICKED))
+                            .small()
+                            .color(pal.text),
+                    );
+                });
+            });
+            ui.add_space(10.0);
+            let q = list.search.to_lowercase();
+            egui::Frame::new()
+                .fill(pal.inset)
+                .stroke(egui::Stroke::new(1.0, pal.border))
+                .corner_radius(pal.rounding.round() as u8)
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            egui::Grid::new("import-rows")
+                                .num_columns(4)
+                                .min_col_width(0.0)
+                                .spacing(vec2(14.0, 6.0))
+                                .show(ui, |ui| {
+                                    // Header tick: select every visible row, or none.
+                                    let visible = |r: &ImportRow| {
+                                        q.is_empty() || r.name.to_lowercase().contains(&q)
+                                    };
+                                    let shown = list.rows.iter().filter(|r| visible(r)).count();
+                                    let ticked = list
+                                        .rows
+                                        .iter()
+                                        .filter(|r| visible(r) && r.selected)
+                                        .count();
+                                    let mut all = shown > 0 && ticked == shown;
+                                    if kit::checkbox(ui, &mut all, "")
+                                        .on_hover_text(if all {
+                                            S::IMPORT_NONE
+                                        } else {
+                                            S::IMPORT_ALL
+                                        })
+                                        .changed()
+                                    {
+                                        list.rows
+                                            .iter_mut()
+                                            .filter(|r| visible(r))
+                                            .for_each(|r| r.selected = all);
+                                    }
+                                    for h in [
+                                        S::IMPORT_COL_OBJECT,
+                                        S::IMPORT_COL_LAYER,
+                                        S::IMPORT_COL_ACTION,
+                                    ] {
+                                        ui.label(RichText::new(h).small().color(pal.text_dim));
+                                    }
+                                    ui.end_row();
+                                    for r in list.rows.iter_mut().filter(|r| {
+                                        q.is_empty() || r.name.to_lowercase().contains(&q)
+                                    }) {
+                                        ui.allocate_ui_with_layout(
+                                            vec2(18.0, 28.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| kit::checkbox(ui, &mut r.selected, ""),
+                                        );
+                                        let excluded = r.choice == ImportChoice::Exclude;
+                                        let mut name = RichText::new(&r.name).color(if excluded {
+                                            pal.text_dim
+                                        } else {
+                                            pal.text_strong
+                                        });
+                                        if excluded {
+                                            name = name.strikethrough();
+                                        }
+                                        ui.allocate_ui_with_layout(
+                                            vec2(230.0, 24.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.set_min_width(230.0);
+                                                ui.add(egui::Label::new(name).truncate());
+                                            },
+                                        );
+                                        ui.label(
+                                            RichText::new(r.layer.clone().unwrap_or_default())
+                                                .small()
+                                                .color(pal.text_dim),
+                                        );
+                                        kit::segmented(ui, &pal, |ui| {
+                                            for (c, l) in [
+                                                (ImportChoice::Keep, S::IMPORT_KEEP),
+                                                (ImportChoice::Exclude, S::IMPORT_EXCLUDE),
+                                                (ImportChoice::Replace, S::IMPORT_REPLACE),
+                                            ] {
+                                                ui.selectable_value(&mut r.choice, c, l);
+                                            }
+                                        });
+                                        ui.end_row();
+                                    }
                                 });
-                                ui.end_row();
-                            }
                         });
                 });
-            ui.add_space(10.0);
             let keep = list
                 .rows
                 .iter()
                 .filter(|r| r.choice != ImportChoice::Exclude)
                 .count();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        keep > 0,
-                        egui::Button::new(
-                            RichText::new(format!("{} ({keep})", S::IMPORT_RUN))
-                                .color(pal.accent_text),
-                        )
-                        .fill(pal.accent),
-                    )
-                    .clicked()
-                {
-                    done = Some(true);
-                }
-                if ui.button(S::DLG_CANCEL).clicked() {
-                    done = Some(false);
-                }
-            });
+            let run = format!("{} ({keep})", S::IMPORT_RUN);
+            match kit::dialog_footer(ui, &pal, &run, keep > 0, &[S::DLG_CANCEL]) {
+                Some(0) => done = Some(true),
+                Some(_) => done = Some(false),
+                None => {}
+            }
         });
         match done {
             Some(true) => self.accept_import_list(),
@@ -1137,45 +1228,45 @@ impl AppState {
         };
         let pal = self.pal;
         let mut close = false;
-        egui::Modal::new(egui::Id::new("import-report")).show(ctx, |ui| {
-            ui.set_width(440.0);
+        kit::modal("import-report", &pal).show(ctx, |ui| {
+            ui.set_width(460.0);
             let failed = !r.errors.is_empty() && r.bodies == 0;
             let title = if failed {
                 S::IMPORT_FAILED
             } else {
                 S::IMPORT_REPORT_TITLE
             };
-            ui.label(
-                RichText::new(title)
-                    .font(crate::theme::medium(16.0))
-                    .color(if failed { pal.error } else { pal.text_strong }),
-            );
-            ui.label(RichText::new(&r.file).small().color(pal.text_dim));
-            ui.add_space(8.0);
+            close |= kit::dialog_header(ui, &pal, title, Some(&r.file));
             egui::Grid::new("report")
                 .num_columns(2)
-                .spacing(vec2(16.0, 4.0))
+                .spacing(vec2(24.0, 6.0))
                 .show(ui, |ui| {
-                    ui.label("Objects");
-                    ui.label(r.bodies.to_string());
-                    ui.end_row();
-                    ui.label("Faces");
-                    ui.label(r.faces.to_string());
-                    ui.end_row();
-                    ui.label("Fixes applied");
-                    ui.label(r.fixes.len().to_string());
-                    ui.end_row();
-                    ui.label("Faces that failed");
-                    ui.label(RichText::new(r.failed_faces.to_string()).color(
+                    let row = |ui: &mut Ui, k: &str, v: String, c: egui::Color32| {
+                        ui.label(RichText::new(k).color(pal.text));
+                        kit::right_cell(ui, 60.0, RichText::new(v).monospace().color(c));
+                        ui.end_row();
+                    };
+                    row(ui, "Objects", r.bodies.to_string(), pal.text_strong);
+                    row(ui, "Faces", r.faces.to_string(), pal.text_strong);
+                    row(
+                        ui,
+                        "Fixes applied",
+                        r.fixes.len().to_string(),
+                        pal.text_strong,
+                    );
+                    row(
+                        ui,
+                        "Faces that failed",
+                        r.failed_faces.to_string(),
                         if r.failed_faces > 0 {
                             pal.warn
                         } else {
-                            pal.text
+                            pal.text_strong
                         },
-                    ));
-                    ui.end_row();
+                    );
                 });
             if !r.fixes.is_empty() {
+                ui.add_space(4.0);
                 ui.collapsing("Fixes", |ui| {
                     for f in &r.fixes {
                         ui.label(RichText::new(f).small());
@@ -1192,8 +1283,7 @@ impl AppState {
             for e in &r.errors {
                 ui.label(RichText::new(e).color(pal.error));
             }
-            ui.add_space(10.0);
-            if ui.button(S::DLG_CLOSE).clicked() {
+            if kit::dialog_footer(ui, &pal, S::DLG_CLOSE, true, &[]).is_some() {
                 close = true;
             }
         });
@@ -1226,63 +1316,55 @@ impl AppState {
             .collect();
         let mut close = false;
         let mut go = false;
-        egui::Modal::new(egui::Id::new("export")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.label(
-                RichText::new(S::EXPORT_TITLE)
-                    .font(crate::theme::medium(16.0))
-                    .color(pal.text_strong),
-            );
-            ui.label(
-                RichText::new(if self.sel.objects.is_empty() {
-                    S::EXPORT_SCOPE_ALL
-                } else {
-                    S::EXPORT_SCOPE_SEL
-                })
-                .small()
-                .color(pal.text_dim),
-            );
-            ui.add_space(8.0);
+        kit::modal("export", &pal).show(ctx, |ui| {
+            ui.set_width(460.0);
+            let scope = if self.sel.objects.is_empty() {
+                S::EXPORT_SCOPE_ALL
+            } else {
+                S::EXPORT_SCOPE_SEL
+            };
+            close |= kit::dialog_header(ui, &pal, S::EXPORT_TITLE, Some(scope));
             egui::Grid::new("export-opts")
                 .num_columns(2)
-                .spacing(vec2(16.0, 8.0))
+                .spacing(vec2(20.0, 10.0))
+                .min_col_width(96.0)
                 .show(ui, |ui| {
-                    ui.label(S::EXPORT_FORMAT);
-                    ui.horizontal(|ui| {
+                    ui.label(RichText::new(S::EXPORT_FORMAT).color(pal.text_dim));
+                    kit::segmented(ui, &pal, |ui| {
                         ui.selectable_value(&mut d.format, Format::Fbx, "FBX");
                         ui.selectable_value(&mut d.format, Format::Obj, "OBJ");
                         ui.selectable_value(&mut d.format, Format::Glb, "glTF (.glb)");
                     });
                     ui.end_row();
-                    ui.label(S::EXPORT_TRIANGULATE);
+                    ui.label(RichText::new(S::EXPORT_TRIANGULATE).color(pal.text_dim));
                     if d.format == Format::Glb {
                         ui.label(RichText::new(S::EXPORT_GLB_TRI).small().color(pal.text_dim));
                     } else {
-                        ui.checkbox(&mut d.opts.triangulate, "");
+                        kit::checkbox(ui, &mut d.opts.triangulate, "");
                     }
                     ui.end_row();
-                    ui.label(S::EXPORT_UNITS);
-                    ui.horizontal(|ui| {
+                    ui.label(RichText::new(S::EXPORT_UNITS).color(pal.text_dim));
+                    kit::segmented(ui, &pal, |ui| {
                         for u in ["mm", "cm", "m", "in"] {
                             ui.selectable_value(&mut d.units, u.to_string(), u);
                         }
                     });
                     ui.end_row();
-                    ui.label(S::EXPORT_SCALE);
+                    ui.label(RichText::new(S::EXPORT_SCALE).color(pal.text_dim));
                     ui.add(
                         egui::DragValue::new(&mut d.opts.scale)
                             .speed(0.01)
                             .range(0.0001..=10000.0),
                     );
                     ui.end_row();
-                    ui.label(S::EXPORT_UP);
-                    ui.horizontal(|ui| {
+                    ui.label(RichText::new(S::EXPORT_UP).color(pal.text_dim));
+                    kit::segmented(ui, &pal, |ui| {
                         ui.selectable_value(&mut d.opts.up, ExportUp::Y, "Y");
                         ui.selectable_value(&mut d.opts.up, ExportUp::Z, "Z");
                     });
                     ui.end_row();
-                    ui.label(S::EXPORT_NORMALS);
-                    ui.horizontal(|ui| {
+                    ui.label(RichText::new(S::EXPORT_NORMALS).color(pal.text_dim));
+                    kit::segmented(ui, &pal, |ui| {
                         ui.selectable_value(
                             &mut d.opts.face_weighted_normals,
                             false,
@@ -1295,11 +1377,11 @@ impl AppState {
                         );
                     });
                     ui.end_row();
-                    ui.label("");
-                    ui.checkbox(&mut d.opts.layers_as_hierarchy, S::EXPORT_LAYERS);
-                    ui.end_row();
-                    ui.label("");
-                    ui.checkbox(&mut d.opts.materials, S::EXPORT_MATERIALS);
+                    ui.label(RichText::new(S::EXPORT_OPTIONS).color(pal.text_dim));
+                    ui.vertical(|ui| {
+                        kit::checkbox(ui, &mut d.opts.layers_as_hierarchy, S::EXPORT_LAYERS);
+                        kit::checkbox(ui, &mut d.opts.materials, S::EXPORT_MATERIALS);
+                    });
                     ui.end_row();
                 });
             if !autofill {
@@ -1318,21 +1400,11 @@ impl AppState {
                         });
                 });
             }
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(S::EXPORT_RUN).color(pal.accent_text))
-                            .fill(pal.accent),
-                    )
-                    .clicked()
-                {
-                    go = true;
-                }
-                if ui.button(S::DLG_CANCEL).clicked() {
-                    close = true;
-                }
-            });
+            match kit::dialog_footer(ui, &pal, S::EXPORT_RUN, true, &[S::DLG_CANCEL]) {
+                Some(0) => go = true,
+                Some(_) => close = true,
+                None => {}
+            }
         });
         if go {
             self.run_export(d);

@@ -456,3 +456,76 @@ fn spread_tools_build_one_op_per_body() {
     h.app.st.tool.active = Tool::Grid;
     assert_eq!(h.app.st.segment_ops().len(), 2);
 }
+
+#[test]
+fn escape_closes_dialog_before_leaving_the_tool() {
+    let mut h = Harness::new(true);
+    h.key(Key::C, Modifiers::NONE);
+    assert_eq!(h.app.st.tool.active, Tool::Connect);
+    h.app.st.ui.about_open = true;
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open, "Esc closes the dialog");
+    assert_eq!(
+        h.app.st.tool.active,
+        Tool::Connect,
+        "the same Esc doesn't also leave the tool"
+    );
+}
+
+#[test]
+fn one_modal_at_a_time_and_esc_closes_the_visible_one() {
+    use crate::jobs::{ExportDialog, Modal};
+    let mut h = Harness::new(true);
+    h.app.st.ui.about_open = true;
+    h.app.st.ui.export = Some(ExportDialog {
+        format: h.app.st.prefs.export_format,
+        opts: h.app.st.prefs.export.clone(),
+        units: h.app.st.prefs.units.clone(),
+    });
+    h.frames(1);
+    assert_eq!(h.app.st.active_modal(), Some(Modal::Export));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.export.is_none(), "Esc closes the shown dialog");
+    assert!(h.app.st.ui.about_open, "the waiting dialog is untouched");
+    assert_eq!(h.app.st.active_modal(), Some(Modal::About));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open);
+    assert_eq!(h.app.st.active_modal(), None);
+}
+
+#[test]
+fn esc_spares_a_dialog_that_arrived_unseen() {
+    use crate::jobs::{ExportDialog, ImportReport, Modal};
+    let mut h = Harness::new(true);
+    h.app.st.ui.export = Some(ExportDialog {
+        format: h.app.st.prefs.export_format,
+        opts: h.app.st.prefs.export.clone(),
+        units: h.app.st.prefs.units.clone(),
+    });
+    h.frames(1);
+    assert_eq!(h.app.st.ui.shown_modal, Some(Modal::Export));
+    // A job finishes (poll_jobs runs before input) in the same frame as Esc.
+    h.app.st.ui.import_report = Some(ImportReport {
+        file: "part.step".into(),
+        bodies: 1,
+        faces: 6,
+        fixes: vec![],
+        failed_faces: 0,
+        warnings: vec![],
+        errors: vec![],
+    });
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(
+        h.app.st.ui.export.is_none(),
+        "Esc closes the visible Export"
+    );
+    assert!(
+        h.app.st.ui.import_report.is_some(),
+        "the unseen report survives and shows next"
+    );
+    h.frames(1);
+    assert_eq!(h.app.st.ui.shown_modal, Some(Modal::ImportReport));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.import_report.is_none());
+}

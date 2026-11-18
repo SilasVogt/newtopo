@@ -200,8 +200,8 @@ impl AppState {
                     ui.end_row();
                     ui.label("");
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut r.remove_start, S::RENAME_FROM_START);
-                        ui.checkbox(&mut r.remove_end, S::RENAME_FROM_END);
+                        crate::kit::checkbox(ui, &mut r.remove_start, S::RENAME_FROM_START);
+                        crate::kit::checkbox(ui, &mut r.remove_end, S::RENAME_FROM_END);
                     });
                     ui.end_row();
                 }
@@ -214,9 +214,9 @@ impl AppState {
                     ui.end_row();
                     ui.label("");
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut r.regex, S::RENAME_REGEX)
+                        crate::kit::checkbox(ui, &mut r.regex, S::RENAME_REGEX)
                             .on_hover_text(S::RENAME_REGEX_HINT);
-                        ui.checkbox(&mut r.case_sensitive, S::RENAME_CASE);
+                        crate::kit::checkbox(ui, &mut r.case_sensitive, S::RENAME_CASE);
                     });
                     ui.end_row();
                 }
@@ -234,7 +234,7 @@ impl AppState {
                     ui.add_enabled(!r.strip, egui::DragValue::new(&mut r.pad).range(0..=8));
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut r.strip, S::RENAME_STRIP_NUMBER);
+                    crate::kit::checkbox(ui, &mut r.strip, S::RENAME_STRIP_NUMBER);
                     ui.end_row();
                 }
             });
@@ -620,13 +620,13 @@ impl AppState {
                     });
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut o.rotation, S::UV_ROTATION);
+                crate::kit::checkbox(ui, &mut o.rotation, S::UV_ROTATION);
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut o.uniform_texel, S::UV_TEXEL);
+                crate::kit::checkbox(ui, &mut o.uniform_texel, S::UV_TEXEL);
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut o.checker, S::UV_CHECKER);
+                crate::kit::checkbox(ui, &mut o.checker, S::UV_CHECKER);
                 ui.end_row();
                 ui.label(S::UV_TILES);
                 ui.add_enabled(o.checker, egui::DragValue::new(&mut o.tiles).range(1..=64));

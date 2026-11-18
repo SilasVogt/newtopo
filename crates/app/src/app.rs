@@ -98,6 +98,10 @@ pub struct ViewState {
     pub visible_only: bool,
     pub needs_frame: bool,
     pub rect: egui::Rect,
+    /// The viewport was drawn this frame (`rect` is current).
+    pub shown: bool,
+    /// The tool status pill drawn this frame, for toast placement.
+    pub chip_rect: Option<egui::Rect>,
 }
 
 impl Default for ViewState {
@@ -112,6 +116,8 @@ impl Default for ViewState {
             visible_only: false,
             needs_frame: true,
             rect: egui::Rect::NOTHING,
+            shown: false,
+            chip_rect: None,
         }
     }
 }
@@ -171,6 +177,8 @@ pub struct UiState {
     pub export: Option<crate::jobs::ExportDialog>,
     pub import_list: Option<crate::jobs::ImportList>,
     pub import_report: Option<crate::jobs::ImportReport>,
+    /// The app modal drawn in the last frame (what Esc dismisses).
+    pub shown_modal: Option<crate::jobs::Modal>,
     pub warned_engine: bool,
 }
 
@@ -322,6 +330,8 @@ impl App {
         }
         st.ensure_theme(&ctx);
         st.poll_jobs(&ctx);
+        st.view.shown = false;
+        st.view.chip_rect = None;
         st.handle_dropped_files(&ctx);
         st.handle_input(&ctx);
 
@@ -351,7 +361,13 @@ impl App {
 
         let st = &mut self.st;
         st.overlays(&ctx);
-        st.toasts.show(&ctx, &st.pal, st.time);
+        st.toasts.show(
+            &ctx,
+            &st.pal,
+            st.time,
+            st.view.shown.then_some(st.view.rect),
+            st.view.chip_rect,
+        );
 
         // Dock actions queued during the frame.
         let actions = std::mem::take(&mut st.ui.dock_actions);
@@ -1263,8 +1279,14 @@ impl AppState {
             self.ui.palette.open = false;
         } else if self.ui.radial.open {
             self.ui.radial.close();
-        } else if self.ui.confirm.is_some() {
-            self.ui.confirm = None;
+        } else if let Some(m) = self.ui.shown_modal.filter(|m| self.modal_open(*m)) {
+            // Only the dialog the user has seen; one that arrived this
+            // frame and hasn't been drawn yet is left alone.
+            self.dismiss_modal(m);
+            self.ui.shown_modal = None;
+        } else if self.active_modal().is_some() {
+            // A dialog is about to appear; don't let this Esc fall through
+            // to the tool or isolate underneath it.
         } else if self.ui.prefs_open {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {

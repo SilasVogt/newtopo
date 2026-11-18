@@ -67,13 +67,17 @@ impl AppState {
         }
         let mut open = true;
         egui::Window::new(S::PREFS_TITLE)
-            .open(&mut open)
+            .title_bar(false)
+            .frame(crate::kit::modal_frame(&self.pal))
             .collapsible(false)
             .resizable(true)
-            .default_size(vec2(640.0, 600.0))
-            .min_width(520.0)
-            .default_pos(ctx.content_rect().center() - vec2(310.0, 280.0))
+            .default_size(vec2(560.0, 690.0))
+            .min_width(500.0)
+            .default_pos(ctx.content_rect().center() - vec2(280.0, 345.0))
             .show(ctx, |ui| {
+                if crate::kit::dialog_header(ui, &self.pal, S::PREFS_TITLE, None) {
+                    open = false;
+                }
                 ui.horizontal(|ui| {
                     for (t, l) in [
                         (PrefsTab::General, S::PREFS_GENERAL),
@@ -98,13 +102,20 @@ impl AppState {
                 ui.separator();
                 ui.add_space(4.0);
                 let before = (self.prefs.clone(), self.keymap.clone());
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match self.ui.prefs_tab {
-                        PrefsTab::General => self.prefs_general(ui),
-                        PrefsTab::Appearance => self.prefs_appearance(ui),
-                        PrefsTab::Stats => self.prefs_stats(ui),
-                        PrefsTab::Keymap => self.prefs_keymap(ui),
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        match self.ui.prefs_tab {
+                            PrefsTab::General => self.prefs_general(ui),
+                            PrefsTab::Appearance => self.prefs_appearance(ui),
+                            PrefsTab::Stats => self.prefs_stats(ui),
+                            PrefsTab::Keymap => self.prefs_keymap(ui),
+                        }
+                        ui.add_space(16.0);
                     });
                 if (self.prefs.clone(), self.keymap.clone()) != before {
                     self.dirty_settings = true;
@@ -148,14 +159,14 @@ impl AppState {
                     });
                 ui.end_row();
                 ui.label(S::PREFS_UP);
-                ui.horizontal(|ui| {
-                    let before = self.prefs.up;
+                let before = self.prefs.up;
+                crate::kit::segmented(ui, &pal, |ui| {
                     ui.selectable_value(&mut self.prefs.up, UpAxis::Z, "Z up");
                     ui.selectable_value(&mut self.prefs.up, UpAxis::Y, "Y up");
-                    if before != self.prefs.up {
-                        self.view.camera.up = self.prefs.up;
-                    }
                 });
+                if before != self.prefs.up {
+                    self.view.camera.up = self.prefs.up;
+                }
                 ui.end_row();
                 ui.label(S::PREFS_AUTOSAVE);
                 ui.horizontal(|ui| {
@@ -170,10 +181,10 @@ impl AppState {
                 ui.add(egui::Slider::new(&mut self.prefs.ui_scale, 0.8..=1.6).step_by(0.05));
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut self.prefs.select_fill_edges, S::PREFS_SELECT_FILL);
+                crate::kit::checkbox(ui, &mut self.prefs.select_fill_edges, S::PREFS_SELECT_FILL);
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut self.prefs.selection_undo, S::PREFS_SEL_UNDO);
+                crate::kit::checkbox(ui, &mut self.prefs.selection_undo, S::PREFS_SEL_UNDO);
                 ui.end_row();
             });
         ui.add_space(10.0);
@@ -183,7 +194,7 @@ impl AppState {
             .spacing(vec2(16.0, 8.0))
             .show(ui, |ui| {
                 ui.label("");
-                ui.checkbox(&mut self.prefs.import.heal, S::IMPORT_HEAL);
+                crate::kit::checkbox(ui, &mut self.prefs.import.heal, S::IMPORT_HEAL);
                 ui.end_row();
                 ui.label(S::IMPORT_SEWING);
                 ui.add_enabled(
@@ -217,7 +228,7 @@ impl AppState {
                 }
                 ui.end_row();
                 ui.label(S::PREFS_RADIAL_THEME);
-                ui.horizontal(|ui| {
+                crate::kit::segmented(ui, &self.pal, |ui| {
                     ui.selectable_value(
                         &mut self.prefs.radial_style,
                         RadialStyle::FollowTheme,
@@ -230,11 +241,15 @@ impl AppState {
                     );
                 });
                 ui.end_row();
-                ui.label("");
-                ui.checkbox(&mut self.prefs.show_grid, "Ground grid");
+                ui.label(S::PREFS_VIEWPORT);
+                crate::kit::checkbox(ui, &mut self.prefs.show_grid, "Ground grid");
                 ui.end_row();
                 ui.label("");
-                ui.checkbox(&mut self.prefs.show_symmetry_planes, "Show symmetry planes");
+                crate::kit::checkbox(
+                    ui,
+                    &mut self.prefs.show_symmetry_planes,
+                    "Show symmetry planes",
+                );
                 ui.end_row();
             });
         ui.add_space(8.0);
@@ -261,7 +276,15 @@ impl AppState {
             .show(ui, |ui| {
                 for (i, (label, c)) in overlay_fields(&mut colors).into_iter().enumerate() {
                     let mut col = to_c32(*c);
-                    if ui.color_edit_button_srgba(&mut col).changed() {
+                    let r = ui.color_edit_button_srgba(&mut col);
+                    // Outline so dark swatches stay visible on the panel.
+                    ui.painter().rect_stroke(
+                        r.rect,
+                        3.0,
+                        egui::Stroke::new(1.0, pal.text_dim.gamma_multiply(0.6)),
+                        egui::StrokeKind::Outside,
+                    );
+                    if r.changed() {
                         *c = from_c32(col);
                     }
                     ui.label(label);
@@ -303,7 +326,7 @@ impl AppState {
             (S::STAT_NGONS, &mut s.ngons),
             (S::STAT_DORMANT, &mut s.dormant),
         ] {
-            ui.checkbox(v, l);
+            crate::kit::checkbox(ui, v, l);
         }
     }
 
