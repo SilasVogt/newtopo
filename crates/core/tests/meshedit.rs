@@ -31,6 +31,36 @@ fn assert_sound(input: &EditMesh, out: &EditMesh, what: &str) {
     }
 }
 
+/// `assert_sound` plus: every polygon of the result that breaks a shape
+/// guarantee (`EditMesh::polygon_problems`) was already such a polygon of
+/// the input, on the same vertices (a tool may leave it, or change it
+/// without making it worse, but never make a new one).
+fn assert_outcome(input: &EditMesh, r: &EditOutcome, what: &str) {
+    assert_sound(input, &r.mesh, what);
+    let old: std::collections::BTreeSet<Vec<u32>> = input
+        .polygon_problems(60.0)
+        .into_iter()
+        .filter_map(|i| {
+            let mut k: Vec<u32> = input.polygons[i]
+                .verts
+                .iter()
+                .map(|&v| r.vertex_map[v as usize])
+                .collect::<Option<Vec<u32>>>()?;
+            k.sort_unstable();
+            Some(k)
+        })
+        .collect();
+    for i in r.mesh.polygon_problems(60.0) {
+        let mut k = r.mesh.polygons[i].verts.clone();
+        k.sort_unstable();
+        assert!(
+            old.contains(&k),
+            "{what}: new bad polygon {i}: {:?}",
+            r.mesh.polygon_positions(i)
+        );
+    }
+}
+
 /// Every flagged output edge with a CAD flag runs between output vertices
 /// that were on CAD edges in the input (subset placement / sliding along
 /// the CAD run), and no CAD flag appears where there was none.
@@ -100,7 +130,7 @@ fn baked_models_survive_every_tool() {
         let m = baked(body, 6);
         let tol = 1e-9 * m.diagonal().max(1.0);
         let d = decimate(&m, &DecimateParams::default()).unwrap();
-        assert_sound(&m, &d.mesh, &format!("{name} decimate"));
+        assert_outcome(&m, &d, &format!("{name} decimate"));
         cad_edges_on_cad(&m, &d.mesh, tol);
         assert!(
             d.mesh.tri_count() < m.tri_count(),
@@ -116,7 +146,7 @@ fn baked_models_survive_every_tool() {
             },
         )
         .unwrap();
-        assert_sound(&m, &pl.mesh, &format!("{name} planar"));
+        assert_outcome(&m, &pl, &format!("{name} planar"));
         cad_edges_on_cad(&m, &pl.mesh, tol);
 
         // Vertex Slide: every seventh vertex, half way along its best edge
@@ -128,7 +158,7 @@ fn baked_models_survive_every_tool() {
             dir: glam::DVec3::new(1.0, 0.3, 0.1),
         };
         let s = vertex_slide(&m, &e, &SlideParams::default()).unwrap();
-        assert_sound(&m, &s.mesh, &format!("{name} slide"));
+        assert_outcome(&m, &s, &format!("{name} slide"));
         cad_edges_on_cad(&m, &s.mesh, 1e-6 * m.diagonal());
         assert!(
             vertex_deviation(&s.mesh, &m) < tol,
@@ -145,7 +175,7 @@ fn baked_models_survive_every_tool() {
             ..MergeParams::for_mesh(&m)
         };
         let md = merge_by_distance(&m, &VertexScope::All, &big).unwrap();
-        assert_sound(&m, &md.mesh, &format!("{name} merge"));
+        assert_outcome(&m, &md, &format!("{name} merge"));
         let again = merge_by_distance(&md.mesh, &VertexScope::All, &big).unwrap();
         assert_eq!(again.mesh, md.mesh, "{name}: merge not idempotent");
 
@@ -158,7 +188,7 @@ fn baked_models_survive_every_tool() {
             continue;
         }
         let c = c.unwrap();
-        assert_sound(&m, &c.mesh, &format!("{name} cleanup"));
+        assert_outcome(&m, &c, &format!("{name} cleanup"));
         assert!(vertex_deviation(&m, &c.mesh) <= 1e-3 * m.diagonal() + 1e-12);
 
         for spacing in [Spacing::Even, Spacing::EdgeLength(0.1 * m.diagonal())] {
@@ -167,7 +197,7 @@ fn baked_models_survive_every_tool() {
                 ..Default::default()
             };
             let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
-            assert_sound(&m, &r.mesh, &format!("{name} resample {spacing:?}"));
+            assert_outcome(&m, &r, &format!("{name} resample {spacing:?}"));
             cad_edges_on_cad(&m, &r.mesh, 1e-6 * m.diagonal());
         }
     }
@@ -217,7 +247,7 @@ fn arb_tool() -> impl Strategy<Value = Tool> {
         (0.05f64..1.0, any::<bool>()).prop_map(|(r, q)| Tool::Decimate(r, q)),
         (0.5f64..20.0).prop_map(Tool::Planar),
         (any::<bool>(), 1.0f64..30.0).prop_map(|(s, a)| Tool::Cleanup(s, a)),
-        (0u8..3, 3u32..40).prop_map(|(k, n)| Tool::Resample(k, n)),
+        (0u8..12, 3u32..40).prop_map(|(k, n)| Tool::Resample(k, n)),
         (any::<u32>(), -1.5f64..2.0, any::<bool>(), any::<bool>())
             .prop_map(|(v, t, e, c)| Tool::Slide(v, t, e, c)),
         (0.0f64..0.6, 0u8..3, any::<bool>()).prop_map(|(d, k, c)| Tool::Merge(d, k, c)),
@@ -263,7 +293,7 @@ fn selection(m: &EditMesh, k: u8) -> Selection {
     }
     // Walk a run greedily from the lowest edge: straightest continuation.
     let edges = m.edges();
-    let (a, b) = edges[(k as usize * 7919) % edges.len()];
+    let (a, b) = edges[(k as usize * 7919 + k as usize * k as usize * 104729) % edges.len()];
     let mut run = vec![[a, b]];
     let mut used = std::collections::BTreeSet::from([(a.min(b), a.max(b))]);
     let (mut prev, mut cur) = (a, b);
@@ -325,7 +355,7 @@ fn run_tool(m: &EditMesh, t: &Tool) -> Result<EditOutcome, newtopo_core::Refusal
         ),
         Tool::Cleanup(slide, a) => cleanup(
             m,
-            &selection(m, (a as u8) % 3),
+            &selection(m, ((a * 7.3) as u8) % 12),
             &CleanupParams {
                 slide,
                 straight_angle_deg: a,
@@ -443,7 +473,7 @@ proptest! {
         for t in &tools {
             match run_tool(&m, t) {
                 Ok(r) => {
-                    assert_sound(&m, &r.mesh, &format!("{shape:?} {t:?}"));
+                    assert_outcome(&m, &r, &format!("{shape:?} {t:?}"));
                     let again = run_tool(&m, t).unwrap();
                     prop_assert_eq!(&again.mesh, &r.mesh, "not deterministic");
                     if let Tool::Cleanup(..) = t {
@@ -452,7 +482,15 @@ proptest! {
                     }
                     if let Tool::Decimate(..) = t {
                         prop_assert!(r.mesh.tri_count() <= m.tri_count());
-                        prop_assert!(vertex_deviation(&r.mesh, &m) < 1e-9, "decimate keeps vertices on the input");
+                        // Subset placement: every result vertex is an input
+                        // vertex, exactly, and the vertex map says which.
+                        for (v, o) in r.vertex_map.iter().enumerate() {
+                            if let Some(o) = o {
+                                prop_assert_eq!(r.mesh.positions[*o as usize], m.positions[v]);
+                            }
+                        }
+                        let mapped = r.vertex_map.iter().flatten().count();
+                        prop_assert_eq!(mapped, r.mesh.positions.len(), "a result vertex is not an input vertex");
                     }
                     if let Tool::Slide(_, _, _, true) = t {
                         // Clamped slides move along input edges only.
