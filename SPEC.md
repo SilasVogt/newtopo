@@ -1097,8 +1097,10 @@ mesh, never back to rules; the rules are locked once the body is baked.
   Distance welding open boundaries together, §9.5.7), create a non-manifold edge or
   vertex, a duplicate polygon, a zero-length edge or zero-area polygon, a
   concave triangle or quad, or a polygon whose normal is more than the
-  normal limit (default 60°) away from the CAD normals at its corners
-  (a flipped face).
+  normal limit (default 60°) away from the mean of the CAD normals at its
+  corners (a flipped face). "Further from the result" (deviation limits)
+  means from the polygons as exported: a quad counts the worse of its two
+  triangulations.
 - **Attributes**: a vertex that stays where it was keeps its exact normals
   and UVs. A vertex that moves along existing edges gets normals and UVs
   interpolated along them, per side of each seam. Polygons keep their group.
@@ -1225,9 +1227,15 @@ vertex count or edge length.
   possible; spare old vertices are merged into a run neighbour, missing ones
   are inserted into the run's edges (the polygons beside the run grow and
   are refilled when "Fill n-gons" is on).
+- With "Fill n-gons" on, each run's grown polygons are refilled before
+  its result is checked (a triangle that gains one vertex is a quad with a
+  straight corner until it is split).
 - A run whose new spacing would fold or flatten a polygon beside it is left
   unchanged and listed in the report; if every run fails the tool refuses.
-  A count smaller than the run's fixed corners allow is refused.
+  The same holds for a count smaller than a run's fixed corners allow, and
+  for more than 10 000 edges on one run. A closed run keeps at least three
+  vertices. Vertices where the selection does not run straight through
+  (junctions shared by several runs) stay fixed.
 - **AC**: an unevenly spaced straight run comes out with equal edge lengths
   (1e-9) and resampling again changes nothing; a 10-edge run resampled to
   21 / 6 / 11 vertices has 20 / 5 / 10 equal edges, no n-gons and the same
@@ -1266,8 +1274,11 @@ with a neighbouring loop. Built for dragging: the edges are chosen once
   or flipped. A polygon that was already concave or past the limit before
   the slide may change, but its normal may not turn further from its CAD
   normal and it must keep a non-zero area and its orientation. If the factor
-  is not valid, the slide stops at the largest valid factor between 0 and
-  the asked one (bisection) and reports "stopped at factor F (asked G)";
+  is not valid, the slide stops just short (0.01 %) of the largest valid
+  factor between 0 and the asked one (bisection), so nothing is left on
+  the edge of degenerate, and reports "stopped at factor F (asked G)".
+  The normal limit is checked against the CAD normals the result will
+  carry (interpolated along the edge for the moving corners);
   it refuses only if no movement at all is possible.
 - **Landing**: a vertex that reaches exactly 1 merges into its neighbour
   (same feature and topology checks as every merge); if that merge is not
