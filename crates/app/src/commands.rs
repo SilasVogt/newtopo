@@ -137,6 +137,7 @@ commands! {
     LoadSample => "file.sample", "Open the sample model", File, None, [];
     Quit => "file.quit", "Quit", File, None, ["Ctrl+Q"];
 
+    CheckUpdates => "help.check_updates", "Check for updates…", Help, None, [];
     About => "help.about", "About newtopo", Help, Some(Icon::Info), [];
 }
 

@@ -327,3 +327,25 @@ pub const VIEW_LEFT: &str = "Left";
 pub const VIEW_RIGHT: &str = "Right";
 pub const VIEW_TOP: &str = "Top";
 pub const VIEW_BOTTOM: &str = "Bottom";
+
+// Update check (SPEC §9.4).
+pub const UPDATE_CHECKING: &str = "Checking for updates…";
+pub const UPDATE_LATEST: &str = "You have the latest version";
+pub const UPDATE_FAILED: &str = "Couldn't check for updates";
+pub const UPDATE_CHIP: &str = "Update";
+pub const UPDATE_CHIP_HINT: &str = "A newer release of newtopo is out";
+pub const UPDATE_TITLE_SUFFIX: &str = "is available";
+pub const UPDATE_BODY_HAVE: &str = "You have";
+pub const UPDATE_BODY: &str = "The release page on GitHub has the installers and what changed. newtopo never downloads or installs anything itself.";
+pub const UPDATE_OPEN: &str = "Open release page";
+pub const UPDATE_LATER: &str = "Later";
+pub const UPDATE_SKIP: &str = "Skip this version";
+pub const UPDATE_OPEN_FAILED: &str = "Couldn't open the browser";
+pub const UPDATE_ASK_TITLE: &str = "Check for updates?";
+pub const UPDATE_ASK_BODY: &str = "Once a day, newtopo can ask GitHub whether a newer release of SilasVogt/newtopo is out, and show a link to it.";
+pub const UPDATE_ASK_PRIVACY: &str = "It only reads the public release list over HTTPS. No account, no telemetry, and nothing is downloaded or installed. Change it any time in Preferences > General.";
+pub const UPDATE_ASK_YES: &str = "Check once a day";
+pub const UPDATE_ASK_NO: &str = "Don't check";
+pub const PREFS_UPDATES: &str = "Updates";
+pub const PREFS_UPDATE_DAILY: &str = "Check for a new release once a day";
+pub const PREFS_UPDATE_NOW: &str = "Check now";

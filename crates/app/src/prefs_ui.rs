@@ -186,6 +186,24 @@ impl AppState {
                 ui.label("");
                 crate::kit::checkbox(ui, &mut self.prefs.selection_undo, S::PREFS_SEL_UNDO);
                 ui.end_row();
+                ui.label(S::PREFS_UPDATES);
+                ui.horizontal(|ui| {
+                    let mut on = self.prefs.update_check == Some(true);
+                    if crate::kit::checkbox(ui, &mut on, S::PREFS_UPDATE_DAILY).changed() {
+                        self.prefs.update_check = Some(on);
+                        self.updates.ask_open = false;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.updates.check.is_none(),
+                            egui::Button::new(S::PREFS_UPDATE_NOW),
+                        )
+                        .clicked()
+                    {
+                        self.start_update_check(true);
+                    }
+                });
+                ui.end_row();
             });
         ui.add_space(10.0);
         heading(ui, S::IMPORT_OPTIONS);

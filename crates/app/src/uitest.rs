@@ -492,6 +492,74 @@ fn one_modal_at_a_time_and_esc_closes_the_visible_one() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(!h.app.st.ui.about_open);
     assert_eq!(h.app.st.active_modal(), None);
+
+fn update_results_follow_manual_and_skip_rules() {
+    use crate::update::{Available, Check, Outcome, Version};
+    let newer = || Ok(Outcome::Newer(Available::for_version(Version(9, 0, 0))));
+    let mut h = Harness::new(true);
+
+    // Automatic check, skipped version: nothing shows.
+    h.app.st.prefs.update_skipped = Some("9.0.0".into());
+    h.app.st.updates.check = Some(Check::finished(newer(), false));
+    h.frames(1);
+    assert!(h.app.st.updates.check.is_none());
+    assert!(h.app.st.updates.available.is_none());
+    assert!(!h.app.st.updates.dialog_open);
+
+    // Manual check shows it even when skipped, and opens the dialog.
+    h.app.st.updates.check = Some(Check::finished(newer(), true));
+    h.frames(1);
+    assert_eq!(
+        h.app.st.updates.available.as_ref().map(|a| a.version),
+        Some(Version(9, 0, 0))
+    );
+    assert!(h.app.st.updates.dialog_open);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(
+        !h.app.st.updates.dialog_open,
+        "Esc closes the update dialog"
+    );
+
+    // Automatic check, new version not skipped: chip, no dialog.
+    h.app.st.prefs.update_skipped = None;
+    h.app.st.updates.available = None;
+    h.app.st.updates.check = Some(Check::finished(newer(), false));
+    h.frames(1);
+    assert!(h.app.st.updates.available.is_some());
+    assert!(!h.app.st.updates.dialog_open);
+
+    // Up to date clears a stale notice; errors from automatic checks stay quiet.
+    h.app.st.updates.check = Some(Check::finished(
+        Ok(Outcome::UpToDate(Version(9, 0, 0))),
+        false,
+    ));
+    h.frames(1);
+    assert!(h.app.st.updates.available.is_none());
+    let toasts = h.app.st.toasts.items.len();
+    h.app.st.updates.check = Some(Check::finished(Err("offline".into()), false));
+    h.frames(1);
+    assert_eq!(
+        h.app.st.toasts.items.len(),
+        toasts,
+        "automatic errors don't toast"
+    );
+}
+
+#[test]
+fn update_question_is_remembered_and_never_shown_headless() {
+    let mut h = Harness::new(false);
+    // Screenshot/test mode never asks or checks on its own.
+    assert!(!h.app.st.updates.ask_open);
+    assert!(h.app.st.updates.check.is_none());
+    h.app.st.updates.ask_open = true;
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.ask_open);
+    assert_eq!(
+        h.app.st.prefs.update_check,
+        Some(false),
+        "Esc on the question means don't check"
+    );
 }
 
 #[test]

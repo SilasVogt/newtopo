@@ -333,6 +333,25 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
             }),
             frames(8),
         ),
+        (
+            "19-update-ask.png",
+            Box::new(|a: &mut App| {
+                a.st.load_sample();
+                a.st.updates.ask_open = true;
+            }),
+            frames(6),
+        ),
+        (
+            "20-update-available.png",
+            Box::new(|a: &mut App| {
+                a.st.load_sample();
+                a.st.updates.available = Some(crate::update::Available::for_version(
+                    crate::update::Version(0, 2, 0),
+                ));
+                a.st.updates.dialog_open = true;
+            }),
+            frames(6),
+        ),
     ];
     for (name, setup, fr) in scenarios {
         let ctx = egui::Context::default();

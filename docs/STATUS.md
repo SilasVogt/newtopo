@@ -13,7 +13,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | P3 Core loop | ✅ | Connect, Surface Grid, Slice, shared segment panel, auto-fill, loop/ring/every-other. |
 | P4 Precision and cleanup | ✅ | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits, radial menu. |
 | P5 Repeat and ship | 🟡 | Link, Symmetry, copy/paste rules, OBJ/glTF/FBX export, Blender import test. Link/Symmetry mirror rules and split lines but not edits (remove/collapse/weld). |
-| P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). |
+| P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). Update notice (§9.4): opt-in daily check of this repo's GitHub releases, link only, no self-update. |
 | P7 Polish | 🟡 | Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
 
 ## Known gaps

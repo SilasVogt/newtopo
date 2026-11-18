@@ -28,6 +28,7 @@ mod toasts;
 mod tools;
 #[cfg(test)]
 mod uitest;
+mod update;
 mod viewdata;
 mod viewport;
 

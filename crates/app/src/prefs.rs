@@ -159,6 +159,12 @@ pub struct Prefs {
     pub bridge: BridgePrefs,
     pub show_symmetry_planes: bool,
     pub show_grid: bool,
+    /// Automatic daily update check: `None` = not asked yet (SPEC §9.4).
+    pub update_check: Option<bool>,
+    /// Unix seconds of the last automatic check.
+    pub update_last_check: u64,
+    /// A version the user chose to skip ("Skip this version").
+    pub update_skipped: Option<String>,
 }
 
 impl Default for Prefs {
@@ -206,6 +212,9 @@ impl Default for Prefs {
             bridge: BridgePrefs::default(),
             show_symmetry_planes: true,
             show_grid: true,
+            update_check: None,
+            update_last_check: 0,
+            update_skipped: None,
         }
     }
 }
