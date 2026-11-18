@@ -204,6 +204,16 @@ impl DocState {
             .is_some_and(|s| guard(|| s.in_preview()).unwrap_or(false))
     }
 
+    /// Close a preview in which nothing changed (a refused op opened it).
+    /// Leaves a preview with real changes alone.
+    pub fn close_empty_preview(&mut self) {
+        if let Some(s) = self.scene.as_mut()
+            && guard(|| s.preview_is_empty()).unwrap_or(false)
+        {
+            let _ = guard(|| s.cancel_preview());
+        }
+    }
+
     /// Keep the previewed changes (one undo step).
     pub fn commit_preview(&mut self) {
         if let Some(s) = self.scene.as_mut() {

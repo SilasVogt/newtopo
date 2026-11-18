@@ -211,7 +211,7 @@ pub struct AppState {
     pub vd_rev: u64,
     /// The view of the document before the open preview, for the compare
     /// split: (document revision it was built at, data, render revision).
-    pub before_vd: Option<(u64, ViewData, u64)>,
+    pub before_vd: Option<((u64, DisplayParams), ViewData, u64)>,
     pub overlay: Arc<RenderScene>,
     pub overlay_sig: u64,
     pub overlay_rev: u64,
@@ -760,11 +760,11 @@ impl AppState {
             self.before_vd = None;
             return;
         }
-        let rev = self.doc.revision;
-        if self.before_vd.as_ref().is_some_and(|(r, _, _)| *r == rev) {
+        let params = self.display_params();
+        let key = (self.doc.revision, params.clone());
+        if self.before_vd.as_ref().is_some_and(|(k, _, _)| *k == key) {
             return;
         }
-        let params = self.display_params();
         let Some(scene) = self.doc.scene.as_mut() else {
             return;
         };
@@ -773,7 +773,7 @@ impl AppState {
         })
         .ok()
         .flatten();
-        self.before_vd = vd.map(|v| (rev, v, newtopo_render::egui_viewport::next_revision()));
+        self.before_vd = vd.map(|v| (key, v, newtopo_render::egui_viewport::next_revision()));
     }
 
     pub fn ensure_view_data(&mut self) {
@@ -851,6 +851,7 @@ impl AppState {
                 (outs.len(), outs.iter().map(|o| o.lines_added).sum())
             }
             Err(ApplyError::Refused(r)) if r.needs_confirmation => {
+                self.doc.close_empty_preview();
                 self.ui.confirm = Some(Confirm {
                     title: S::DLG_CONFIRM.into(),
                     body: r.reason.clone(),
@@ -859,6 +860,7 @@ impl AppState {
                 (0, 0)
             }
             Err(e) => {
+                self.doc.close_empty_preview();
                 let kind = if matches!(e, ApplyError::Engine(_)) {
                     ToastKind::Error
                 } else {
@@ -892,6 +894,7 @@ impl AppState {
                 Some(o)
             }
             Err(ApplyError::Refused(r)) if r.needs_confirmation => {
+                self.doc.close_empty_preview();
                 self.ui.confirm = Some(Confirm {
                     title: S::DLG_CONFIRM.into(),
                     body: r.reason.clone(),
@@ -900,6 +903,7 @@ impl AppState {
                 None
             }
             Err(e) => {
+                self.doc.close_empty_preview();
                 let kind = if matches!(e, ApplyError::Engine(_)) {
                     ToastKind::Error
                 } else {

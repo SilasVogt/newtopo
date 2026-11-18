@@ -108,3 +108,56 @@ fn preview_base_shows_the_document_before() {
     assert!(s.in_preview());
     let _ = b;
 }
+
+#[test]
+fn history_survives_a_preview_at_the_depth_limit() {
+    use newtopo_core::scene::UNDO_DEPTH;
+    let (mut s, b) = scene_with(MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)));
+    // Fill the undo stack to its limit with alternating toggles.
+    for i in 0..UNDO_DEPTH + 5 {
+        s.apply(Op::SetAutofill { on: i % 2 == 0 }).unwrap();
+    }
+    let undo_steps = |s: &mut newtopo_core::Scene| {
+        let mut n = 0;
+        while s.undo() {
+            n += 1;
+        }
+        for _ in 0..n {
+            assert!(s.redo());
+        }
+        n
+    };
+    assert_eq!(undo_steps(&mut s), UNDO_DEPTH);
+    // Cancelled preview with several provisional ops: history unchanged.
+    s.begin_preview();
+    for u in 2..6 {
+        s.apply(grid(u)).unwrap();
+    }
+    s.cancel_preview();
+    assert_eq!(undo_steps(&mut s), UNDO_DEPTH, "cancel keeps every step");
+    // Committed preview: exactly one new step (the oldest drops off).
+    let before = verts(&mut s, b);
+    s.begin_preview();
+    for u in 2..6 {
+        s.apply(grid(u)).unwrap();
+    }
+    s.commit_preview();
+    assert!(s.undo());
+    assert_eq!(
+        verts(&mut s, b),
+        before,
+        "one undo undoes the whole preview"
+    );
+    assert!(s.redo());
+    assert_eq!(undo_steps(&mut s), UNDO_DEPTH);
+}
+
+#[test]
+fn empty_preview_is_detected() {
+    let (mut s, _b) = scene_with(MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)));
+    assert!(!s.preview_is_empty(), "no preview open");
+    s.begin_preview();
+    assert!(s.preview_is_empty());
+    s.apply(grid(2)).unwrap();
+    assert!(!s.preview_is_empty());
+}

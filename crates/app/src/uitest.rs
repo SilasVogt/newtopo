@@ -759,3 +759,27 @@ fn mesh_changes_preview_until_applied() {
     h.app.st.run(Cmd::Undo);
     assert!(!autofill(&h), "the applied preview was one undo step");
 }
+
+#[test]
+fn refused_op_leaves_no_preview_open() {
+    use newtopo_core::Op;
+    use newtopo_core::ops::PatchSel;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    // No such body/face: the op is refused, so nothing is pending.
+    let r = h.app.st.apply(Op::Connect {
+        patches: PatchSel {
+            faces: vec![9999],
+            ..Default::default()
+        },
+        a: 4,
+        b: 0,
+        start_on_seam: false,
+    });
+    assert!(r.is_none(), "refused");
+    assert!(!h.app.st.doc.in_preview(), "no empty preview blocks saving");
+}

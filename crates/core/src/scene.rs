@@ -46,7 +46,9 @@ struct BodyCache {
 /// Where an open preview started.
 struct PreviewMark {
     doc: Arc<Document>,
-    undo_len: usize,
+    /// The whole undo stack (cheap: shared snapshots). Provisional ops may
+    /// trim the live stack at the depth limit, so a length isn't enough.
+    undo: Vec<Arc<Document>>,
     redo: Vec<Arc<Document>>,
 }
 
@@ -374,7 +376,7 @@ impl Scene {
             self.coalesce = None;
             self.preview = Some(PreviewMark {
                 doc: self.doc.clone(),
-                undo_len: self.undo.len(),
+                undo: self.undo.clone(),
                 redo: self.redo.clone(),
             });
         }
@@ -382,6 +384,11 @@ impl Scene {
 
     pub fn in_preview(&self) -> bool {
         self.preview.is_some()
+    }
+
+    /// A preview is open but nothing has changed in it.
+    pub fn preview_is_empty(&self) -> bool {
+        self.preview.as_ref().is_some_and(|m| *m.doc == *self.doc)
     }
 
     /// The document as it was when the preview started.
@@ -409,9 +416,13 @@ impl Scene {
             return;
         };
         self.coalesce = None;
-        self.undo.truncate(m.undo_len);
+        self.undo = m.undo;
         if *m.doc != *self.doc {
             self.undo.push(m.doc);
+            if self.undo.len() > UNDO_DEPTH {
+                let n = self.undo.len() - UNDO_DEPTH;
+                self.undo.drain(0..n);
+            }
         } else {
             // Nothing changed after all: keep the redo history too.
             self.redo = m.redo;
@@ -425,7 +436,7 @@ impl Scene {
         };
         self.coalesce = None;
         self.doc = m.doc;
-        self.undo.truncate(m.undo_len);
+        self.undo = m.undo;
         self.redo = m.redo;
     }
 
