@@ -329,15 +329,7 @@ impl AppState {
 
     /// Any dialog or overlay that Esc would close before the update dialogs.
     fn other_modal_open(&self) -> bool {
-        self.ui.palette.open
-            || self.ui.radial.open
-            || self.ui.confirm.is_some()
-            || self.ui.unsaved_prompt.is_some()
-            || self.ui.export.is_some()
-            || self.ui.import_list.is_some()
-            || self.ui.import_report.is_some()
-            || self.ui.about_open
-            || !self.ui.recovery.is_empty()
+        self.ui.palette.open || self.ui.radial.open || self.active_modal().is_some()
     }
 
     /// Top-bar chip while a newer version is known.

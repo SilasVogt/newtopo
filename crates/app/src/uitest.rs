@@ -492,7 +492,9 @@ fn one_modal_at_a_time_and_esc_closes_the_visible_one() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(!h.app.st.ui.about_open);
     assert_eq!(h.app.st.active_modal(), None);
+}
 
+#[test]
 fn update_results_follow_manual_and_skip_rules() {
     use crate::update::{Available, Check, Outcome, Version};
     let newer = || Ok(Outcome::Newer(Available::for_version(Version(9, 0, 0))));
