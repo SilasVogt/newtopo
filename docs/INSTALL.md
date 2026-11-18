@@ -20,6 +20,14 @@ To check a download: `sha256sum -c SHA256SUMS.txt --ignore-missing` (Linux),
 `shasum -a 256 -c SHA256SUMS.txt --ignore-missing` (macOS) or
 `Get-FileHash newtopo-<ver>-windows-x64-setup.exe` (PowerShell) and compare.
 
+**Updates.** newtopo doesn't update itself. If you allow it (it asks once on
+first launch, or *Preferences > General*), it checks this repository's GitHub
+releases once a day and shows an "Update" button that links to the new
+release page; *Help > Check for updates* checks on demand. It only reads
+the public release list and never downloads anything. Set
+`NEWTOPO_NO_UPDATE_CHECK=1` to turn the automatic check off for a whole
+installation.
+
 Every package contains three programs that must stay together in one folder:
 `newtopo` (the app), `newtopo-cli` (command line) and `newtopo-import` (the
 helper the other two start to read CAD files).

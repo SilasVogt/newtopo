@@ -218,6 +218,7 @@ pub struct AppState {
     pub sel_before_key: Option<Selection>,
     pub drag: Option<crate::viewport::DragState>,
     pub jobs: crate::jobs::Jobs,
+    pub updates: crate::update::UpdateUi,
     pub time: f64,
     pub next_autosave: f64,
     pub last_title: String,
@@ -295,6 +296,7 @@ impl App {
             owned_autosaves: BTreeSet::new(),
             drag: None,
             jobs: Default::default(),
+            updates: Default::default(),
             time: 0.0,
             next_autosave: 0.0,
             last_title: String::new(),
@@ -330,6 +332,7 @@ impl App {
         }
         st.ensure_theme(&ctx);
         st.poll_jobs(&ctx);
+        st.poll_update(&ctx);
         st.view.shown = false;
         st.view.chip_rect = None;
         st.handle_dropped_files(&ctx);
@@ -1002,6 +1005,7 @@ impl AppState {
             Export => self.open_export_dialog(),
             LoadSample => self.load_sample(),
             Quit => self.request(PendingAfterPrompt::Quit),
+            CheckUpdates => self.start_update_check(true),
             About => self.ui.about_open = true,
         }
     }
@@ -1287,6 +1291,16 @@ impl AppState {
         } else if self.active_modal().is_some() {
             // A dialog is about to appear; don't let this Esc fall through
             // to the tool or isolate underneath it.
+        } else if self.updates.shown == Some(crate::update::UpdateDialog::Available)
+            && self.updates.dialog_open
+        {
+            self.updates.dialog_open = false;
+            self.updates.shown = None;
+        } else if self.updates.shown == Some(crate::update::UpdateDialog::Ask)
+            && self.updates.ask_open
+        {
+            self.answer_update_question(false);
+            self.updates.shown = None;
         } else if self.ui.prefs_open {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {
@@ -1427,6 +1441,7 @@ impl AppState {
                             self.ui.palette.open_fresh();
                         }
                         ui.add_space(12.0);
+                        self.update_chip(ui);
                         self.title_label(ui);
                     });
                 });
@@ -1627,7 +1642,12 @@ impl AppState {
                 }
             });
             ui.menu_button(S::MENU_HELP, |ui| {
-                for c in [Cmd::Palette, Cmd::KeymapEditor, Cmd::About] {
+                for c in [
+                    Cmd::Palette,
+                    Cmd::KeymapEditor,
+                    Cmd::CheckUpdates,
+                    Cmd::About,
+                ] {
                     item(ui, &km, c, &mut run);
                 }
             });
@@ -1693,6 +1713,7 @@ impl AppState {
         self.key_capture_ui(ctx);
         self.prefs_window(ctx);
         self.dialogs_ui(ctx);
+        self.update_dialogs(ctx);
     }
 }
 

@@ -495,6 +495,80 @@ fn one_modal_at_a_time_and_esc_closes_the_visible_one() {
 }
 
 #[test]
+fn update_results_follow_manual_and_skip_rules() {
+    use crate::update::{Available, Check, Outcome, Version};
+    let newer = || Ok(Outcome::Newer(Available::for_version(Version(9, 0, 0))));
+    let mut h = Harness::new(true);
+
+    // Automatic check, skipped version: nothing shows.
+    h.app.st.prefs.update_skipped = Some("9.0.0".into());
+    h.app.st.updates.check = Some(Check::finished(newer(), false));
+    h.frames(1);
+    assert!(h.app.st.updates.check.is_none());
+    assert!(h.app.st.updates.available.is_none());
+    assert!(!h.app.st.updates.dialog_open);
+
+    // Manual check shows it even when skipped, and opens the dialog.
+    h.app.st.updates.check = Some(Check::finished(newer(), true));
+    h.frames(1);
+    assert_eq!(
+        h.app.st.updates.available.as_ref().map(|a| a.version),
+        Some(Version(9, 0, 0))
+    );
+    assert!(h.app.st.updates.dialog_open);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(
+        !h.app.st.updates.dialog_open,
+        "Esc closes the update dialog"
+    );
+
+    // Automatic check, new version not skipped: chip, no dialog.
+    h.app.st.prefs.update_skipped = None;
+    h.app.st.updates.available = None;
+    h.app.st.updates.check = Some(Check::finished(newer(), false));
+    h.frames(1);
+    assert!(h.app.st.updates.available.is_some());
+    assert!(!h.app.st.updates.dialog_open);
+
+    // Up to date clears a stale notice; errors from automatic checks stay quiet.
+    h.app.st.updates.check = Some(Check::finished(
+        Ok(Outcome::UpToDate(Version(9, 0, 0))),
+        false,
+    ));
+    h.frames(1);
+    assert!(h.app.st.updates.available.is_none());
+    let toasts = h.app.st.toasts.items.len();
+    h.app.st.updates.check = Some(Check::finished(Err("offline".into()), false));
+    h.frames(1);
+    assert_eq!(
+        h.app.st.toasts.items.len(),
+        toasts,
+        "automatic errors don't toast"
+    );
+}
+
+#[test]
+fn update_question_is_remembered_and_never_shown_headless() {
+    let mut h = Harness::new(false);
+    // Screenshot/test mode never asks or checks: not at startup, and not
+    // when the command runs (no request leaves a test run).
+    h.app.st.startup_update_check();
+    assert!(!h.app.st.updates.ask_open);
+    assert!(h.app.st.updates.check.is_none());
+    h.app.st.run(Cmd::CheckUpdates);
+    assert!(h.app.st.updates.check.is_none(), "no network in tests");
+    h.app.st.updates.ask_open = true;
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.ask_open);
+    assert_eq!(
+        h.app.st.prefs.update_check,
+        Some(false),
+        "Esc on the question means don't check"
+    );
+}
+
+#[test]
 fn esc_spares_a_dialog_that_arrived_unseen() {
     use crate::jobs::{ExportDialog, ImportReport, Modal};
     let mut h = Harness::new(true);
@@ -528,4 +602,76 @@ fn esc_spares_a_dialog_that_arrived_unseen() {
     assert_eq!(h.app.st.ui.shown_modal, Some(Modal::ImportReport));
     h.key(Key::Escape, Modifiers::NONE);
     assert!(h.app.st.ui.import_report.is_none());
+}
+
+#[test]
+fn update_dialog_waits_for_other_dialogs() {
+    use crate::update::{Available, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.about_open = true;
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(1);
+    // About is the visible dialog, so Esc closes About and the update
+    // dialog is still pending.
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.about_open);
+    assert!(h.app.st.updates.dialog_open);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open);
+}
+
+#[test]
+fn update_dialog_waits_for_shortcut_capture() {
+    use crate::update::{Available, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.key_capture = Some(crate::palette::KeyCapture {
+        cmd: crate::commands::Cmd::Connect,
+        captured: None,
+        double: false,
+    });
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(2);
+    assert!(h.app.st.ui.key_capture.is_some(), "capture keeps the focus");
+    assert!(
+        h.app.st.updates.dialog_open,
+        "update dialog is still pending"
+    );
+}
+
+#[test]
+fn esc_spares_an_update_dialog_that_arrived_unseen() {
+    use crate::update::{Available, Check, Outcome, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.prefs_open = true;
+    h.frames(1);
+    // A manual check finishes in the same frame as an Esc meant for
+    // Preferences: Preferences closes, the new notice survives.
+    h.app.st.updates.check = Some(Check::finished(
+        Ok(Outcome::Newer(Available::for_version(Version(9, 0, 0)))),
+        true,
+    ));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.prefs_open);
+    assert!(h.app.st.updates.dialog_open);
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open, "seen, so Esc closes it");
+}
+
+#[test]
+fn only_one_update_dialog_at_a_time() {
+    use crate::update::{Available, UpdateDialog, Version};
+    let mut h = Harness::new(true);
+    h.app.st.updates.ask_open = true;
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(1);
+    assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Available));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open);
+    assert!(h.app.st.updates.ask_open, "the question waits its turn");
+    h.frames(1);
+    assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Ask));
 }

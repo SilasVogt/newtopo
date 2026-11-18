@@ -1019,6 +1019,35 @@ Properties:
   sharp edges and UVs intact. In CI (`blender -b`), timers may not fire, so
   the test calls the addon's poll function directly in a loop.
 
+### 9.4 Update notice
+The app can tell the user that a newer release exists. It never downloads,
+installs or runs anything; it only links to the release page.
+
+- **Source**: exactly one URL,
+  `https://api.github.com/repos/SilasVogt/newtopo/releases/latest`, over
+  HTTPS (rustls with bundled web PKI roots). Redirects are not followed; the
+  request has a global timeout and the reply a size cap. Only `tag_name`,
+  `draft` and `prerelease` are read. The tag must be a plain
+  `vMAJOR.MINOR.PATCH`; drafts, pre-releases and anything else are ignored.
+- **Link**: built locally from the parsed version
+  (`https://github.com/SilasVogt/newtopo/releases/tag/v<version>`), never
+  taken from the reply, and checked again before the browser opens it.
+  No release text from the reply is shown.
+- **Privacy**: the request carries no user data: a `User-Agent` with the
+  app version and the fixed `Accept` / `X-GitHub-Api-Version` headers.
+  No account, token or telemetry.
+- **When**: opt-in. On first launch the app asks once ("Check once a day" /
+  "Don't check"; Esc counts as don't). If on, it checks at most once a day
+  at startup, in the background, and stays silent on errors. *Help > Check
+  for updates* checks on demand and reports every outcome. Preferences >
+  General has the switch and a "Check now" button. Setting
+  `NEWTOPO_NO_UPDATE_CHECK` disables the automatic check and the question
+  (for packagers and sandboxes); headless and screenshot runs never check.
+- **UI**: a newer version shows an accent "Update x.y.z" chip in the top bar
+  (and a toast after an automatic check). The chip opens a dialog with
+  *Open release page*, *Later* and *Skip this version*; a skipped version
+  is not announced again by automatic checks.
+
 ---
 
 ## 10. Headless CLI and scripting
