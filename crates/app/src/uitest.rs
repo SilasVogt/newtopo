@@ -639,3 +639,39 @@ fn update_dialog_waits_for_shortcut_capture() {
         "update dialog is still pending"
     );
 }
+
+#[test]
+fn esc_spares_an_update_dialog_that_arrived_unseen() {
+    use crate::update::{Available, Check, Outcome, Version};
+    let mut h = Harness::new(true);
+    h.app.st.ui.prefs_open = true;
+    h.frames(1);
+    // A manual check finishes in the same frame as an Esc meant for
+    // Preferences: Preferences closes, the new notice survives.
+    h.app.st.updates.check = Some(Check::finished(
+        Ok(Outcome::Newer(Available::for_version(Version(9, 0, 0)))),
+        true,
+    ));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.ui.prefs_open);
+    assert!(h.app.st.updates.dialog_open);
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open, "seen, so Esc closes it");
+}
+
+#[test]
+fn only_one_update_dialog_at_a_time() {
+    use crate::update::{Available, UpdateDialog, Version};
+    let mut h = Harness::new(true);
+    h.app.st.updates.ask_open = true;
+    h.app.st.updates.available = Some(Available::for_version(Version(9, 0, 0)));
+    h.app.st.updates.dialog_open = true;
+    h.frames(1);
+    assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Available));
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.updates.dialog_open);
+    assert!(h.app.st.updates.ask_open, "the question waits its turn");
+    h.frames(1);
+    assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Ask));
+}

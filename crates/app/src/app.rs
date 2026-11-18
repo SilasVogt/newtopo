@@ -1291,10 +1291,16 @@ impl AppState {
         } else if self.active_modal().is_some() {
             // A dialog is about to appear; don't let this Esc fall through
             // to the tool or isolate underneath it.
-        } else if self.updates.dialog_open {
+        } else if self.updates.shown == Some(crate::update::UpdateDialog::Available)
+            && self.updates.dialog_open
+        {
             self.updates.dialog_open = false;
-        } else if self.updates.ask_open {
+            self.updates.shown = None;
+        } else if self.updates.shown == Some(crate::update::UpdateDialog::Ask)
+            && self.updates.ask_open
+        {
             self.answer_update_question(false);
+            self.updates.shown = None;
         } else if self.ui.prefs_open {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {

@@ -217,6 +217,15 @@ pub struct UpdateUi {
     pub dialog_open: bool,
     /// The one-time "check automatically?" question.
     pub ask_open: bool,
+    /// Which of the two was drawn last frame (what Esc may dismiss); a
+    /// dialog that opened this frame and isn't drawn yet is left alone.
+    pub shown: Option<UpdateDialog>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateDialog {
+    Available,
+    Ask,
 }
 
 /// Seconds since the Unix epoch (0 if the clock is before it).
@@ -371,10 +380,17 @@ impl AppState {
         // Update dialogs never stack on another modal or overlay: they wait
         // until it closes, so the dialog Esc closes is always the visible one
         // (see `AppState::escape`).
+        self.updates.shown = None;
         if self.other_modal_open() {
             return;
         }
-        if self.updates.ask_open {
+        // One update dialog at a time: the release notice wins over the
+        // question (which then waits).
+        if self.updates.dialog_open && self.updates.available.is_none() {
+            self.updates.dialog_open = false;
+        }
+        if !self.updates.dialog_open && self.updates.ask_open {
+            self.updates.shown = Some(UpdateDialog::Ask);
             let mut answer = None;
             kit::modal("update-ask", &pal).show(ctx, |ui| {
                 ui.set_width(440.0);
@@ -397,11 +413,13 @@ impl AppState {
             if let Some(yes) = answer {
                 self.answer_update_question(yes);
             }
+            return;
         }
 
         if !self.updates.dialog_open {
             return;
         }
+        self.updates.shown = Some(UpdateDialog::Available);
         let Some(a) = self.updates.available.clone() else {
             self.updates.dialog_open = false;
             return;
