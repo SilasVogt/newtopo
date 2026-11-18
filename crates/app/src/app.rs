@@ -1244,7 +1244,11 @@ impl AppState {
                 continue;
             }
             if key == Key::Escape {
-                self.escape();
+                // In a text field Esc belongs to the field (it leaves it or
+                // cancels a rename), not to dialogs or tools behind it.
+                if !typing {
+                    self.escape();
+                }
                 continue;
             }
             if typing || self.ui.palette.open {

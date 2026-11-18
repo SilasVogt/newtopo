@@ -675,3 +675,42 @@ fn only_one_update_dialog_at_a_time() {
     h.frames(1);
     assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Ask));
 }
+
+#[test]
+fn rename_field_can_be_left_and_cancelled() {
+    use crate::panels::RenameTarget;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let id = h.app.st.layer_rows()[0].id;
+    let name = |h: &Harness| {
+        h.app
+            .st
+            .layer_rows()
+            .iter()
+            .find(|l| l.id == id)
+            .map(|l| l.name.clone())
+    };
+    h.app.st.ui.outliner.renaming = Some((RenameTarget::Layer(id), "Renamed".into()));
+    h.app.st.ui.outliner.focus_rename = true;
+    h.frames(3);
+    assert!(h.app.st.ui.outliner.renaming.is_some(), "still editing");
+    assert!(
+        !h.app.st.ui.outliner.focus_rename,
+        "focus is asked for once"
+    );
+    // Clicking elsewhere leaves the field and keeps the typed name.
+    h.click(pos2(800.0, 500.0), Modifiers::NONE);
+    assert!(h.app.st.ui.outliner.renaming.is_none(), "the field let go");
+    assert_eq!(name(&h).as_deref(), Some("Renamed"));
+    // Esc cancels without renaming (and doesn't reach tools or dialogs).
+    h.app.st.ui.outliner.renaming = Some((RenameTarget::Layer(id), "Other".into()));
+    h.app.st.ui.outliner.focus_rename = true;
+    h.frames(2);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.outliner.renaming.is_none());
+    assert_eq!(name(&h).as_deref(), Some("Renamed"));
+}
