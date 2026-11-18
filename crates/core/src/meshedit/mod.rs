@@ -7,19 +7,26 @@
 //!   collapse short edges, slide vertices to straighten the run, dissolve
 //!   straight-through vertices);
 //! - [`resample`]: respace edge runs evenly by arc length, optionally to a
-//!   new vertex count or edge length.
+//!   new vertex count or edge length;
+//! - [`vertex_slide`] / [`SlidePlan`]: move vertices along one of their
+//!   edges (a plan is cheap to apply again and again while dragging);
+//! - [`merge_by_distance`]: merge vertices closer than a distance.
 //!
-//! All three are pure functions: input mesh + parameters → new mesh, or a
-//! [`Refusal`] with a reason. None of them adds holes, changes the topology
-//! (genus, boundary loops, connected parts), flips a face, moves a pinned
-//! vertex, or bends a preserved feature edge.
+//! All are pure functions: input mesh + parameters → new mesh, or a
+//! [`Refusal`] with a reason. None of them adds holes, flips a face, makes
+//! the mesh non-manifold, moves a pinned vertex, or bends a preserved
+//! feature edge. All but Merge by Distance keep the topology (genus,
+//! boundary loops, connected parts); Merge by Distance changes it only by
+//! welding open boundaries together.
 
 mod cleanup;
 mod decimate;
+mod merge;
 pub mod mesh;
 mod quadric;
 mod refill;
 mod resample;
+mod slide;
 pub mod synth;
 mod work;
 
@@ -28,8 +35,10 @@ mod tests;
 
 pub use cleanup::{CleanupParams, cleanup};
 pub use decimate::{DecimateMode, DecimateParams, Target, decimate};
+pub use merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_by_distance};
 pub use mesh::{EdgeFlags, EditMesh, EditPolygon, FlaggedEdge};
 pub use resample::{ResampleParams, Spacing, resample};
+pub use slide::{SlideEdge, SlideMove, SlideParams, SlidePlan, vertex_slide};
 
 use crate::mesh::MeshStats;
 use crate::ops::Refusal;
@@ -73,9 +82,13 @@ pub struct EditOutcome {
     /// Input vertex index → output index; `None` if the vertex was merged
     /// away. A moved vertex keeps its entry.
     pub vertex_map: Vec<Option<u32>>,
-    /// The selection after the edit, in output indices (sorted; empty for
-    /// Decimate).
+    /// The edge selection after the edit, in output indices (sorted; empty
+    /// for Decimate and Merge by Distance; the slide edges for Vertex
+    /// Slide).
     pub selection: Vec<[u32; 2]>,
+    /// The vertex selection after the edit, in output indices (sorted;
+    /// empty for the edge tools).
+    pub selected_vertices: Vec<u32>,
     pub report: EditReport,
 }
 

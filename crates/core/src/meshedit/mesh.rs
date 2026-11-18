@@ -165,6 +165,60 @@ impl EditMesh {
         Ok(mesh)
     }
 
+    /// Set the seam flag on every edge whose two sides carry different UVs
+    /// (and clear it elsewhere), so `flagged` agrees with the UVs.
+    pub(crate) fn flag_seams(&mut self) {
+        if !self.has_uvs() {
+            return;
+        }
+        let mut side: HashMap<(u32, u32), (DVec2, DVec2)> = HashMap::new();
+        let mut seam: BTreeSet<(u32, u32)> = BTreeSet::new();
+        for p in &self.polygons {
+            let uv = p.uvs.as_ref().expect("has_uvs");
+            let n = p.verts.len();
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let (a, b) = (p.verts[i], p.verts[j]);
+                let val = if a < b {
+                    (uv[i], uv[j])
+                } else {
+                    (uv[j], uv[i])
+                };
+                let k = ekey(a, b);
+                match side.get(&k) {
+                    Some(o) if o.0.distance(val.0) > 1e-9 || o.1.distance(val.1) > 1e-9 => {
+                        seam.insert(k);
+                    }
+                    Some(_) => {}
+                    None => {
+                        side.insert(k, val);
+                    }
+                }
+            }
+        }
+        let mut map: BTreeMap<(u32, u32), EdgeFlags> = self
+            .flagged
+            .iter()
+            .map(|e| {
+                (
+                    ekey(e.a, e.b),
+                    EdgeFlags {
+                        seam: false,
+                        ..e.flags
+                    },
+                )
+            })
+            .collect();
+        for k in seam {
+            map.entry(k).or_default().seam = true;
+        }
+        self.flagged = map
+            .into_iter()
+            .filter(|(_, f)| f.any())
+            .map(|((a, b), flags)| FlaggedEdge { a, b, flags })
+            .collect();
+    }
+
     pub fn stats(&self) -> MeshStats {
         let mut s = MeshStats {
             verts: self.used_vertex_count(),

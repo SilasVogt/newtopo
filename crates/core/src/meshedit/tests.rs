@@ -1,4 +1,4 @@
-//! Unit tests for the mesh tools on synthetic meshes (SPEC §9.5.6).
+//! Unit tests for the mesh tools on synthetic meshes (SPEC §9.5.8).
 
 use super::mesh::area_vec;
 use super::synth::*;
@@ -809,4 +809,524 @@ fn resample_cube_features_stay_on_edges() {
     // 12 cube edges of length 2, 4 edges each.
     assert_eq!(r.mesh.flagged.len(), 48);
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
+}
+
+// -------------------------------------------------------------- vertex slide
+
+fn toward(x: u32, y: u32) -> SlideEdge {
+    SlideEdge::Toward(vec![[x, y]])
+}
+
+fn slide(m: &EditMesh, e: &SlideEdge, factor: f64) -> Result<EditOutcome, crate::ops::Refusal> {
+    vertex_slide(
+        m,
+        e,
+        &SlideParams {
+            factor,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn slide_factor_zero_is_identity() {
+    let m = sphere(12, 6, 1.0);
+    let e = SlideEdge::Direction {
+        vertices: vec![20, 21, 33],
+        dir: DVec3::X,
+    };
+    let r = slide(&m, &e, 0.0).unwrap();
+    assert_eq!(r.mesh, m);
+    assert_eq!(
+        r.vertex_map,
+        (0..m.positions.len() as u32).map(Some).collect::<Vec<_>>()
+    );
+    assert_eq!(r.selected_vertices, vec![20, 21, 33]);
+}
+
+#[test]
+fn slide_moves_along_the_edge() {
+    let m = plane(4, 1.0);
+    let (x, y) = (grid_id(4, 2, 2), grid_id(4, 3, 2));
+    let (px, py) = (m.positions[x as usize], m.positions[y as usize]);
+    for t in [0.25, 0.5, 0.9] {
+        let r = slide(&m, &toward(x, y), t).unwrap();
+        assert_sound(&m, &r.mesh, "slide");
+        assert!(r.report.reached_target);
+        let nx = r.vertex_map[x as usize].unwrap() as usize;
+        assert!(r.mesh.positions[nx].distance(px.lerp(py, t)) < 1e-12);
+        // Nothing else moves.
+        for v in 0..m.positions.len() {
+            if v as u32 != x {
+                let o = r.vertex_map[v].unwrap() as usize;
+                assert_eq!(r.mesh.positions[o], m.positions[v]);
+            }
+        }
+        assert_eq!(
+            r.selection,
+            vec![[nx as u32, r.vertex_map[y as usize].unwrap()]]
+        );
+    }
+}
+
+#[test]
+fn slide_to_one_lands_on_the_neighbour() {
+    let m = plane(4, 1.0);
+    let (x, y) = (grid_id(4, 2, 2), grid_id(4, 3, 2));
+    let r = slide(&m, &toward(x, y), 1.0).unwrap();
+    assert_sound(&m, &r.mesh, "slide to 1");
+    assert_eq!(r.vertex_map[x as usize], None, "merged into the neighbour");
+    let ny = r.vertex_map[y as usize].unwrap() as usize;
+    assert_eq!(r.mesh.positions[ny], m.positions[y as usize]);
+    assert_eq!(r.mesh.stats().verts, m.stats().verts - 1);
+    assert_eq!(r.selected_vertices, vec![ny as u32]);
+    // Clamped: anything above 1 is 1.
+    let r2 = slide(&m, &toward(x, y), 3.0).unwrap();
+    assert_eq!(r2.mesh, r.mesh);
+}
+
+#[test]
+fn slide_unclamped_extends_and_stops_before_folding() {
+    let m = plane(4, 1.0);
+    let (x, y) = (grid_id(4, 2, 2), grid_id(4, 3, 2));
+    let p = SlideParams {
+        factor: -0.5,
+        clamp: false,
+        ..Default::default()
+    };
+    let r = vertex_slide(&m, &toward(x, y), &p).unwrap();
+    assert_sound(&m, &r.mesh, "extend");
+    assert!(r.report.reached_target);
+    let nx = r.vertex_map[x as usize].unwrap() as usize;
+    assert!((r.mesh.positions[nx].x - 0.375).abs() < 1e-12);
+    // Clamped, the same factor stays at 0.
+    let c = vertex_slide(&m, &toward(x, y), &SlideParams { clamp: true, ..p }).unwrap();
+    assert_eq!(c.mesh, m);
+    // Far beyond the opposite neighbour (x = 0.25) the quads would fold:
+    // the slide stops short of it and says so.
+    let far = vertex_slide(&m, &toward(x, y), &SlideParams { factor: -3.0, ..p }).unwrap();
+    assert_sound(&m, &far.mesh, "fold limit");
+    assert!(!far.report.reached_target, "{}", far.report.message);
+    let fx = far.mesh.positions[far.vertex_map[x as usize].unwrap() as usize].x;
+    assert!(fx > 0.25 && fx < 0.26, "{fx}");
+}
+
+#[test]
+fn slide_even_moves_the_same_distance() {
+    let mut m = plane(4, 4.0);
+    // Column 2 shifted right: (1, 1) → (2, 1) is 1.5 long, (2, 3) → (3, 3)
+    // is 0.5 long.
+    for j in 0..=4 {
+        m.positions[grid_id(4, 2, j) as usize].x = 2.5;
+    }
+    let (a, b) = (grid_id(4, 1, 1), grid_id(4, 2, 3));
+    let e = SlideEdge::Direction {
+        vertices: vec![a, b],
+        dir: DVec3::X,
+    };
+    let plan = SlidePlan::new(&m, &e, Preserve::default(), 60.0).unwrap();
+    let even = plan.apply(0.5, true, true).unwrap();
+    let rel = plan.apply(0.5, false, true).unwrap();
+    let dx = |r: &EditOutcome, v: u32| {
+        r.mesh.positions[r.vertex_map[v as usize].unwrap() as usize].x - m.positions[v as usize].x
+    };
+    assert!((dx(&even, a) - 0.25).abs() < 1e-12 && (dx(&even, b) - 0.25).abs() < 1e-12);
+    assert!((dx(&rel, a) - 0.75).abs() < 1e-12 && (dx(&rel, b) - 0.25).abs() < 1e-12);
+    // The preview positions agree with the result.
+    for (v, p) in plan.positions(0.5, true, true) {
+        assert_eq!(
+            even.mesh.positions[even.vertex_map[v as usize].unwrap() as usize],
+            p
+        );
+    }
+}
+
+#[test]
+fn slide_boundary_vertices_stay_on_the_boundary() {
+    let m = plane(4, 1.0);
+    let x = grid_id(4, 0, 2); // on the x = 0 border
+    let e = SlideEdge::Direction {
+        vertices: vec![x],
+        dir: DVec3::new(1.0, 0.1, 0.0), // into the plane, a little upwards
+    };
+    let r = slide(&m, &e, 0.5).unwrap();
+    assert_sound(&m, &r.mesh, "boundary slide");
+    let p = r.mesh.positions[r.vertex_map[x as usize].unwrap() as usize];
+    assert_eq!(p.x, 0.0);
+    assert!((p.y - 0.625).abs() < 1e-12, "{p}");
+    // Explicitly towards the interior: refused with a reason.
+    let err = slide(&m, &toward(x, grid_id(4, 1, 2)), 0.5).unwrap_err();
+    assert!(err.reason.contains("feature"), "{}", err.reason);
+}
+
+#[test]
+fn slide_feature_vertices_stay_on_their_feature_unless_overridden() {
+    let m = cube(4, 1.0);
+    // A vertex in the middle of a cube edge: on a CAD + hard curve.
+    let x = (0..m.positions.len() as u32)
+        .find(|&v| {
+            let p = m.positions[v as usize];
+            !m.pinned[v as usize]
+                && [p.x, p.y, p.z]
+                    .iter()
+                    .filter(|c| (c.abs() - 1.0).abs() < 1e-12)
+                    .count()
+                    == 2
+        })
+        .unwrap();
+    let e = |dir| SlideEdge::Direction {
+        vertices: vec![x],
+        dir,
+    };
+    let p = m.positions[x as usize];
+    // Pointing at the cube centre: the best feature edge is chosen.
+    let r = slide(&m, &e(-p), 0.5).unwrap();
+    assert_sound(&m, &r.mesh, "feature slide");
+    assert!(on_cube_edges(&r.mesh, 1.0));
+    assert!(hausdorff(&m, &r.mesh) < 1e-9);
+    assert!((flagged_length(&r.mesh) - flagged_length(&m)).abs() < 1e-9);
+    // With CAD and hard edges not preserved it may leave the edge.
+    let free = vertex_slide(
+        &m,
+        &e(-p),
+        &SlideParams {
+            preserve: Preserve {
+                cad_edges: false,
+                hard_edges: false,
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_sound(&m, &free.mesh, "override");
+    let q = free.mesh.positions[free.vertex_map[x as usize].unwrap() as usize];
+    let extreme = [q.x, q.y, q.z]
+        .iter()
+        .filter(|c| (c.abs() - 1.0).abs() < 1e-9)
+        .count();
+    assert_eq!(extreme, 1, "left the cube edge onto a face: {q}");
+    // Corners (pinned) never slide.
+    let corner = m.pinned.iter().position(|&p| p).unwrap() as u32;
+    let err = slide(
+        &m,
+        &SlideEdge::Direction {
+            vertices: vec![corner],
+            dir: DVec3::X,
+        },
+        0.5,
+    )
+    .unwrap_err();
+    assert!(err.reason.contains("corner"), "{}", err.reason);
+}
+
+#[test]
+fn slide_refusals_and_skips() {
+    let m = plane(3, 1.0);
+    let (x, y) = (grid_id(3, 1, 1), grid_id(3, 2, 1));
+    assert!(slide(&m, &SlideEdge::Toward(vec![]), 0.5).is_err());
+    assert!(
+        slide(&m, &toward(x, grid_id(3, 3, 3)), 0.5).is_err(),
+        "not an edge"
+    );
+    assert!(
+        slide(
+            &m,
+            &SlideEdge::Toward(vec![[x, y], [x, grid_id(3, 1, 2)]]),
+            0.5
+        )
+        .is_err()
+    );
+    let zero = SlideEdge::Direction {
+        vertices: vec![x],
+        dir: DVec3::ZERO,
+    };
+    assert!(slide(&m, &zero, 0.5).is_err());
+    assert!(slide(&m, &toward(x, y), f64::NAN).is_err());
+    let p = SlideParams {
+        max_normal_change_deg: 0.0,
+        ..Default::default()
+    };
+    assert!(vertex_slide(&m, &toward(x, y), &p).is_err());
+    // Two neighbours sliding into each other: both skipped, so refused.
+    let err = slide(&m, &SlideEdge::Toward(vec![[x, y], [y, x]]), 0.5).unwrap_err();
+    assert!(err.reason.contains("slides too"), "{}", err.reason);
+    // With a third vertex that can slide, the pair is skipped and reported.
+    let z = grid_id(3, 1, 2);
+    let r = slide(
+        &m,
+        &SlideEdge::Toward(vec![[x, y], [y, x], [z, grid_id(3, 0, 2)]]),
+        0.5,
+    );
+    let r = r.unwrap();
+    assert_eq!(r.report.skipped.len(), 2, "{:?}", r.report.skipped);
+}
+
+#[test]
+fn slide_plan_is_reusable_and_matches_one_shot() {
+    let m = sphere(16, 8, 1.0);
+    let e = SlideEdge::Direction {
+        vertices: vec![40, 41, 42, 43],
+        dir: DVec3::Z,
+    };
+    let plan = SlidePlan::new(&m, &e, Preserve::default(), 60.0).unwrap();
+    for k in 0..=10 {
+        let t = k as f64 / 10.0;
+        let r = plan.apply(t, false, true).unwrap();
+        assert_sound(&m, &r.mesh, &format!("sphere slide {t}"));
+        assert_eq!(r.mesh, slide(&m, &e, t).unwrap().mesh, "t = {t}");
+        // Every vertex stays on the input surface (it moved along an edge).
+        assert!(vertex_deviation(&r.mesh, &m) < 1e-9);
+    }
+}
+
+// --------------------------------------------------------- merge by distance
+
+/// Two `nx × ny` sheets on top of each other in y, the second shifted by
+/// `1 + gap`: a straight crack along y = 1 with duplicated vertices.
+fn cracked(nx: usize, ny: usize, gap: f64) -> EditMesh {
+    let a = heightfield(nx, ny, 1.0, |_, _| 0.0);
+    let mut b = a.clone();
+    for p in &mut b.positions {
+        p.y += 1.0 + gap;
+    }
+    let off = a.positions.len() as u32;
+    let mut m = a.clone();
+    m.positions.extend(b.positions);
+    m.pinned.extend(b.pinned);
+    for mut q in b.polygons {
+        for v in &mut q.verts {
+            *v += off;
+        }
+        m.polygons.push(q);
+    }
+    m
+}
+
+#[test]
+fn merge_welds_a_crack() {
+    let m = cracked(4, 2, 1e-6);
+    let whole = heightfield(4, 4, 1.0, |_, _| 0.0);
+    assert_eq!(m.topology(), (2, 2, 2));
+    for mode in [MergeMode::All, MergeMode::Unconnected] {
+        let p = MergeParams {
+            mode,
+            ..MergeParams::default()
+        };
+        let r = merge_by_distance(&m, &VertexScope::All, &p).unwrap();
+        let out = &r.mesh;
+        assert!(out.issues().is_empty(), "{:?}", out.issues());
+        assert!(out.flipped_polygons().is_empty());
+        assert_eq!(out.topology(), whole.topology(), "{mode:?}");
+        assert_eq!(
+            out.stats().verts,
+            m.stats().verts - 5,
+            "{}",
+            r.report.message
+        );
+        assert!(
+            r.report.message.contains("Removed 5"),
+            "{}",
+            r.report.message
+        );
+        // Centroid: the interior seam vertices sit halfway, the two seam
+        // ends on the outer border keep the survivor's position.
+        let seam: Vec<DVec3> = out
+            .positions
+            .iter()
+            .copied()
+            .filter(|p| (p.y - 1.0).abs() < 1e-5)
+            .collect();
+        assert_eq!(seam.len(), 5);
+        for p in seam {
+            let border = p.x == 0.0 || p.x == 1.0;
+            let want = if border { 1.0 } else { 1.0 + 5e-7 };
+            assert!((p.y - want).abs() < 1e-15, "{p}");
+        }
+        // Each side keeps its own UVs (u = x on both sheets), and the glued
+        // edges are flagged as the UV seam they now are.
+        for q in &out.polygons {
+            for (k, &v) in q.verts.iter().enumerate() {
+                let uv = q.uvs.as_ref().unwrap()[k];
+                assert!(
+                    (uv.x - out.positions[v as usize].x).abs() < 1e-12,
+                    "{uv} at {v}"
+                );
+            }
+        }
+        assert_eq!(out.flagged.iter().filter(|e| e.flags.seam).count(), 4);
+        // Idempotent.
+        let again = merge_by_distance(out, &VertexScope::All, &p).unwrap();
+        assert_eq!(&again.mesh, out);
+    }
+    // Survivor placement keeps the first sheet's seam exactly.
+    let r = merge_by_distance(
+        &m,
+        &VertexScope::All,
+        &MergeParams {
+            position: MergePosition::Survivor,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(r.mesh.positions.iter().filter(|p| p.y == 1.0).count() == 5);
+    // Connected only: the crack has no edges across it.
+    let c = merge_by_distance(
+        &m,
+        &VertexScope::All,
+        &MergeParams {
+            mode: MergeMode::Connected,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(c.mesh.stats().verts, m.stats().verts);
+}
+
+#[test]
+fn merge_scope_and_unselected() {
+    let m = cracked(4, 2, 1e-6);
+    let off = 15u32; // first vertex of the second sheet
+    // Only the first sheet's seam selected: nothing pairs up...
+    let seam_a: Vec<u32> = (0..5).map(|i| grid_id(2, i, 2)).collect();
+    let r = merge_by_distance(
+        &m,
+        &VertexScope::Vertices(seam_a.clone()),
+        &MergeParams::default(),
+    )
+    .unwrap();
+    assert_eq!(r.mesh, m);
+    // ...unless merging with unselected vertices is allowed.
+    let r = merge_by_distance(
+        &m,
+        &VertexScope::Vertices(seam_a.clone()),
+        &MergeParams {
+            with_unselected: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(r.mesh.stats().verts, m.stats().verts - 5);
+    assert_eq!(r.selected_vertices.len(), 5);
+    // Both seams selected.
+    let mut both = seam_a;
+    both.extend((0..5).map(|i| off + grid_id(2, i, 0)));
+    let r = merge_by_distance(&m, &VertexScope::Vertices(both), &MergeParams::default()).unwrap();
+    assert_eq!(r.mesh.stats().verts, m.stats().verts - 5);
+    assert!(
+        merge_by_distance(&m, &VertexScope::Vertices(vec![]), &MergeParams::default()).is_err()
+    );
+    assert!(
+        merge_by_distance(
+            &m,
+            &VertexScope::Vertices(vec![999]),
+            &MergeParams::default()
+        )
+        .is_err()
+    );
+    for d in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let p = MergeParams {
+            distance: d,
+            ..Default::default()
+        };
+        assert!(merge_by_distance(&m, &VertexScope::All, &p).is_err(), "{d}");
+    }
+}
+
+#[test]
+fn merge_collapses_a_short_edge_and_keeps_topology() {
+    let mut m = plane(4, 1.0);
+    let (x, y) = (grid_id(4, 2, 2), grid_id(4, 3, 2));
+    m.positions[x as usize].x = m.positions[y as usize].x - 1e-5;
+    let p = MergeParams {
+        mode: MergeMode::Connected,
+        ..MergeParams::for_mesh(&m)
+    };
+    let r = merge_by_distance(&m, &VertexScope::All, &p).unwrap();
+    assert_sound(&m, &r.mesh, "short edge");
+    assert_eq!(r.mesh.stats().verts, m.stats().verts - 1);
+    // The lower index survives, moved to the middle of the pair.
+    let nx = r.vertex_map[x as usize].unwrap() as usize;
+    assert_eq!(r.vertex_map[y as usize], None);
+    assert!((r.mesh.positions[nx].x - (0.75 - 5e-6)).abs() < 1e-12);
+    // One chart: the merged vertex has one UV, no seam appears.
+    assert!(r.mesh.flagged.is_empty(), "{:?}", r.mesh.flagged);
+    let again = merge_by_distance(&r.mesh, &VertexScope::All, &p).unwrap();
+    assert_eq!(again.mesh, r.mesh);
+}
+
+#[test]
+fn merge_keeps_pinned_and_feature_vertices_in_place() {
+    let m = cube(4, 1.0);
+    let corner = m.pinned.iter().position(|&p| p).unwrap() as u32;
+    let pc = m.positions[corner as usize];
+    // Pull the edge neighbours of the corner (on cube edges) and a face
+    // vertex next to an edge vertex very close.
+    let mut m2 = m.clone();
+    let nbrs: Vec<u32> = m
+        .edges()
+        .into_iter()
+        .filter_map(|(a, b)| {
+            if a == corner {
+                Some(b)
+            } else if b == corner {
+                Some(a)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let pulled = nbrs[0];
+    m2.positions[pulled as usize] = pc.lerp(m.positions[pulled as usize], 1e-6);
+    let r = merge_by_distance(&m2, &VertexScope::All, &MergeParams::for_mesh(&m2)).unwrap();
+    assert_sound(&m2, &r.mesh, "cube merge");
+    assert_eq!(r.mesh.stats().verts, m2.stats().verts - 1);
+    let nc = r.vertex_map[corner as usize].unwrap() as usize;
+    assert_eq!(r.mesh.positions[nc], pc, "the pinned corner stays exactly");
+    assert!(r.mesh.pinned[nc]);
+    assert!(on_cube_edges(&r.mesh, 1.0));
+    assert!((flagged_length(&r.mesh) - flagged_length(&m)).abs() < 1e-9);
+    assert!(hausdorff(&m, &r.mesh) < 1e-9);
+}
+
+#[test]
+fn merge_refuses_non_manifold_welds() {
+    // Two triangles touching at one corner (a bow-tie once welded).
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let m = raw(
+        vec![
+            p(0., 0.),
+            p(1., 0.),
+            p(0., 1.),
+            p(1e-6, 1e-6),
+            p(-1., 0.),
+            p(0., -1.),
+        ],
+        vec![vec![0, 1, 2], vec![3, 4, 5]],
+    );
+    assert!(m.issues().is_empty());
+    let r = merge_by_distance(&m, &VertexScope::All, &MergeParams::default()).unwrap();
+    assert_eq!(r.mesh, m);
+    assert_eq!(r.report.skipped.len(), 1, "{:?}", r.report.skipped);
+    assert!(
+        r.report.skipped[0].contains("non-manifold"),
+        "{:?}",
+        r.report.skipped
+    );
+    assert!(
+        r.report.message.contains("1 cluster(s) skipped"),
+        "{}",
+        r.report.message
+    );
+}
+
+#[test]
+fn merge_without_close_vertices_changes_nothing() {
+    for m in [cube(3, 1.0), sphere(12, 6, 1.0), torus(8, 6, 3.0, 1.0)] {
+        let r = merge_by_distance(&m, &VertexScope::All, &MergeParams::for_mesh(&m)).unwrap();
+        assert_eq!(r.mesh, m);
+        assert_eq!(
+            r.report.message,
+            "No vertices closer than the merge distance"
+        );
+    }
 }

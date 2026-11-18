@@ -152,6 +152,7 @@ pub fn decimate(mesh: &EditMesh, p: &DecimateParams) -> Result<EditOutcome, Refu
         vertex_map: map[..mesh.positions.len()].to_vec(),
         mesh: out,
         selection: Vec::new(),
+        selected_vertices: Vec::new(),
         report: EditReport {
             before,
             after,

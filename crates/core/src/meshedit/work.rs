@@ -38,6 +38,16 @@ impl Prov {
         }
     }
 
+    /// Equal-weight mean of several provenances.
+    pub fn mean(all: &[Prov]) -> Prov {
+        let mut acc = all.first().cloned().unwrap_or(Prov::Orig(0));
+        for (k, p) in all.iter().enumerate().skip(1) {
+            // Running mean: the k+1-th term gets weight 1/(k+1).
+            acc = Prov::lerp(&acc, p, 1.0 / (k as f64 + 1.0));
+        }
+        acc
+    }
+
     /// `(1 - t) a + t b`, merged by input vertex, tiny weights dropped.
     pub fn lerp(a: &Prov, b: &Prov, t: f64) -> Prov {
         if t <= 0.0 {
@@ -145,6 +155,10 @@ pub(crate) struct Work<'a> {
     /// Shape guard (0 = off): a change may not leave its worst polygon
     /// (by [`quad_quality`]) worse than both the worst before and this.
     pub min_quality: f64,
+    /// Input vertices merged into a working vertex by Merge by Distance.
+    /// A polygon corner that was one of them takes its exact normal and UV
+    /// from that input corner.
+    pub aliases: HashMap<u32, Vec<u32>>,
     src_normals: HashMap<(u32, FaceId), DVec3>,
     /// Per input vertex: the distinct (chart, uv) pairs of its corners.
     src_uvs: HashMap<u32, Vec<(u32, DVec2)>>,
@@ -238,6 +252,7 @@ impl<'a> Work<'a> {
             max_dev: f64::INFINITY,
             min_cos: 0.5,
             min_quality: 0.0,
+            aliases: HashMap::new(),
             src_normals,
             src_uvs,
         }
@@ -978,9 +993,38 @@ impl<'a> Work<'a> {
         }
     }
 
+    /// Exact attribute of an input vertex merged into `v`, if it is a
+    /// corner of the parent input polygon.
+    fn alias_corner<T: Copy>(
+        &self,
+        v: u32,
+        parent: &WPoly,
+        get: impl Fn(&EditPolygon, usize) -> Option<T> + Copy,
+    ) -> Option<T> {
+        self.aliases
+            .get(&v)?
+            .iter()
+            .find_map(|&a| self.src_corner(a, parent, get))
+    }
+
     /// Input-attribute normal at the corner `v` of a polygon descending
     /// from `parent`.
     pub fn corner_normal(&self, v: u32, parent: &WPoly) -> Option<DVec3> {
+        let exact = |p: &EditPolygon, k: usize| p.normals.get(k).copied();
+        match &self.prov[v as usize] {
+            // The vertex's own normal in this polygon or CAD face first; a
+            // vertex merged into it only if it has none there (welded across
+            // a CAD face border).
+            Prov::Orig(s) => self
+                .src_corner(*s, parent, exact)
+                .or_else(|| self.src_normals.get(&(*s, parent.group)).copied())
+                .or_else(|| self.alias_corner(v, parent, exact))
+                .or_else(|| self.normal_at_src(*s, parent)),
+            Prov::Mix(_) => self.mixed_normal(v, parent),
+        }
+    }
+
+    fn mixed_normal(&self, v: u32, parent: &WPoly) -> Option<DVec3> {
         match &self.prov[v as usize] {
             Prov::Orig(s) => self.normal_at_src(*s, parent),
             Prov::Mix(m) => {
@@ -1035,6 +1079,35 @@ impl<'a> Work<'a> {
                 }
             }
         };
+        // Last resort for merged vertices (Merge by Distance) that have no
+        // UV of their own in this chart (welded across charts): the UV of
+        // the input corner merged into them, or the mean of the provenance
+        // terms that have a UV in the chart.
+        let alias_uv = |v: u32| -> Option<DVec2> {
+            if !self.aliases.contains_key(&v) {
+                return None;
+            }
+            if let Some(uv) = self.alias_corner(v, p, |q, k| q.uvs.as_ref().map(|u| u[k])) {
+                return Some(uv);
+            }
+            let Prov::Mix(m) = &self.prov[v as usize] else {
+                return None;
+            };
+            let (mut uv, mut total) = (DVec2::ZERO, 0.0);
+            for &(s, w) in m {
+                let mut it = self
+                    .src_uvs
+                    .get(&s)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(c, _)| *c == p.chart);
+                if let (Some(&(_, u)), None) = (it.next(), it.next()) {
+                    uv += u * w;
+                    total += w;
+                }
+            }
+            (total > 0.0).then(|| uv / total)
+        };
         let certain: Vec<Option<DVec2>> = p
             .verts
             .iter()
@@ -1054,6 +1127,7 @@ impl<'a> Work<'a> {
             .zip(&certain)
             .map(|(&v, e)| {
                 e.or_else(|| self.corner_uv(v, p, near))
+                    .or_else(|| alias_uv(v))
                     .unwrap_or(DVec2::ZERO)
             })
             .collect()
@@ -1199,6 +1273,17 @@ fn charts(src: &EditMesh, flags: &HashMap<(u32, u32), u8>) -> Vec<u32> {
         }
     }
     (0..n).map(|i| find(&mut parent, i) as u32).collect()
+}
+
+/// True if `a` and `b` are the same vertex cycle up to rotation.
+pub(crate) fn same_cycle(a: &[u32], b: &[u32]) -> bool {
+    if a.len() != b.len() || a.is_empty() {
+        return false;
+    }
+    let Some(k) = b.iter().position(|&x| x == a[0]) else {
+        return false;
+    };
+    (0..a.len()).all(|i| a[i] == b[(k + i) % b.len()])
 }
 
 pub(crate) fn has_edge(v: &[u32], a: u32, b: u32) -> bool {
