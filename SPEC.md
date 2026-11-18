@@ -233,6 +233,12 @@ evaluated output mesh. The output mesh is a cache, never the source of truth.
 
 **Closed edges, seams and poles.** These need explicit handling because OCCT
 represents them in ways that don't map to polygons directly:
+- **Shared vertices close exactly.** Pcurve end points that belong to the same
+  CAD vertex are snapped to their mean in UV (within 0.1 % of the face's
+  parameter span) before the arrangement is built, so loops close whatever
+  the STEP file's vertex tolerance is (exporters often leave gaps far above
+  the arrangement's own tolerance). Copies of one vertex on both sides of a
+  seam are a period apart and stay separate.
 - **Seam edges** are never output edges. The arrangement is computed in the
   face's UV domain cut at the CAD seam(s) (one for a cylinder, two for a
   torus), with vertices on both copies of each seam identified. Afterwards
@@ -512,6 +518,10 @@ of a 2,000-face body (auto-fill on).
   changes are undo steps by default (setting). A wheel gesture that changes a
   count is coalesced into one undo step once the wheel stops for 400 ms.
 - Depth: 500 steps default.
+- **Preview transactions** (§5.10): while a preview is open, ops change the
+  scene provisionally. Commit turns everything applied since the preview
+  opened into one undo step; cancel restores the document and the undo and
+  redo history exactly. Undo while previewing cancels; redo is off.
 
 ---
 
@@ -579,6 +589,9 @@ of a 2,000-face body (auto-fill on).
   selected). Click-drag down the column to set many rows at once.
 - Expand all / collapse all, search (Ctrl+F), rename, drag objects between
   layers, create/delete layers.
+- Rename (double-click) focuses the field once. Enter or clicking anywhere
+  else keeps the new name; Esc cancels. Esc in any text field only leaves
+  that field (it doesn't close dialogs or leave the tool).
 
 ### 5.6 Statistics panel
 - Shows totals, selection, or both (setting), for verts, edges, faces, tris,
@@ -623,6 +636,28 @@ tool, then exit isolate.
 - Every tool shows a one-line hint in the status bar.
 - Refusals are toasts with a reason. Nothing fails silently.
 - Long work (import, export, bridge sends) shows progress with cancel.
+- The top bar has Undo and Redo buttons (disabled when there's nothing to
+  undo or redo), next to the menus.
+
+### 5.10 Preview, then Apply
+The app never changes the mesh on its own, and nothing is written until the
+user applies it.
+- Every op that changes the output mesh (tools, edge edits, rule changes,
+  auto-fill / link / symmetry toggles, paste) opens a **preview**: the
+  viewport shows the result, and an Apply bar over the viewport says
+  "Preview · Not applied yet" with **Compare**, **Discard** and **Apply**.
+  Further changes join the same preview. Names, layers, visibility, locks
+  and units apply at once.
+- **Apply** (button or Enter, after the active tool had its turn, so Cut
+  keeps Enter) keeps the changes as one undo step. **Discard** (button, Esc
+  after the tool's own pending action, or Undo) restores everything.
+- Save, export, Send to Blender and autosave refuse while a preview is open
+  ("Apply or discard the preview first").
+- **Compare** splits the viewport into Before | After with the same camera
+  on both halves (navigation moves both; picking pauses until the compare
+  closes). Switching auto-fill on or off opens the compare in preview
+  display with a short explanation of what auto-fill does, and restores the
+  display mode when the preview ends.
 
 ---
 
@@ -860,8 +895,9 @@ Draws lines exactly where you click.
 
 ## 7. Auto-fill
 
-A scene setting (on/off, saved with the scene, default **on** for new scenes;
-imported objects follow it). It changes only the output mesh and is
+A scene setting (on/off, saved with the scene, default **off** for new scenes,
+so the app never adds edges the user didn't ask for; imported objects follow
+it). Switching it is previewed like any other change (§5.10). It changes only the output mesh and is
 re-evaluated live with everything else.
 
 For every polygon with more than four sides (all polygons are simple by now, §4.6 step 6):
@@ -1135,7 +1171,8 @@ Defaults apply if no answer arrives.
 4. **Symmetry planes.** Default: world planes in v1, body-local in v1.1.
 5. **FBX writer.** Default: own Rust writer; if it slips, P5 ships OBJ + glTF
    and FBX moves to P6.
-6. **Auto-fill default.** Default: on for new scenes.
+6. **Auto-fill default.** Decided (Silas, 2026-11-18): off for new scenes;
+   turning it on is previewed with a before/after compare (§5.10, §7).
 
 ---
 

@@ -93,3 +93,18 @@ fn which_ops_preview() {
         .changes_mesh()
     );
 }
+
+#[test]
+fn preview_base_shows_the_document_before() {
+    let (mut s, b) = scene_with(MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)));
+    s.apply(grid(3)).unwrap();
+    let base = s.stats();
+    s.begin_preview();
+    s.apply(Op::SetAutofill { on: true }).unwrap();
+    let after = s.stats();
+    let seen = s.with_preview_base(|s| s.stats()).unwrap();
+    assert_eq!(seen, base, "the base view evaluates the old document");
+    assert_eq!(s.stats(), after, "and the preview is back afterwards");
+    assert!(s.in_preview());
+    let _ = b;
+}

@@ -126,13 +126,24 @@ impl AppState {
             self.frame_bounds(None);
         }
 
+        // Compare split: both halves follow the camera; picking and
+        // editing wait until the compare is closed.
+        let comparing = self.view.compare && self.doc.in_preview();
         if self.has_content() {
             self.navigate(ui, &resp);
-            self.update_hover(ui, &resp);
-            self.handle_clicks(ui, &resp);
+            if comparing {
+                self.hover = None;
+            } else {
+                self.update_hover(ui, &resp);
+                self.handle_clicks(ui, &resp);
+            }
         }
         self.rebuild_overlay();
-        self.paint_viewport(ui, rect);
+        if comparing {
+            self.paint_compare(ui, rect);
+        } else {
+            self.paint_viewport(ui, rect);
+        }
         self.view_cube(ui, rect);
         self.hud(ui, rect);
         if !self.has_content() {
@@ -1209,6 +1220,128 @@ impl AppState {
 
     // ------------------------------------------------------------ painting
 
+    /// Before | After, side by side, same camera (SPEC §5.10).
+    fn paint_compare(&mut self, ui: &mut Ui, rect: Rect) {
+        self.ensure_before_view();
+        let pal = self.pal;
+        let ppp = ui.ctx().pixels_per_point();
+        let c = self.colors();
+        let mid = rect.center().x;
+        let left = Rect::from_min_max(rect.min, pos2(mid - 1.0, rect.max.y));
+        let right = Rect::from_min_max(pos2(mid + 1.0, rect.min.y), rect.max);
+        if self.gpu_ok {
+            let (centre, radius) = self.scene_sphere();
+            let opts = RenderOptions {
+                shade: if self.view.preview && self.view.flat {
+                    ShadeMode::Flat
+                } else {
+                    ShadeMode::Smooth
+                },
+                background_top: c.background_top,
+                background_bottom: c.background_bottom,
+                pixels_per_point: ppp,
+                ..Default::default()
+            };
+            let size = |r: Rect| {
+                [
+                    (r.width() * ppp).round().max(1.0) as u32,
+                    (r.height() * ppp).round().max(1.0) as u32,
+                ]
+            };
+            let cam = |r: Rect| {
+                self.view
+                    .camera
+                    .matrices([r.width().max(1.0), r.height().max(1.0)], centre, radius)
+            };
+            if let Some((_, before, rev)) = &self.before_vd {
+                ui.painter().add(paint_callback(
+                    left,
+                    ViewportCallback {
+                        layers: vec![(*rev, before.base.clone())],
+                        camera: cam(left),
+                        scene_radius: radius as f32,
+                        options: opts,
+                        size_px: size(left),
+                        slot: 1,
+                    },
+                ));
+            }
+            ui.painter().add(paint_callback(
+                right,
+                ViewportCallback {
+                    // No selection/tool overlay: both halves show the same
+                    // things, so only the change differs.
+                    layers: vec![(self.vd_rev, self.vd.base.clone())],
+                    camera: cam(right),
+                    scene_radius: radius as f32,
+                    options: opts,
+                    size_px: size(right),
+                    slot: 0,
+                },
+            ));
+        } else {
+            ui.painter().rect_filled(rect, 0.0, pal.inset);
+        }
+        let p = ui.painter();
+        p.rect_filled(
+            Rect::from_min_max(pos2(mid - 1.0, rect.min.y), pos2(mid + 1.0, rect.max.y)),
+            0.0,
+            pal.accent,
+        );
+        // Labels, and what auto-fill does when that's the change.
+        let autofill_change = self.doc.scene.as_ref().and_then(|s| {
+            crate::docstate::guard(|| {
+                s.preview_base()
+                    .map(|b| b.settings.autofill != s.doc().settings.autofill)
+            })
+            .ok()
+            .flatten()
+        }) == Some(true);
+        for (r, label) in [(left, S::COMPARE_BEFORE), (right, S::COMPARE_AFTER)] {
+            let g = p.layout_no_wrap(
+                label.to_string(),
+                crate::theme::medium(13.0),
+                pal.text_strong,
+            );
+            let chip = Rect::from_min_size(
+                pos2(r.center().x - g.size().x * 0.5 - 10.0, r.top() + 12.0),
+                g.size() + vec2(20.0, 8.0),
+            );
+            p.rect_filled(chip, 8.0, pal.panel_raised.gamma_multiply(0.92));
+            p.rect_stroke(
+                chip,
+                8.0,
+                Stroke::new(1.0, pal.border),
+                egui::StrokeKind::Inside,
+            );
+            p.galley(chip.min + vec2(10.0, 4.0), g, pal.text_strong);
+        }
+        if autofill_change {
+            let w = (rect.width() - 80.0).clamp(200.0, 560.0);
+            let g = p.layout(
+                S::AUTOFILL_EXPLAIN.to_string(),
+                egui::FontId::proportional(12.5),
+                pal.text,
+                w,
+            );
+            let r = Rect::from_min_size(
+                pos2(
+                    rect.center().x - (g.size().x + 24.0) * 0.5,
+                    rect.top() + 46.0,
+                ),
+                g.size() + vec2(24.0, 14.0),
+            );
+            p.rect_filled(r, 8.0, pal.panel_raised.gamma_multiply(0.95));
+            p.rect_stroke(
+                r,
+                8.0,
+                Stroke::new(1.0, pal.border),
+                egui::StrokeKind::Inside,
+            );
+            p.galley(r.min + vec2(12.0, 7.0), g, pal.text);
+        }
+    }
+
     fn paint_viewport(&mut self, ui: &mut Ui, rect: Rect) {
         let ppp = ui.ctx().pixels_per_point();
         let c = self.colors();
@@ -1242,6 +1375,7 @@ impl AppState {
             scene_radius: radius as f32,
             options: opts,
             size_px,
+            slot: 0,
         };
         ui.painter().add(paint_callback(rect, cb));
 

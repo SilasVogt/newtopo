@@ -575,6 +575,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         // Export dialog.
         app.st.open_export_dialog();
         s.shoot(&ctx, &mut app, frames(8), &dir.join("13-export-dialog.png"))?;
+        app.st.ui.export = None;
     }
 
     // 2. Plate with holes: Connect on the hole walls, preview with auto-fill.
@@ -622,6 +623,22 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             frames(6),
             &dir.join("11-plate-connect-preview.png"),
         )?;
+        // Keep the Connect, then switch auto-fill on: it previews as
+        // Before | After with the same camera (SPEC §5.10); keep it on for
+        // the steps below.
+        app.st.apply_preview();
+        app.st.run(crate::commands::Cmd::AutoFill);
+        anyhow::ensure!(
+            app.st.doc.in_preview() && app.st.view.compare,
+            "auto-fill opens the compare"
+        );
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(10),
+            &dir.join("19-autofill-compare.png"),
+        )?;
+        app.st.apply_preview();
         // Edge mode: loop on a Connect line, then remove it as one step.
         app.st.view.preview = false;
         app.st.mode = Mode::Edge;

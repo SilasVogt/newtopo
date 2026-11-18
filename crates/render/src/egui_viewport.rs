@@ -35,11 +35,17 @@ fn to_gamma(c: vec3<f32>) -> vec3<f32> {
 
 /// GPU state kept in egui-wgpu's callback resources.
 pub struct ViewportResources {
-    renderer: Renderer,
-    layers: Vec<(u64, GpuScene)>,
+    /// One render target and layer cache per viewport slot, so several
+    /// views (e.g. a before/after compare) can draw in the same frame.
+    slots: Vec<Slot>,
     blit: wgpu::RenderPipeline,
     blit_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+}
+
+struct Slot {
+    renderer: Renderer,
+    layers: Vec<(u64, GpuScene)>,
     blit_bg: Option<wgpu::BindGroup>,
 }
 
@@ -127,12 +133,10 @@ pub fn install_with(
         ..Default::default()
     });
     let res = ViewportResources {
-        renderer: Renderer::new(device),
-        layers: Vec::new(),
+        slots: Vec::new(),
         blit,
         blit_layout,
         sampler,
-        blit_bg: None,
     };
     resources.insert(res);
 }
@@ -154,6 +158,9 @@ pub struct ViewportCallback {
     pub options: RenderOptions,
     /// Physical pixel size of the viewport rect.
     pub size_px: [u32; 2],
+    /// Which view this is (0 = the main viewport); each slot keeps its own
+    /// render target.
+    pub slot: usize,
 }
 
 impl CallbackTrait for ViewportCallback {
@@ -165,14 +172,23 @@ impl CallbackTrait for ViewportCallback {
         encoder: &mut wgpu::CommandEncoder,
         resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(res) = resources.get_mut::<ViewportResources>() else {
+        let Some(all) = resources.get_mut::<ViewportResources>() else {
             return Vec::new();
         };
+        while all.slots.len() <= self.slot {
+            all.slots.push(Slot {
+                renderer: Renderer::new(device),
+                layers: Vec::new(),
+                blit_bg: None,
+            });
+        }
+        let (blit_layout, sampler) = (&all.blit_layout, &all.sampler);
+        let res = &mut all.slots[self.slot];
         if res.renderer.ensure_target(device, self.size_px) || res.blit_bg.is_none() {
             let view = &res.renderer.target.as_ref().expect("target").resolve_view;
             res.blit_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("viewport blit"),
-                layout: &res.blit_layout,
+                layout: blit_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -180,7 +196,7 @@ impl CallbackTrait for ViewportCallback {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&res.sampler),
+                        resource: wgpu::BindingResource::Sampler(sampler),
                     },
                 ],
             }));
@@ -224,11 +240,13 @@ impl CallbackTrait for ViewportCallback {
         pass: &mut wgpu::RenderPass<'static>,
         resources: &CallbackResources,
     ) {
-        let Some(res) = resources.get::<ViewportResources>() else {
+        let Some(all) = resources.get::<ViewportResources>() else {
             return;
         };
-        let Some(bg) = &res.blit_bg else { return };
-        pass.set_pipeline(&res.blit);
+        let Some(bg) = all.slots.get(self.slot).and_then(|s| s.blit_bg.as_ref()) else {
+            return;
+        };
+        pass.set_pipeline(&all.blit);
         pass.set_bind_group(0, bg, &[]);
         pass.draw(0..3, 0..1);
     }

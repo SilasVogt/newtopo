@@ -14,7 +14,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | P4 Precision and cleanup | ✅ | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits, radial menu. |
 | P5 Repeat and ship | 🟡 | Link, Symmetry, copy/paste rules, OBJ/glTF/FBX export, Blender import test. Link/Symmetry mirror rules and split lines but not edits (remove/collapse/weld). |
 | P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). Update notice (§9.4): opt-in daily check of this repo's GitHub releases, link only, no self-update. |
-| P7 Polish | 🟡 | Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
+| P7 Polish | 🟡 | From user testing: every mesh change previews until Apply, with a before/after compare (§5.10); auto-fill off by default; Undo/Redo buttons; STEP files with loose vertex tolerances now work. Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
 
 ## Known gaps
 

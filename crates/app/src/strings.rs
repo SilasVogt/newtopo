@@ -358,3 +358,7 @@ pub const PREVIEW_DISCARD: &str = "Discard";
 pub const PREVIEW_COMPARE: &str = "Compare";
 pub const PREVIEW_PENDING: &str = "Apply or discard the preview first";
 pub const PREVIEW_DISCARDED: &str = "Preview discarded";
+pub const COMPARE_BEFORE: &str = "Before";
+pub const COMPARE_AFTER: &str = "After";
+pub const AUTOFILL_EXPLAIN: &str = "Auto-fill closes the polygons left between your lines and the CAD edges: it connects vertices that already exist into quads and triangles. It adds edges, never new vertices, and only runs while you have it switched on.";
+pub const AUTOFILL_TIP: &str = "Auto-fill: connect the existing vertices of each remaining polygon into quads and triangles (adds edges, never vertices). Off by default; turning it on shows a before/after preview to apply or discard.";

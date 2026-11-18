@@ -102,6 +102,10 @@ pub struct ViewState {
     pub shown: bool,
     /// The tool status pill drawn this frame, for toast placement.
     pub chip_rect: Option<egui::Rect>,
+    /// While previewing: show Before | After side by side (same camera).
+    pub compare: bool,
+    /// Preview-mode setting to restore when an auto-fill compare ends.
+    pub compare_restore_preview: Option<bool>,
 }
 
 impl Default for ViewState {
@@ -118,6 +122,8 @@ impl Default for ViewState {
             rect: egui::Rect::NOTHING,
             shown: false,
             chip_rect: None,
+            compare: false,
+            compare_restore_preview: None,
         }
     }
 }
@@ -203,6 +209,9 @@ pub struct AppState {
     pub vd: ViewData,
     vd_key: Option<(u64, DisplayParams, bool)>,
     pub vd_rev: u64,
+    /// The view of the document before the open preview, for the compare
+    /// split: (document revision it was built at, data, render revision).
+    pub before_vd: Option<(u64, ViewData, u64)>,
     pub overlay: Arc<RenderScene>,
     pub overlay_sig: u64,
     pub overlay_rev: u64,
@@ -285,6 +294,7 @@ impl App {
             vd: ViewData::default(),
             vd_key: None,
             vd_rev: newtopo_render::egui_viewport::next_revision(),
+            before_vd: None,
             overlay: Arc::new(RenderScene::default()),
             overlay_sig: 0,
             overlay_rev: newtopo_render::egui_viewport::next_revision(),
@@ -731,9 +741,8 @@ impl AppState {
     }
 
     /// Rebuild view data if the document or display settings changed.
-    pub fn ensure_view_data(&mut self) {
-        self.locked = self.compute_locked();
-        let params = DisplayParams {
+    pub fn display_params(&self) -> DisplayParams {
+        DisplayParams {
             preview: self.view.preview,
             wireframe: self.view.wireframe,
             show_verts: self.mode == Mode::Vertex && !self.view.preview,
@@ -741,7 +750,35 @@ impl AppState {
             up: self.prefs.up,
             hidden: self.effective_hidden(),
             colors: self.colors(),
+        }
+    }
+
+    /// The compare split's "before" view: the document as it was when the
+    /// open preview started. Rebuilt only when the preview changes.
+    pub fn ensure_before_view(&mut self) {
+        if !self.doc.in_preview() {
+            self.before_vd = None;
+            return;
+        }
+        let rev = self.doc.revision;
+        if self.before_vd.as_ref().is_some_and(|(r, _, _)| *r == rev) {
+            return;
+        }
+        let params = self.display_params();
+        let Some(scene) = self.doc.scene.as_mut() else {
+            return;
         };
+        let vd = crate::docstate::guard(|| {
+            scene.with_preview_base(|s| crate::viewdata::from_scene(s, &params))
+        })
+        .ok()
+        .flatten();
+        self.before_vd = vd.map(|v| (rev, v, newtopo_render::egui_viewport::next_revision()));
+    }
+
+    pub fn ensure_view_data(&mut self) {
+        self.locked = self.compute_locked();
+        let params = self.display_params();
         let key = (self.doc.revision, params.clone(), self.demo.is_some());
         if self.vd_key.as_ref() == Some(&key) {
             return;
@@ -915,6 +952,18 @@ impl AppState {
                             );
                             ui.label(RichText::new(S::PREVIEW_NOTE).small().color(pal.text_dim));
                             ui.add_space(10.0);
+                            let on = self.view.compare;
+                            if ui
+                                .add(
+                                    egui::Button::new(S::PREVIEW_COMPARE)
+                                        .selected(on)
+                                        .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Show the mesh before and after side by side")
+                                .clicked()
+                            {
+                                self.view.compare = !on;
+                            }
                             if ui
                                 .add(
                                     egui::Button::new(S::PREVIEW_DISCARD)
@@ -953,6 +1002,7 @@ impl AppState {
         if self.doc.in_preview() {
             self.doc.commit_preview();
         }
+        self.end_compare();
     }
 
     /// Throw the previewed changes away.
@@ -960,6 +1010,14 @@ impl AppState {
         if self.doc.in_preview() {
             self.doc.cancel_preview();
             self.toast(ToastKind::Info, S::PREVIEW_DISCARDED);
+        }
+        self.end_compare();
+    }
+
+    fn end_compare(&mut self) {
+        self.view.compare = false;
+        if let Some(p) = self.view.compare_restore_preview.take() {
+            self.view.preview = p;
         }
     }
 
@@ -975,6 +1033,11 @@ impl AppState {
     }
 
     pub fn undo(&mut self) {
+        // Undo while previewing discards the preview.
+        if self.doc.in_preview() {
+            self.discard_preview();
+            return;
+        }
         match self.doc.undo() {
             Ok(_) => {}
             Err(e) => self.toast(ToastKind::Error, e),
@@ -1145,6 +1208,13 @@ impl AppState {
             }
             return;
         };
+        // Auto-fill is easiest to judge next to the raw mesh, on the output
+        // mesh itself (preview display), until Apply or Discard.
+        if matches!(which, SettingToggle::AutoFill) && !self.doc.in_preview() {
+            self.view.compare = true;
+            self.view.compare_restore_preview = Some(self.view.preview);
+            self.view.preview = true;
+        }
         let op = match which {
             SettingToggle::AutoFill => Op::SetAutofill {
                 on: !settings.autofill,
@@ -1537,9 +1607,12 @@ impl AppState {
                                 icons::icon_text_button(ui, icon, label, on)
                             })
                             .inner;
-                        if r.on_hover_text(format!("{label}  ({})", self.keymap.label(cmd)))
-                            .clicked()
-                        {
+                        let tip = if cmd == Cmd::AutoFill {
+                            format!("{}  ({})", S::AUTOFILL_TIP, self.keymap.label(cmd))
+                        } else {
+                            format!("{label}  ({})", self.keymap.label(cmd))
+                        };
+                        if r.on_hover_text(tip).clicked() {
                             self.run(cmd);
                         }
                     }

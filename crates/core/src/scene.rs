@@ -389,6 +389,20 @@ impl Scene {
         self.preview.as_ref().map(|m| m.doc.as_ref())
     }
 
+    /// Run `f` on the scene as it was before the preview (read-only use:
+    /// views, stats), then return to the previewed state. `None` without a
+    /// preview.
+    pub fn with_preview_base<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
+        let mark = self.preview.take()?;
+        let current = std::mem::replace(&mut self.doc, mark.doc.clone());
+        let coalesce = self.coalesce.take();
+        let r = f(self);
+        self.doc = current;
+        self.coalesce = coalesce;
+        self.preview = Some(mark);
+        Some(r)
+    }
+
     /// Keep the previewed changes as one undo step.
     pub fn commit_preview(&mut self) {
         let Some(m) = self.preview.take() else {
