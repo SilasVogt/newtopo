@@ -1033,7 +1033,8 @@ installs or runs anything; it only links to the release page.
   (`https://github.com/SilasVogt/newtopo/releases/tag/v<version>`), never
   taken from the reply, and checked again before the browser opens it.
   No release text from the reply is shown.
-- **Privacy**: the request sends only a `User-Agent` with the app version.
+- **Privacy**: the request carries no user data: a `User-Agent` with the
+  app version and the fixed `Accept` / `X-GitHub-Api-Version` headers.
   No account, token or telemetry.
 - **When**: opt-in. On first launch the app asks once ("Check once a day" /
   "Don't check"; Esc counts as don't). If on, it checks at most once a day

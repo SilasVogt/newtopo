@@ -550,9 +550,13 @@ fn update_results_follow_manual_and_skip_rules() {
 #[test]
 fn update_question_is_remembered_and_never_shown_headless() {
     let mut h = Harness::new(false);
-    // Screenshot/test mode never asks or checks on its own.
+    // Screenshot/test mode never asks or checks: not at startup, and not
+    // when the command runs (no request leaves a test run).
+    h.app.st.startup_update_check();
     assert!(!h.app.st.updates.ask_open);
     assert!(h.app.st.updates.check.is_none());
+    h.app.st.run(Cmd::CheckUpdates);
+    assert!(h.app.st.updates.check.is_none(), "no network in tests");
     h.app.st.updates.ask_open = true;
     h.frames(1);
     h.key(Key::Escape, Modifiers::NONE);

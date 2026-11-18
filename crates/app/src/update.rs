@@ -11,8 +11,10 @@
 //!   and the fixed repository, never taken from the reply, so a tampered
 //!   response can't point anywhere else;
 //! * no release text (name, notes) is displayed;
-//! * the request carries only a `User-Agent` with the app version, as the
-//!   GitHub API requires; there is no account, token or telemetry.
+//! * the request carries no user data: a `User-Agent` with the app version
+//!   (the GitHub API requires one) plus the fixed `Accept` and
+//!   `X-GitHub-Api-Version` headers; there is no account, token or
+//!   telemetry.
 //!
 //! Automatic checks are opt-in, run at most once a day, and are disabled by
 //! the `NEWTOPO_NO_UPDATE_CHECK` environment variable (for packagers and
@@ -264,6 +266,11 @@ impl AppState {
     /// Starts a check unless one is already running. `manual` reports
     /// every outcome; automatic checks stay quiet unless there's news.
     pub fn start_update_check(&mut self, manual: bool) {
+        // Headless screenshot and test runs never reach the network, not
+        // even for a manual check run as a command (SPEC §9.4).
+        if self.screenshot_mode {
+            return;
+        }
         if let Some(c) = &mut self.updates.check {
             c.manual |= manual;
             return;
