@@ -242,6 +242,11 @@ impl BodyCtx {
                     });
                 }
             }
+            // Close the face's loops exactly: pcurve ends that share a CAD
+            // vertex can miss each other by the file's tolerance (often far
+            // more than `eps`), which leaves open loops the arrangement can't
+            // fill.
+            snap_shared_vertices(&mut curves, 1e-3 * span);
             let mut lo = DVec2::splat(f64::INFINITY);
             let mut hi = DVec2::splat(f64::NEG_INFINITY);
             for c in &curves {
@@ -420,5 +425,86 @@ impl BodyCtx {
             .ok()
             .and_then(|v| v.first().copied())
             .unwrap_or(DVec3::ZERO)
+    }
+}
+
+/// Moves curve end points that belong to the same CAD vertex and lie within
+/// `snap` of each other in UV onto their common mean, so loops close exactly.
+/// Copies of one vertex on both sides of a seam are a period apart and stay
+/// separate.
+fn snap_shared_vertices(curves: &mut [BCurve], snap: f64) {
+    // (vertex, members (curve, end), sum, count)
+    let mut clusters: Vec<(VertexId, Vec<(usize, usize)>, DVec2, f64)> = Vec::new();
+    for (ci, c) in curves.iter().enumerate() {
+        if c.pts.len() < 2 {
+            continue;
+        }
+        for end in 0..2 {
+            let Some(v) = c.ends[end] else { continue };
+            let p = if end == 0 {
+                c.pts[0]
+            } else {
+                c.pts[c.pts.len() - 1]
+            };
+            match clusters
+                .iter_mut()
+                .find(|k| k.0 == v && (k.2 / k.3 - p).length() <= snap)
+            {
+                Some(k) => {
+                    k.1.push((ci, end));
+                    k.2 += p;
+                    k.3 += 1.0;
+                }
+                None => clusters.push((v, vec![(ci, end)], p, 1.0)),
+            }
+        }
+    }
+    for (_, members, sum, n) in clusters {
+        if members.len() < 2 {
+            continue;
+        }
+        let m = sum / n;
+        for (ci, end) in members {
+            let pts = &mut curves[ci].pts;
+            let i = if end == 0 { 0 } else { pts.len() - 1 };
+            pts[i] = m;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::TAU;
+
+    fn curve(a: DVec2, b: DVec2, v0: u32, v1: u32) -> BCurve {
+        BCurve {
+            owner: Owner::Seam(0),
+            seam: None,
+            pts: vec![a, (a + b) * 0.5, b],
+            par: vec![0.0, 0.5, 1.0],
+            ends: [Some(VertexId(v0)), Some(VertexId(v1))],
+        }
+    }
+
+    #[test]
+    fn shared_vertex_ends_snap_together_but_seam_copies_stay_apart() {
+        // A triangle whose corners miss each other by the file's tolerance
+        // (1e-5 here, far above the old 1e-7 * size join tolerance).
+        let g = 1e-5;
+        let mut cs = vec![
+            curve(DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0), 0, 1),
+            curve(DVec2::new(1.0 + g, g), DVec2::new(0.5, 1.0), 1, 2),
+            curve(DVec2::new(0.5 - g, 1.0), DVec2::new(g, -g), 2, 0),
+            // Vertex 0 again on the far side of a u-seam: a period away.
+            curve(DVec2::new(TAU, 0.0), DVec2::new(TAU, 1.0), 0, 3),
+        ];
+        snap_shared_vertices(&mut cs, 1e-3);
+        assert_eq!(cs[0].pts[2], cs[1].pts[0], "corner 1 closes");
+        assert_eq!(cs[1].pts[2], cs[2].pts[0], "corner 2 closes");
+        assert_eq!(cs[2].pts[2], cs[0].pts[0], "corner 0 closes");
+        assert_eq!(cs[3].pts[0], DVec2::new(TAU, 0.0), "seam copy untouched");
+        // Interior points never move.
+        assert_eq!(cs[0].pts[1], DVec2::new(0.5, 0.0));
     }
 }

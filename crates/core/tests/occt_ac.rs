@@ -567,6 +567,8 @@ fn occt_torus_slices_are_stable() {
     for name in ["torus_hole", "torus"] {
         for count in [1u32, 3, 5] {
             let (mut s, b) = occt_scene(name);
+            // The pinned outcomes below were recorded with auto-fill on.
+            s.apply(Op::SetAutofill { on: true }).unwrap();
             let r = s.apply(Op::Slice {
                 body: Some(b),
                 patches: None,

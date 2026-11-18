@@ -49,7 +49,7 @@ pub struct SceneSettings {
 impl Default for SceneSettings {
     fn default() -> Self {
         SceneSettings {
-            autofill: true,
+            autofill: false,
             link: false,
             symmetry: false,
             symmetry_axes: vec![],
@@ -508,5 +508,14 @@ impl Document {
             };
             self.phase_overrides.insert(k, v);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn new_scenes_start_with_autofill_off() {
+        // SPEC §13.6: the app never adds edges the user didn't ask for.
+        assert!(!super::SceneSettings::default().autofill);
     }
 }
