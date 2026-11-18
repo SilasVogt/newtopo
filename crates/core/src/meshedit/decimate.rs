@@ -19,7 +19,7 @@
 use super::mesh::{EditMesh, area_vec, ekey};
 use super::quadric::Quadric;
 use super::refill::{fill_touched_ngons, pair_triangles, quad_quality};
-use super::work::{F_CAD, F_HARD, VClass, Work, assign_witnesses};
+use super::work::{F_CAD, F_HARD, VClass, Work, assign_witnesses, polygon_shape_ok};
 use super::{EditOutcome, EditReport, Preserve, check_input};
 use crate::ops::Refusal;
 use glam::DVec3;
@@ -136,7 +136,8 @@ pub fn decimate(mesh: &EditMesh, p: &DecimateParams) -> Result<EditOutcome, Refu
             let (joined, dissolved) = planar(&mut w, p.planar_angle_deg);
             fill_touched_ngons(&mut w);
             if p.keep_quads {
-                pair_triangles(&mut w, p.planar_angle_deg);
+                // Same fold limit as after Collapse (SPEC 9.5.3).
+                pair_triangles(&mut w, p.planar_angle_deg.min(40.0));
             }
             (
                 true,
@@ -532,7 +533,7 @@ fn plan_join(
     }
     let pos = w.poly_pos(&merged);
     let nrm = area_vec(&pos).normalize_or_zero();
-    if nrm == DVec3::ZERO {
+    if nrm == DVec3::ZERO || merged.len() <= 4 && !polygon_shape_ok(&pos, w.diag) {
         return None;
     }
     if cone[a as usize]

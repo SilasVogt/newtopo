@@ -163,12 +163,11 @@ fn keep_rank(w: &Work, x: u32) -> (u8, u8, std::cmp::Reverse<u32>) {
 
 /// Merge `a` and `b`, keeping the higher-ranked one if possible.
 fn merge_pair(w: &mut Work, a: u32, b: u32) -> bool {
-    let (keep, drop) = if keep_rank(w, a) >= keep_rank(w, b) {
-        (a, b)
-    } else {
-        (b, a)
-    };
-    w.try_merge(drop, keep) || w.try_merge(keep, drop)
+    let (ra, rb) = (keep_rank(w, a), keep_rank(w, b));
+    let (keep, drop) = if ra >= rb { (a, b) } else { (b, a) };
+    // The other direction only when the roles tie (then it just keeps the
+    // higher index instead): never drop a stronger vertex.
+    w.try_merge(drop, keep) || ((ra.0, ra.1) == (rb.0, rb.1) && w.try_merge(keep, drop))
 }
 
 fn sel_vertices(w: &Work) -> BTreeSet<u32> {

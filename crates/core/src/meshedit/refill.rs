@@ -3,7 +3,7 @@
 //! and join triangle pairs back into quads.
 
 use super::mesh::{area_vec, ekey};
-use super::work::{Work, fan_tris, point_triangle_distance, polygon_shape_ok};
+use super::work::{Work, assign_witnesses, polygon_distance, polygon_shape_ok};
 use crate::fill::{FillInput, fill_polygon, geom};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeSet;
@@ -31,20 +31,57 @@ pub(crate) fn fill_touched_ngons(w: &mut Work) -> usize {
         };
         let iso = principal_dirs(&uv);
         let rank: Vec<u32> = verts.clone();
-        let res = fill_polygon(&FillInput {
-            uv: &uv,
-            pos: &pos,
-            rank: &rank,
-            iso_dirs: iso,
-        });
-        if res.polys.len() < 2 {
-            continue;
-        }
-        let pieces: Vec<Vec<u32>> = res
-            .polys
-            .iter()
-            .map(|p| p.iter().map(|&i| verts[i as usize]).collect())
-            .collect();
+        let pieces: Vec<Vec<u32>> = if verts.len() == 4 {
+            // A bad quad (concave, or a straight corner where a triangle
+            // gained a vertex): split along the diagonal that gives the
+            // better-shaped pair of triangles.
+            let split = |a: usize| {
+                vec![
+                    vec![verts[a], verts[(a + 1) % 4], verts[(a + 2) % 4]],
+                    vec![verts[a], verts[(a + 2) % 4], verts[(a + 3) % 4]],
+                ]
+            };
+            let parent = &w.polys[q as usize];
+            let qn = area_vec(&pos).normalize_or_zero();
+            let valid = |ps: &Vec<Vec<u32>>| {
+                ps.iter().all(|p| {
+                    let pp = w.poly_pos(p);
+                    let n = area_vec(&pp).normalize_or_zero();
+                    polygon_shape_ok(&pp, w.diag)
+                        && n.dot(qn) > 0.0
+                        && n.dot(w.reference_normal(p, parent)) >= w.min_cos
+                })
+            };
+            let score = |ps: &Vec<Vec<u32>>| {
+                ps.iter()
+                    .map(|p| quad_quality(&w.poly_pos(p)))
+                    .fold(1.0, f64::min)
+            };
+            let mut best: Option<(f64, Vec<Vec<u32>>)> = None;
+            for c in [split(0), split(1)] {
+                if valid(&c) && best.as_ref().is_none_or(|b| score(&c) > b.0) {
+                    best = Some((score(&c), c));
+                }
+            }
+            match best {
+                Some((_, c)) => c,
+                None => continue,
+            }
+        } else {
+            let res = fill_polygon(&FillInput {
+                uv: &uv,
+                pos: &pos,
+                rank: &rank,
+                iso_dirs: iso,
+            });
+            if res.polys.len() < 2 {
+                continue;
+            }
+            res.polys
+                .iter()
+                .map(|p| p.iter().map(|&i| verts[i as usize]).collect())
+                .collect()
+        };
         // New diagonals must not already be edges.
         let own: BTreeSet<(u32, u32)> = (0..verts.len())
             .map(|i| ekey(verts[i], verts[(i + 1) % verts.len()]))
@@ -67,35 +104,27 @@ pub(crate) fn fill_touched_ngons(w: &mut Work) -> usize {
         if !ok {
             continue;
         }
-        // Witnesses go to their nearest piece.
+        // Witnesses go to their nearest piece and must stay within the
+        // deviation bound of it; otherwise the polygon stays as it was.
         let wit = w
             .witnesses
             .as_ref()
             .map(|ws| ws[q as usize].clone())
             .unwrap_or_default();
-        let first_new = w.polys.len() as u32;
-        let npieces = pieces.len();
         let piece_pos: Vec<Vec<DVec3>> = pieces.iter().map(|p| w.poly_pos(p)).collect();
+        let Some(assigned) = assign_witnesses(&wit, &piece_pos, &w.src.positions, w.max_dev) else {
+            continue;
+        };
+        let first_new = w.polys.len() as u32;
         w.replace_polygon(q, pieces);
         if let Some(ws) = &mut w.witnesses {
             ws[q as usize].clear();
-            for x in wit {
-                let p = w.src.positions[x as usize];
-                let mut best = (f64::INFINITY, 0usize);
-                for (i, pp) in piece_pos.iter().enumerate() {
-                    for t in fan_tris(pp) {
-                        let d = point_triangle_distance(p, t[0], t[1], t[2]);
-                        if d < best.0 {
-                            best = (d, i);
-                        }
-                    }
-                }
-                let id = if best.1 == 0 {
-                    q
-                } else {
-                    first_new + best.1 as u32 - 1
-                };
-                debug_assert!((best.1) < npieces);
+            if assigned.is_empty() {
+                // No bound (infinite): keep them on the first piece.
+                ws[q as usize].extend(wit);
+            }
+            for (x, i) in assigned {
+                let id = if i == 0 { q } else { first_new + i as u32 - 1 };
                 ws[id as usize].push(x);
             }
         }
@@ -160,6 +189,12 @@ pub(crate) fn pair_triangles(w: &mut Work, max_fold_deg: f64) -> usize {
             if fold < cos_fold {
                 continue;
             }
+            // The quad must respect the normal limit like any changed
+            // polygon (each triangle did, the quad's normal is in between).
+            let nq = area_vec(&pos).normalize_or_zero();
+            if nq.dot(w.reference_normal(&quad, &w.polys[q as usize])) < w.min_cos {
+                continue;
+            }
             if !quad_deviation_ok(w, q, r, &pos) {
                 continue;
             }
@@ -201,23 +236,10 @@ fn quad_deviation_ok(w: &Work, q: u32, r: u32, quad: &[DVec3]) -> bool {
     let Some(ws) = &w.witnesses else {
         return true;
     };
-    let tri_a = [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
-    let tri_b = [[quad[0], quad[1], quad[3]], [quad[1], quad[2], quad[3]]];
     ws[q as usize]
         .iter()
         .chain(ws[r as usize].iter())
-        .all(|&x| {
-            let p = w.src.positions[x as usize];
-            let da = tri_a
-                .iter()
-                .map(|t| point_triangle_distance(p, t[0], t[1], t[2]))
-                .fold(f64::INFINITY, f64::min);
-            let db = tri_b
-                .iter()
-                .map(|t| point_triangle_distance(p, t[0], t[1], t[2]))
-                .fold(f64::INFINITY, f64::min);
-            da.max(db) <= w.max_dev
-        })
+        .all(|&x| polygon_distance(w.src.positions[x as usize], quad) <= w.max_dev)
 }
 
 /// Shape quality in [0, 1]: smallest corner sine relative to the ideal

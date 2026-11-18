@@ -1351,17 +1351,14 @@ pub(crate) fn assign_witnesses(
     if !max_dev.is_finite() {
         return Some(Vec::new());
     }
-    let tris: Vec<Vec<[DVec3; 3]>> = surf.iter().map(|p| fan_tris(p)).collect();
     let mut out = Vec::with_capacity(w.len());
     for &x in w {
         let p = src_pos[x as usize];
         let mut best = (f64::INFINITY, 0usize);
-        for (i, ts) in tris.iter().enumerate() {
-            for t in ts {
-                let d = point_triangle_distance(p, t[0], t[1], t[2]);
-                if d < best.0 {
-                    best = (d, i);
-                }
+        for (i, poly) in surf.iter().enumerate() {
+            let d = polygon_distance(p, poly);
+            if d < best.0 {
+                best = (d, i);
             }
         }
         if best.0 > max_dev {
@@ -1370,6 +1367,23 @@ pub(crate) fn assign_witnesses(
         out.push((x, best.1));
     }
     Some(out)
+}
+
+/// Distance from `p` to a polygon as it will be exported. A quad may be
+/// split along either diagonal, so it counts the worse of the two
+/// triangulations; larger polygons use a fan from the centroid.
+pub(crate) fn polygon_distance(p: DVec3, poly: &[DVec3]) -> f64 {
+    let tri = |a: usize, b: usize, c: usize| point_triangle_distance(p, poly[a], poly[b], poly[c]);
+    match poly.len() {
+        3 => tri(0, 1, 2),
+        4 => tri(0, 1, 2)
+            .min(tri(0, 2, 3))
+            .max(tri(0, 1, 3).min(tri(1, 2, 3))),
+        _ => fan_tris(poly)
+            .iter()
+            .map(|t| point_triangle_distance(p, t[0], t[1], t[2]))
+            .fold(f64::INFINITY, f64::min),
+    }
 }
 
 /// Triangles of a polygon for distance queries (fan from the centroid,

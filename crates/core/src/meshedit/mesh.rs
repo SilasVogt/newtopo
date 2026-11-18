@@ -403,6 +403,41 @@ impl EditMesh {
             .collect()
     }
 
+    /// Polygons that break a §9.5.2 shape guarantee the structural check
+    /// ([`EditMesh::issues`]) doesn't cover: concave or degenerate
+    /// triangles and quads, polygons on the same vertex set as another
+    /// one, and polygons whose normal is more than `max_normal_change_deg`
+    /// from the mean CAD normal at their corners. A tool may leave such
+    /// polygons of its input as they are but never make new ones; baked
+    /// meshes can contain a few (slivers on curved CAD faces).
+    pub fn polygon_problems(&self, max_normal_change_deg: f64) -> BTreeSet<usize> {
+        let diag = self.diagonal().max(1e-300);
+        let cos = max_normal_change_deg.to_radians().cos();
+        let mut out = BTreeSet::new();
+        let mut sets: HashMap<Vec<u32>, usize> = HashMap::new();
+        for (i, p) in self.polygons.iter().enumerate() {
+            let pos = self.polygon_positions(i);
+            let shape = if pos.len() <= 4 {
+                super::work::polygon_shape_ok(&pos, diag)
+            } else {
+                area_vec(&pos).length() > 1e-12 * diag * diag
+            };
+            let r = p.normals.iter().copied().sum::<DVec3>().normalize_or_zero();
+            if !shape || self.polygon_normal(i).dot(r) < cos {
+                out.insert(i);
+            }
+            let mut k = p.verts.clone();
+            k.sort_unstable();
+            if let Some(&j) = sets.get(&k) {
+                out.insert(i);
+                out.insert(j);
+            } else {
+                sets.insert(k, i);
+            }
+        }
+        out
+    }
+
     /// Structural problems that make the mesh unusable for the tools:
     /// bad indices, short polygons, repeated vertices, inconsistent
     /// attributes, non-manifold edges or vertices, inconsistent winding,

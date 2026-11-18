@@ -9,7 +9,9 @@
 
 use super::refill::fill_touched_ngons;
 use super::work::{Prov, VClass, Work, polygon_shape_ok};
-use super::{EditOutcome, EditReport, Preserve, Selection, check_input, mark_selection, runs};
+use super::{
+    EditOutcome, EditReport, Preserve, Selection, check_input, mark_selection, run_neighbors, runs,
+};
 use crate::meshedit::mesh::{EditMesh, area_vec};
 use crate::ops::Refusal;
 use glam::DVec3;
@@ -86,7 +88,7 @@ pub fn resample(
     let mut done = 0;
     for (chain, closed) in &all {
         let saved = w.clone();
-        match resample_run(&mut w, chain, *closed, p.spacing, cos_corner) {
+        match resample_run(&mut w, chain, *closed, p, cos_corner) {
             Ok(true) => done += 1,
             Ok(false) => {}
             Err(reason) => {
@@ -101,9 +103,6 @@ pub fn resample(
     }
     if done == 0 && !skipped.is_empty() {
         return Err(Refusal::new(format!("Can't resample: {}", skipped[0])));
-    }
-    if p.fill_ngons {
-        fill_touched_ngons(&mut w);
     }
     let (out, map) = w.finish();
     let selection = w.selected_edges(&map);
@@ -128,12 +127,18 @@ fn resample_run(
     w: &mut Work,
     chain: &[u32],
     closed: bool,
-    spacing: Spacing,
+    params: &ResampleParams,
     cos_corner: f64,
 ) -> Result<bool, String> {
+    let spacing = params.spacing;
     let n = chain.len();
     if n < 2 {
         return Ok(false);
+    }
+    // Runs are found up front; one that an earlier run changed (it can only
+    // share fixed vertices with it, so this is a safety net) is skipped.
+    if chain.iter().any(|&v| !w.valive[v as usize]) {
+        return Err("an earlier run removed one of its vertices".into());
     }
     let at = |i: usize| chain[i % n];
     let fixed_at = |i: usize| -> bool {
@@ -141,6 +146,11 @@ fn resample_run(
             return true;
         }
         let (p, x, q) = (at(i + n - 1), at(i), at(i + 1));
+        // Where the selection doesn't run straight through (a junction a
+        // closed run starts at, shared with other runs), the vertex stays.
+        if run_neighbors(w, x).len() != 2 {
+            return true;
+        }
         let class_fixed = match w.vclass(x) {
             VClass::Corner => true,
             VClass::Free => false,
@@ -181,7 +191,7 @@ fn resample_run(
                 .sum()
         })
         .collect();
-    let segs: Vec<usize> = match spacing {
+    let mut segs: Vec<usize> = match spacing {
         Spacing::Even => pieces.iter().map(|&(a, b)| b - a).collect(),
         Spacing::EdgeLength(l) => lens
             .iter()
@@ -205,15 +215,37 @@ fn resample_run(
             largest_remainder(total, &lens)
         }
     };
+    // A closed run keeps at least three vertices: give the missing edges to
+    // the longest pieces.
+    while closed && segs.iter().sum::<usize>() < 3 {
+        let i = (0..segs.len())
+            .max_by(|&a, &b| (lens[a] / segs[a] as f64).total_cmp(&(lens[b] / segs[b] as f64)))
+            .unwrap_or(0);
+        segs[i] += 1;
+    }
+    let edges: usize = segs.iter().sum();
+    if edges > MAX_RUN_EDGES {
+        return Err(format!(
+            "{edges} edges on one run is more than the {MAX_RUN_EDGES} this tool makes"
+        ));
+    }
     let mut changed = false;
     for (pi, &(a, b)) in pieces.iter().enumerate() {
         changed |= resample_piece(w, &seq[a..=b], segs[pi])?;
     }
     if changed {
+        // Refill first: a triangle that gained a vertex on the run is a
+        // quad with a straight corner until it is refilled.
+        if params.fill_ngons {
+            fill_touched_ngons(w);
+        }
         check_around(w, &seq)?;
     }
     Ok(changed)
 }
+
+/// Most edges one run may get (keeps the matching tables small).
+const MAX_RUN_EDGES: usize = 10_000;
 
 /// Resample the open piece `verts` (ends fixed) to `k` edges.
 fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String> {
@@ -308,6 +340,9 @@ fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String>
         } else {
             *verts.last().unwrap()
         };
+        if w.edge_polys(prev_v, next_v).is_empty() {
+            return Err(format!("{prev_v}-{next_v} is no longer an edge"));
+        }
         let ids = w.split_edge(prev_v, next_v, &targets[start..j]);
         if ids.len() != j - start {
             return Err("internal: split failed".into());

@@ -32,6 +32,36 @@ pub(crate) fn assert_sound(input: &EditMesh, out: &EditMesh, what: &str) {
     }
 }
 
+/// [`assert_sound`] plus: every polygon of the result that breaks a shape
+/// guarantee (`EditMesh::polygon_problems`) was already such a polygon of
+/// the input, on the same vertices (a tool may leave it, or change it
+/// without making it worse, but never make a new one).
+pub(crate) fn assert_outcome(input: &EditMesh, r: &EditOutcome, what: &str) {
+    assert_sound(input, &r.mesh, what);
+    let old: std::collections::BTreeSet<Vec<u32>> = input
+        .polygon_problems(60.0)
+        .into_iter()
+        .filter_map(|i| {
+            let mut k: Vec<u32> = input.polygons[i]
+                .verts
+                .iter()
+                .map(|&v| r.vertex_map[v as usize])
+                .collect::<Option<Vec<u32>>>()?;
+            k.sort_unstable();
+            Some(k)
+        })
+        .collect();
+    for i in r.mesh.polygon_problems(60.0) {
+        let mut k = r.mesh.polygons[i].verts.clone();
+        k.sort_unstable();
+        assert!(
+            old.contains(&k),
+            "{what}: new bad polygon {i}: {:?}",
+            r.mesh.polygon_positions(i)
+        );
+    }
+}
+
 fn grid_id(ny: usize, i: usize, j: usize) -> u32 {
     (i * (ny + 1) + j) as u32
 }
@@ -83,7 +113,7 @@ fn collapse(ratio: f64) -> DecimateParams {
 fn decimate_cube_keeps_shape_and_edges() {
     let m = cube(8, 1.0);
     let r = decimate(&m, &collapse(0.1)).unwrap();
-    assert_sound(&m, &r.mesh, "cube");
+    assert_outcome(&m, &r, "cube");
     assert!(r.report.reached_target, "{}", r.report.message);
     assert!(r.mesh.tri_count() <= (0.1 * m.tri_count() as f64).ceil() as usize);
     assert!(hausdorff(&m, &r.mesh) < 1e-9, "a cube stays a cube");
@@ -106,7 +136,7 @@ fn decimate_cube_keeps_shape_and_edges() {
 fn decimate_cube_to_the_minimum() {
     let m = cube(4, 1.0);
     let r = decimate(&m, &collapse(0.0001)).unwrap();
-    assert_sound(&m, &r.mesh, "cube min");
+    assert_outcome(&m, &r, "cube min");
     // Can't go below the 8 corners; each side is at worst a few polygons.
     assert!(r.mesh.stats().verts <= 16, "{:?}", r.mesh.stats());
     assert!(!r.report.reached_target);
@@ -117,7 +147,7 @@ fn decimate_cube_to_the_minimum() {
 fn decimate_sphere_quads_and_shape() {
     let m = sphere(32, 16, 1.0);
     let r = decimate(&m, &collapse(0.3)).unwrap();
-    assert_sound(&m, &r.mesh, "sphere");
+    assert_outcome(&m, &r, "sphere");
     assert!(r.report.reached_target);
     let s = r.mesh.stats();
     let h = hausdorff(&m, &r.mesh);
@@ -134,7 +164,7 @@ fn decimate_without_quads_makes_triangles() {
         ..collapse(0.3)
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "sphere tris");
+    assert_outcome(&m, &r, "sphere tris");
     assert!(r.report.reached_target);
 }
 
@@ -147,7 +177,7 @@ fn decimate_respects_max_deviation() {
         ..collapse(0.05)
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "sphere tol");
+    assert_outcome(&m, &r, "sphere tol");
     let d = vertex_deviation(&m, &r.mesh);
     assert!(d <= tol + 1e-12, "deviation {d}");
     assert!(!r.report.reached_target, "5% can't be reached within 0.01");
@@ -158,7 +188,7 @@ fn decimate_respects_max_deviation() {
 fn decimate_torus_keeps_genus() {
     let m = torus(32, 12, 3.0, 1.0);
     let r = decimate(&m, &collapse(0.25)).unwrap();
-    assert_sound(&m, &r.mesh, "torus");
+    assert_outcome(&m, &r, "torus");
     assert_eq!(r.mesh.topology().0, 0);
 }
 
@@ -166,7 +196,7 @@ fn decimate_torus_keeps_genus() {
 fn decimate_cylinder_keeps_rims_and_seam_uvs() {
     let m = cylinder(32, 8, 1.0, 2.0);
     let r = decimate(&m, &collapse(0.25)).unwrap();
-    assert_sound(&m, &r.mesh, "cylinder");
+    assert_outcome(&m, &r, "cylinder");
     let out = &r.mesh;
     // Rims: flagged edges stay on the rim circles, all at the baked rim
     // vertices.
@@ -238,7 +268,7 @@ fn planar_cube_becomes_six_quads() {
         ..Default::default()
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "planar cube");
+    assert_outcome(&m, &r, "planar cube");
     let s = r.mesh.stats();
     assert_eq!((s.verts, s.quads, s.faces), (8, 6, 6), "{s:?}");
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
@@ -254,7 +284,7 @@ fn planar_leaves_curved_surfaces_alone() {
         ..Default::default()
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "planar sphere");
+    assert_outcome(&m, &r, "planar sphere");
     assert_eq!(r.mesh.stats(), m.stats());
 }
 
@@ -266,7 +296,7 @@ fn planar_cylinder_caps_merge() {
         ..Default::default()
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "planar cylinder");
+    assert_outcome(&m, &r, "planar cylinder");
     // Side columns merge top to bottom (the middle ring dissolves) and
     // the caps lose their centre vertex: only the two 16-vertex rims stay.
     assert_eq!(r.mesh.stats().verts, 32);
@@ -436,7 +466,7 @@ fn planar_keeps_groups_apart() {
         ..Default::default()
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "planar groups");
+    assert_outcome(&m, &r, "planar groups");
     let area = |m: &EditMesh, g: u32| -> f64 {
         (0..m.polygons.len())
             .filter(|&i| m.polygons[i].group.0 == g)
@@ -477,7 +507,7 @@ fn planar_never_removes_a_flagged_edge_in_a_shared_chain() {
         ..Default::default()
     };
     let r = decimate(&m, &p).unwrap();
-    assert_sound(&m, &r.mesh, "shared chain");
+    assert_outcome(&m, &r, "shared chain");
     let at = |q: DVec3| r.mesh.positions.iter().position(|&x| x.distance(q) < 1e-12);
     let (a, b) = (at(DVec3::new(0.5, 0.5, 0.0)), at(DVec3::new(0.5, 1.0, 0.0)));
     let (a, b) = (a.expect("5 kept") as u32, b.expect("6 kept") as u32);
@@ -506,7 +536,7 @@ fn cleanup_straightens_and_thins_a_jagged_run() {
         ..CleanupParams::for_mesh(&m)
     };
     let r = cleanup(&m, &sel, &p).unwrap();
-    assert_sound(&m, &r.mesh, "zigzag");
+    assert_outcome(&m, &r, "zigzag");
     // The plane is flat, so nothing left the plane.
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
     // The run is straight now and has fewer vertices.
@@ -543,7 +573,7 @@ fn cleanup_keeps_a_curved_surface_within_tolerance() {
         ..CleanupParams::for_mesh(&m)
     };
     let r = cleanup(&m, &Selection::Edges(row(nx, ny, 4)), &p).unwrap();
-    assert_sound(&m, &r.mesh, "curved");
+    assert_outcome(&m, &r, "curved");
     let d = vertex_deviation(&m, &r.mesh);
     assert!(d <= tol + 1e-12, "deviation {d}");
 }
@@ -565,7 +595,7 @@ fn cleanup_merges_a_sliver_row() {
         ..CleanupParams::for_mesh(&m)
     };
     let r = cleanup(&m, &Selection::Edges(row(nx, ny, 3)), &p).unwrap();
-    assert_sound(&m, &r.mesh, "sliver");
+    assert_outcome(&m, &r, "sliver");
     assert_eq!(r.mesh.stats().verts, m.stats().verts - (nx + 1));
     assert!(r.mesh.edges().iter().all(|&(a, b)| {
         r.mesh.positions[a as usize].distance(r.mesh.positions[b as usize]) > 1e-4
@@ -586,7 +616,7 @@ fn cleanup_collapses_short_run_edges() {
         ..CleanupParams::for_mesh(&m)
     };
     let r = cleanup(&m, &Selection::Edges(row(nx, ny, 2)), &p).unwrap();
-    assert_sound(&m, &r.mesh, "short");
+    assert_outcome(&m, &r, "short");
     assert_eq!(r.mesh.stats().verts, m.stats().verts - 1);
     assert_eq!(r.selection.len(), nx - 1);
 }
@@ -614,7 +644,7 @@ fn cleanup_cube_edges_keeps_the_cube() {
     let m = cube(6, 1.0);
     let p = CleanupParams::for_mesh(&m);
     let r = cleanup(&m, &Selection::AllFeatures, &p).unwrap();
-    assert_sound(&m, &r.mesh, "cube cleanup");
+    assert_outcome(&m, &r, "cube cleanup");
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
     assert!((flagged_length(&r.mesh) - 24.0).abs() < 1e-9);
     assert!(on_cube_edges(&r.mesh, 1.0));
@@ -650,7 +680,7 @@ fn resample_even_spacing_and_idempotent() {
         &ResampleParams::default(),
     )
     .unwrap();
-    assert_sound(&m, &r.mesh, "even");
+    assert_outcome(&m, &r, "even");
     let l = run_lengths(&r.mesh, &r.selection);
     assert_eq!(l.len(), nx);
     for x in &l {
@@ -675,7 +705,7 @@ fn resample_to_more_and_fewer_vertices() {
             ..Default::default()
         };
         let r = resample(&m, &Selection::Edges(row(nx, ny, 3)), &p).unwrap();
-        assert_sound(&m, &r.mesh, &format!("count {count}"));
+        assert_outcome(&m, &r, &format!("count {count}"));
         let l = run_lengths(&r.mesh, &r.selection);
         assert_eq!(l.len(), edges, "count {count}");
         for x in &l {
@@ -695,7 +725,7 @@ fn resample_by_edge_length() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::Edges(row(nx, ny, 2)), &p).unwrap();
-    assert_sound(&m, &r.mesh, "length");
+    assert_outcome(&m, &r, "length");
     assert_eq!(r.selection.len(), 4);
 }
 
@@ -714,7 +744,7 @@ fn resample_keeps_corners() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::Edges(sel.clone()), &p).unwrap();
-    assert_sound(&m, &r.mesh, "L");
+    assert_outcome(&m, &r, "L");
     assert!(r.mesh.positions.iter().any(|q| q.distance(corner) < 1e-12));
     assert_eq!(r.selection.len(), 5);
     // Two fixed ends and a corner: a 2-vertex count can't work.
@@ -754,7 +784,7 @@ fn resample_closed_ring_on_cylinder() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::Edges(edges.clone()), &p).unwrap();
-    assert_sound(&m, &r.mesh, "ring even");
+    assert_outcome(&m, &r, "ring even");
     // Even by arc length along the old polygon; chords differ slightly
     // where a new vertex straddles an old corner.
     let l = run_lengths(&r.mesh, &r.selection);
@@ -766,10 +796,58 @@ fn resample_closed_ring_on_cylinder() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::Edges(edges), &p).unwrap();
-    assert_sound(&m, &r.mesh, "ring 36");
+    assert_outcome(&m, &r, "ring 36");
     assert_eq!(r.selection.len(), 36);
-    // UVs: the seam is still a seam and interpolated UVs follow the angle.
-    assert!(r.mesh.flagged.iter().any(|e| e.flags.seam));
+    // UVs: no side polygon wraps across the seam, and every side corner's
+    // u follows its angle (the input ring was jittered by up to 0.05 rad
+    // with its UVs left in place, so within that).
+    for q in r.mesh.polygons.iter().filter(|q| q.group.0 == 0) {
+        let uv = q.uvs.as_ref().unwrap();
+        let us: Vec<f64> = uv.iter().map(|u| u.x).collect();
+        let span = us.iter().cloned().fold(f64::MIN, f64::max)
+            - us.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(span < 0.5, "wraps across the seam: {uv:?}");
+        for (k, &v) in q.verts.iter().enumerate() {
+            let p = r.mesh.positions[v as usize];
+            let a = p.y.atan2(p.x).rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU;
+            let du = (uv[k].x - a).abs();
+            let du = du.min((du - 1.0).abs());
+            assert!(
+                du < 0.05 / std::f64::consts::TAU + 1e-3,
+                "u {} vs angle {a}",
+                uv[k].x
+            );
+        }
+    }
+}
+
+#[test]
+fn resample_refills_triangles_beside_the_run() {
+    // Cap triangles beside each rim: one new vertex per rim edge turns them
+    // into quads with a straight corner until they are refilled.
+    let m = cylinder(24, 3, 1.0, 2.0);
+    let p = ResampleParams {
+        spacing: Spacing::Count(48),
+        ..Default::default()
+    };
+    let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
+    assert_outcome(&m, &r, "rims 48");
+    assert!(r.report.skipped.is_empty(), "{:?}", r.report.skipped);
+    assert!(r.mesh.stats().verts >= m.stats().verts + 48);
+}
+
+#[test]
+fn resample_refuses_huge_counts() {
+    let m = plane(4, 1.0);
+    let sel = Selection::Edges(row(4, 4, 2));
+    for spacing in [Spacing::Count(1_000_000), Spacing::EdgeLength(1e-12)] {
+        let p = ResampleParams {
+            spacing,
+            ..Default::default()
+        };
+        let err = resample(&m, &sel, &p).unwrap_err();
+        assert!(err.reason.contains("more than"), "{}", err.reason);
+    }
 }
 
 #[test]
@@ -781,7 +859,7 @@ fn resample_cad_rims_count() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
-    assert_sound(&m, &r.mesh, "rims");
+    assert_outcome(&m, &r, "rims");
     let rim: Vec<_> = r.mesh.flagged.iter().filter(|e| e.flags.cad).collect();
     assert_eq!(rim.len(), 24, "two rims of 12");
     for e in rim {
@@ -803,7 +881,7 @@ fn resample_cube_features_stay_on_edges() {
         ..Default::default()
     };
     let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
-    assert_sound(&m, &r.mesh, "cube resample");
+    assert_outcome(&m, &r, "cube resample");
     assert!(on_cube_edges(&r.mesh, 1.0));
     assert!((flagged_length(&r.mesh) - 24.0).abs() < 1e-9);
     // 12 cube edges of length 2, 4 edges each.
@@ -851,7 +929,7 @@ fn slide_moves_along_the_edge() {
     let (px, py) = (m.positions[x as usize], m.positions[y as usize]);
     for t in [0.25, 0.5, 0.9] {
         let r = slide(&m, &toward(x, y), t).unwrap();
-        assert_sound(&m, &r.mesh, "slide");
+        assert_outcome(&m, &r, "slide");
         assert!(r.report.reached_target);
         let nx = r.vertex_map[x as usize].unwrap() as usize;
         assert!(r.mesh.positions[nx].distance(px.lerp(py, t)) < 1e-12);
@@ -874,7 +952,7 @@ fn slide_to_one_lands_on_the_neighbour() {
     let m = plane(4, 1.0);
     let (x, y) = (grid_id(4, 2, 2), grid_id(4, 3, 2));
     let r = slide(&m, &toward(x, y), 1.0).unwrap();
-    assert_sound(&m, &r.mesh, "slide to 1");
+    assert_outcome(&m, &r, "slide to 1");
     assert_eq!(r.vertex_map[x as usize], None, "merged into the neighbour");
     let ny = r.vertex_map[y as usize].unwrap() as usize;
     assert_eq!(r.mesh.positions[ny], m.positions[y as usize]);
@@ -895,7 +973,7 @@ fn slide_unclamped_extends_and_stops_before_folding() {
         ..Default::default()
     };
     let r = vertex_slide(&m, &toward(x, y), &p).unwrap();
-    assert_sound(&m, &r.mesh, "extend");
+    assert_outcome(&m, &r, "extend");
     assert!(r.report.reached_target);
     let nx = r.vertex_map[x as usize].unwrap() as usize;
     assert!((r.mesh.positions[nx].x - 0.375).abs() < 1e-12);
@@ -905,7 +983,7 @@ fn slide_unclamped_extends_and_stops_before_folding() {
     // Far beyond the opposite neighbour (x = 0.25) the quads would fold:
     // the slide stops short of it and says so.
     let far = vertex_slide(&m, &toward(x, y), &SlideParams { factor: -3.0, ..p }).unwrap();
-    assert_sound(&m, &far.mesh, "fold limit");
+    assert_outcome(&m, &far, "fold limit");
     assert!(!far.report.reached_target, "{}", far.report.message);
     let fx = far.mesh.positions[far.vertex_map[x as usize].unwrap() as usize].x;
     assert!(fx > 0.25 && fx < 0.26, "{fx}");
@@ -950,7 +1028,7 @@ fn slide_boundary_vertices_stay_on_the_boundary() {
         dir: DVec3::new(1.0, 0.1, 0.0), // into the plane, a little upwards
     };
     let r = slide(&m, &e, 0.5).unwrap();
-    assert_sound(&m, &r.mesh, "boundary slide");
+    assert_outcome(&m, &r, "boundary slide");
     let p = r.mesh.positions[r.vertex_map[x as usize].unwrap() as usize];
     assert_eq!(p.x, 0.0);
     assert!((p.y - 0.625).abs() < 1e-12, "{p}");
@@ -981,7 +1059,7 @@ fn slide_feature_vertices_stay_on_their_feature_unless_overridden() {
     let p = m.positions[x as usize];
     // Pointing at the cube centre: the best feature edge is chosen.
     let r = slide(&m, &e(-p), 0.5).unwrap();
-    assert_sound(&m, &r.mesh, "feature slide");
+    assert_outcome(&m, &r, "feature slide");
     assert!(on_cube_edges(&r.mesh, 1.0));
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
     assert!((flagged_length(&r.mesh) - flagged_length(&m)).abs() < 1e-9);
@@ -998,7 +1076,7 @@ fn slide_feature_vertices_stay_on_their_feature_unless_overridden() {
         },
     )
     .unwrap();
-    assert_sound(&m, &free.mesh, "override");
+    assert_outcome(&m, &free, "override");
     let q = free.mesh.positions[free.vertex_map[x as usize].unwrap() as usize];
     let extreme = [q.x, q.y, q.z]
         .iter()
@@ -1072,7 +1150,7 @@ fn slide_plan_is_reusable_and_matches_one_shot() {
     for k in 0..=10 {
         let t = k as f64 / 10.0;
         let r = plan.apply(t, false, true).unwrap();
-        assert_sound(&m, &r.mesh, &format!("sphere slide {t}"));
+        assert_outcome(&m, &r, &format!("sphere slide {t}"));
         assert_eq!(r.mesh, slide(&m, &e, t).unwrap().mesh, "t = {t}");
         // Every vertex stays on the input surface (it moved along an edge).
         assert!(vertex_deviation(&r.mesh, &m) < 1e-9);
@@ -1242,7 +1320,7 @@ fn merge_collapses_a_short_edge_and_keeps_topology() {
         ..MergeParams::for_mesh(&m)
     };
     let r = merge_by_distance(&m, &VertexScope::All, &p).unwrap();
-    assert_sound(&m, &r.mesh, "short edge");
+    assert_outcome(&m, &r, "short edge");
     assert_eq!(r.mesh.stats().verts, m.stats().verts - 1);
     // The lower index survives, moved to the middle of the pair.
     let nx = r.vertex_map[x as usize].unwrap() as usize;
@@ -1278,7 +1356,7 @@ fn merge_keeps_pinned_and_feature_vertices_in_place() {
     let pulled = nbrs[0];
     m2.positions[pulled as usize] = pc.lerp(m.positions[pulled as usize], 1e-6);
     let r = merge_by_distance(&m2, &VertexScope::All, &MergeParams::for_mesh(&m2)).unwrap();
-    assert_sound(&m2, &r.mesh, "cube merge");
+    assert_outcome(&m2, &r, "cube merge");
     assert_eq!(r.mesh.stats().verts, m2.stats().verts - 1);
     let nc = r.vertex_map[corner as usize].unwrap() as usize;
     assert_eq!(r.mesh.positions[nc], pc, "the pinned corner stays exactly");
