@@ -241,8 +241,16 @@ impl AppState {
 
     // ------------------------------------------------------------ import
 
+    /// An import is running, waits in the object chooser, or is held for
+    /// an open preview. One at a time, so none overwrites another.
+    fn import_busy(&self) -> bool {
+        self.jobs.import.is_some()
+            || self.ui.import_list.is_some()
+            || self.jobs.held_import.is_some()
+    }
+
     pub fn import_dialog(&mut self) {
-        if self.jobs.import.is_some() || self.jobs.held_import.is_some() {
+        if self.import_busy() {
             self.toast(ToastKind::Info, "An import is already running.");
             return;
         }
@@ -279,7 +287,7 @@ impl AppState {
             self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
             return;
         }
-        if self.jobs.import.is_some() || self.jobs.held_import.is_some() {
+        if self.import_busy() {
             self.toast(
                 ToastKind::Info,
                 format!(
