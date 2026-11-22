@@ -147,6 +147,9 @@ struct ExportJob {
 pub struct Jobs {
     import: Option<ImportJob>,
     export: Option<ExportJob>,
+    /// A finished import that waits for the open preview to be applied or
+    /// discarded: added to a previewed scene, Discard would remove it.
+    held_import: Option<(PathBuf, ImportedFile, Vec<ImportChoice>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -239,7 +242,7 @@ impl AppState {
     // ------------------------------------------------------------ import
 
     pub fn import_dialog(&mut self) {
-        if self.jobs.import.is_some() {
+        if self.jobs.import.is_some() || self.jobs.held_import.is_some() {
             self.toast(ToastKind::Info, "An import is already running.");
             return;
         }
@@ -276,7 +279,7 @@ impl AppState {
             self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
             return;
         }
-        if self.jobs.import.is_some() {
+        if self.jobs.import.is_some() || self.jobs.held_import.is_some() {
             self.toast(
                 ToastKind::Info,
                 format!(
@@ -327,7 +330,17 @@ impl AppState {
         });
     }
 
+    /// The document was replaced: an import held for its preview doesn't
+    /// belong to the new one.
+    pub fn drop_held_import(&mut self) {
+        self.jobs.held_import = None;
+    }
+
     pub fn poll_jobs(&mut self, ctx: &egui::Context) {
+        if self.jobs.held_import.is_some() && !self.doc.in_preview() {
+            let (path, file, choices) = self.jobs.held_import.take().expect("held");
+            self.finish_import(&path, file, choices);
+        }
         if let Some(job) = &self.jobs.import {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
             match job.rx.try_recv() {
@@ -432,6 +445,11 @@ impl AppState {
     }
 
     fn finish_import(&mut self, path: &Path, file: ImportedFile, choices: Vec<ImportChoice>) {
+        if self.doc.in_preview() {
+            self.jobs.held_import = Some((path.to_path_buf(), file, choices));
+            self.toast(ToastKind::Info, S::IMPORT_WAITS_FOR_PREVIEW);
+            return;
+        }
         let mut report = ImportReport {
             file: path
                 .file_name()
@@ -606,6 +624,7 @@ impl AppState {
         match self.doc.open(&path) {
             Ok(()) => {
                 self.end_compare();
+                self.drop_held_import();
                 self.demo = None;
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
@@ -728,6 +747,7 @@ impl AppState {
                 // The user chose this autosave: it is ours to clean up now.
                 self.owned_autosaves.insert(autosave.to_path_buf());
                 self.end_compare();
+                self.drop_held_import();
                 self.demo = None;
                 self.doc.path = original;
                 self.doc.bump();

@@ -1370,6 +1370,7 @@ impl AppState {
         match what {
             PendingAfterPrompt::New => {
                 self.end_compare();
+                self.drop_held_import();
                 self.doc.close();
                 self.demo = None;
                 self.sel = Selection::default();

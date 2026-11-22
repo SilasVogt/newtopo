@@ -357,6 +357,8 @@ pub const PREVIEW_APPLY: &str = "Apply";
 pub const PREVIEW_DISCARD: &str = "Discard";
 pub const PREVIEW_COMPARE: &str = "Compare";
 pub const PREVIEW_PENDING: &str = "Apply or discard the preview first";
+pub const IMPORT_WAITS_FOR_PREVIEW: &str =
+    "The import is ready. It is added once you apply or discard the preview.";
 pub const PREVIEW_DISCARDED: &str = "Preview discarded";
 pub const COMPARE_BEFORE: &str = "Before";
 pub const COMPARE_AFTER: &str = "After";
