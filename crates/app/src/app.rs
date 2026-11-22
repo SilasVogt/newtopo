@@ -1219,7 +1219,7 @@ impl AppState {
         // mesh itself (preview display), until Apply or Discard.
         // Inside an already open preview too; the display mode to return to
         // is saved once.
-        if matches!(which, SettingToggle::AutoFill) && !self.view.compare {
+        if matches!(which, SettingToggle::AutoFill) {
             self.view.compare = true;
             if self.view.compare_restore_preview.is_none() {
                 self.view.compare_restore_preview = Some(self.view.preview);

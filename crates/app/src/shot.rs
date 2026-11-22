@@ -783,6 +783,8 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         app.st.cut_finish(false);
         report(&mut app, "cut", r0);
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        // Keep the setup: the undos below take back one edit each.
+        app.st.apply_preview();
         // Collapse and remove a generated edge; weld two generated vertices.
         app.st.tool.active = Tool::Select;
         app.st.mode = Mode::Edge;
@@ -801,6 +803,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             let r0 = app.st.doc.revision;
             app.st.collapse_selected();
             report(&mut app, "collapse", r0);
+            app.st.apply_preview();
             app.st.undo();
         }
         if lines.len() > 3 {
@@ -808,6 +811,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             let r0 = app.st.doc.revision;
             app.st.remove_selected();
             report(&mut app, "remove 3 edges (one step)", r0);
+            app.st.apply_preview();
             let r1 = app.st.doc.revision;
             app.st.undo();
             eprintln!(
@@ -821,6 +825,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         let gv: Vec<usize> = (0..app.st.vd.verts.len())
             .filter(|&i| matches!(&app.st.vd.verts[i].sel, crate::selection::VertSel::Key(_, k) if !k.is_cad()))
             .collect();
+        anyhow::ensure!(gv.len() >= 2, "the applied setup survives the undos");
         if gv.len() >= 2 {
             // The two closest generated vertices.
             let mut best = (f32::MAX, 0, 0);

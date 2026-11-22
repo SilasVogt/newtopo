@@ -777,7 +777,10 @@ impl AppState {
 
     /// Owned export data for the selected objects, or every object
     /// (hidden ones included) when nothing is selected (SPEC §8.3, §9.3).
-    pub fn export_items(&self) -> Option<Vec<ExportItem>> {
+    pub fn export_items(&mut self) -> Option<Vec<ExportItem>> {
+        // The output cache is otherwise refreshed only when the viewport is
+        // drawn; a hidden viewport must not leave discarded geometry in it.
+        self.ensure_view_data();
         let scene = self.doc.scene.as_ref()?;
         let (bodies, layers) =
             guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone())).ok()?;
