@@ -1059,7 +1059,21 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         });
         app.st.accept_import_list();
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        // The paste preview is still open, so the import is held: nothing
+        // is added to a scene that Discard could roll back.
+        anyhow::ensure!(
+            app.st.doc.in_preview() && app.st.ui.import_report.is_none(),
+            "an import waits for the open preview"
+        );
+        app.st.apply_preview();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
         let report = app.st.ui.import_report.take();
+        anyhow::ensure!(
+            report
+                .as_ref()
+                .is_some_and(|r| r.bodies > 0 && r.errors.is_empty()),
+            "the held import runs once the preview is applied"
+        );
         eprintln!(
             "replace: list defaulted to Replace: {all_replace}; report: {:?}",
             report.map(|r| (r.bodies, r.errors, r.warnings))
