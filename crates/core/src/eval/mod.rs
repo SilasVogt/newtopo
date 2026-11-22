@@ -508,12 +508,17 @@ fn evaluate_inner(
             continue;
         }
         let chart = bridge::chart_for(ctx, &mesh, r, &walks);
+        let plane = matches!(chart, bridge::Chart::Plane { .. });
+        // Without a CAD normal the plane chart's side is arbitrary.
+        if plane && bridge::plane_chart_normal(ctx, &mesh, &walks).is_none() {
+            continue;
+        }
         let fidf = |v: usize| mesh.final_v(v, &pole_target);
         let g = bridge::walk_geom(ctx, &mesh, &chart, &walks[0], &fidf);
         // Exported edges are straight: test the vertex polygon.
         let poly: Vec<DVec2> = g.occ.iter().map(|o| o.d).collect();
         let area = geom2::signed_area(&poly);
-        let reversed = if matches!(chart, bridge::Chart::Plane { .. }) {
+        let reversed = if plane {
             plane_chart_reversed(&poly)
         } else {
             area <= 0.0

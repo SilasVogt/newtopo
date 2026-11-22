@@ -1408,17 +1408,13 @@ fn tool_row(
             egui::FontId::proportional(13.5),
             pal.text_strong,
         );
-        // Keep clear of the shortcut chip: truncate with an ellipsis.
-        let key_w = if key.is_empty() { 0.0 } else { 40.0 };
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            help.to_owned(),
+        p.text(
+            egui::pos2(x, r.top() + 23.0),
+            egui::Align2::LEFT_TOP,
+            help,
             egui::FontId::proportional(12.0),
             pal.text_dim,
         );
-        job.wrap =
-            egui::text::TextWrapping::truncate_at_width((r.right() - x - key_w - 8.0).max(20.0));
-        let g = p.layout_job(job);
-        p.galley(egui::pos2(x, r.top() + 23.0), g, pal.text_dim);
         if !key.is_empty() {
             let font = egui::FontId::monospace(11.0);
             let g = p.layout_no_wrap(key.to_owned(), font, pal.text_dim);
