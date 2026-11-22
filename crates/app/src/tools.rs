@@ -589,7 +589,9 @@ impl AppState {
                 }
                 true
             }
-            (Tool::Cut, Key::Enter) => {
+            // Only while a path is being drawn: with none, Enter is free to
+            // apply an open preview.
+            (Tool::Cut, Key::Enter) if !self.tool.cut.is_empty() => {
                 self.cut_finish(false);
                 true
             }

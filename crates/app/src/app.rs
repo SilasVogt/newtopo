@@ -1018,7 +1018,7 @@ impl AppState {
         self.end_compare();
     }
 
-    fn end_compare(&mut self) {
+    pub(crate) fn end_compare(&mut self) {
         self.view.compare = false;
         if let Some(p) = self.view.compare_restore_preview.take() {
             self.view.preview = p;
@@ -1362,6 +1362,7 @@ impl AppState {
     pub fn do_pending(&mut self, what: PendingAfterPrompt) {
         match what {
             PendingAfterPrompt::New => {
+                self.end_compare();
                 self.doc.close();
                 self.demo = None;
                 self.sel = Selection::default();

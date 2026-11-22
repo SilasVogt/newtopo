@@ -246,7 +246,17 @@ impl BodyCtx {
             // vertex can miss each other by the file's tolerance (often far
             // more than `eps`), which leaves open loops the arrangement can't
             // fill.
-            snap_shared_vertices(&mut curves, 1e-3 * span);
+            // Per axis, so a long face (say a cylinder 10000 tall) can't pull
+            // the two seam copies of a vertex, a period apart in the other
+            // axis, into one cluster.
+            let snap = DVec2::new(
+                info.u_range.1 - info.u_range.0,
+                info.v_range.1 - info.v_range.0,
+            )
+            .abs()
+            .max(DVec2::splat(1e-12))
+                * 1e-3;
+            snap_shared_vertices(&mut curves, snap);
             let mut lo = DVec2::splat(f64::INFINITY);
             let mut hi = DVec2::splat(f64::NEG_INFINITY);
             for c in &curves {
@@ -429,10 +439,10 @@ impl BodyCtx {
 }
 
 /// Moves curve end points that belong to the same CAD vertex and lie within
-/// `snap` of each other in UV onto their common mean, so loops close exactly.
+/// `snap` of each other (per UV axis) onto their common mean, so loops close exactly.
 /// Copies of one vertex on both sides of a seam are a period apart and stay
 /// separate.
-fn snap_shared_vertices(curves: &mut [BCurve], snap: f64) {
+fn snap_shared_vertices(curves: &mut [BCurve], snap: DVec2) {
     // (vertex, members (curve, end), sum, count)
     let mut clusters: Vec<(VertexId, Vec<(usize, usize)>, DVec2, f64)> = Vec::new();
     for (ci, c) in curves.iter().enumerate() {
@@ -448,7 +458,7 @@ fn snap_shared_vertices(curves: &mut [BCurve], snap: f64) {
             };
             match clusters
                 .iter_mut()
-                .find(|k| k.0 == v && (k.2 / k.3 - p).length() <= snap)
+                .find(|k| k.0 == v && (k.2 / k.3 - p).abs().cmple(snap).all())
             {
                 Some(k) => {
                     k.1.push((ci, end));
@@ -499,12 +509,28 @@ mod tests {
             // Vertex 0 again on the far side of a u-seam: a period away.
             curve(DVec2::new(TAU, 0.0), DVec2::new(TAU, 1.0), 0, 3),
         ];
-        snap_shared_vertices(&mut cs, 1e-3);
+        snap_shared_vertices(&mut cs, DVec2::splat(1e-3));
         assert_eq!(cs[0].pts[2], cs[1].pts[0], "corner 1 closes");
         assert_eq!(cs[1].pts[2], cs[2].pts[0], "corner 2 closes");
         assert_eq!(cs[2].pts[2], cs[0].pts[0], "corner 0 closes");
         assert_eq!(cs[3].pts[0], DVec2::new(TAU, 0.0), "seam copy untouched");
         // Interior points never move.
         assert_eq!(cs[0].pts[1], DVec2::new(0.5, 0.0));
+    }
+
+    #[test]
+    fn seam_copies_stay_apart_on_a_long_face() {
+        // A cylinder face [0, 2π] × [0, 10000]: the old single tolerance
+        // (1e-3 × the larger span = 10) would merge the two seam copies of
+        // vertex 0, which are 2π apart in u.
+        let mut cs = vec![
+            curve(DVec2::new(0.0, 0.0), DVec2::new(0.0, 10000.0), 0, 1),
+            curve(DVec2::new(TAU, 0.0), DVec2::new(TAU, 10000.0), 0, 1),
+        ];
+        snap_shared_vertices(&mut cs, DVec2::new(TAU, 10000.0) * 1e-3);
+        assert_eq!(cs[0].pts[0], DVec2::new(0.0, 0.0));
+        assert_eq!(cs[1].pts[0], DVec2::new(TAU, 0.0));
+        assert_eq!(cs[0].pts[2], DVec2::new(0.0, 10000.0));
+        assert_eq!(cs[1].pts[2], DVec2::new(TAU, 10000.0));
     }
 }

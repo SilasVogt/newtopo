@@ -605,6 +605,7 @@ impl AppState {
         };
         match self.doc.open(&path) {
             Ok(()) => {
+                self.end_compare();
                 self.demo = None;
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
@@ -726,6 +727,7 @@ impl AppState {
             Ok(()) => {
                 // The user chose this autosave: it is ours to clean up now.
                 self.owned_autosaves.insert(autosave.to_path_buf());
+                self.end_compare();
                 self.demo = None;
                 self.doc.path = original;
                 self.doc.bump();
