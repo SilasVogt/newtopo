@@ -824,3 +824,29 @@ fn loops_rings_strips() {
     );
     let _ = rule_ids(&s);
 }
+
+/// A region spanning two CAD faces with differing normals (the two halves
+/// of a cylinder, joined by removing their shared edge) has its winding
+/// checked in its plane chart, and the correct winding passes.
+#[test]
+fn region_across_faces_passes_the_orientation_check() {
+    let (mut s, b) = scene_with(MockBody::split_cylinder(2.0, 4.0));
+    set_autofill(&mut s, true);
+    let g = edge_between(&s, b, 0, 1);
+    s.apply(Op::RemoveCadEdge {
+        body: Some(b),
+        edge: g,
+        confirmed: true,
+    })
+    .unwrap();
+    assert_valid(&mut s, b, "auto-filled region across two faces");
+    let m = s.output_of(b).unwrap().clone();
+    // At least one polygon really bends across the join.
+    assert!(
+        m.polygons.iter().any(|p| {
+            let n0 = p.normals[0];
+            p.normals.iter().any(|n| n.dot(n0) < 0.99)
+        }),
+        "a polygon with differing CAD normals exists"
+    );
+}
