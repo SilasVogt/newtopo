@@ -49,6 +49,9 @@ pub struct OutlinerState {
     pub filter: String,
     pub collapsed: BTreeSet<LayerId>,
     pub renaming: Option<(RenameTarget, String)>,
+    /// Focus the rename field once, on the frame renaming starts. Asking
+    /// for focus every frame trapped the user in the field.
+    pub focus_rename: bool,
     paint: Option<(PaintColumn, bool)>,
 }
 
@@ -190,6 +193,7 @@ impl AppState {
             // Start renaming the new layer right away.
             self.ui.outliner.renaming =
                 Some((RenameTarget::Layer(LayerId(id)), format!("Layer {n}")));
+            self.ui.outliner.focus_rename = true;
         }
     }
 
@@ -477,9 +481,13 @@ impl AppState {
                 let r = ui.add(
                     egui::TextEdit::singleline(buf).desired_width(ui.available_width() - 56.0),
                 );
-                r.request_focus();
+                if std::mem::take(&mut self.ui.outliner.focus_rename) {
+                    r.request_focus();
+                }
+                // Enter or clicking elsewhere keeps the name; Esc cancels.
                 if r.lost_focus() {
-                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !buf.trim().is_empty() {
+                    let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    if !cancel && !buf.trim().is_empty() && buf.trim() != l.name {
                         actions.push(OutlinerAction::RenameLayer(l.id, buf.trim().to_string()));
                     }
                     self.ui.outliner.renaming = None;
@@ -494,6 +502,7 @@ impl AppState {
                 }
                 if r.double_clicked() {
                     self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
+                    self.ui.outliner.focus_rename = true;
                 }
                 ui.label(
                     RichText::new(format!("{count}"))
@@ -548,6 +557,7 @@ impl AppState {
             }
             if ui.button(S::OUTLINER_RENAME).clicked() {
                 self.ui.outliner.renaming = Some((RenameTarget::Layer(l.id), l.name.clone()));
+                self.ui.outliner.focus_rename = true;
                 ui.close();
             }
             if ui
@@ -592,9 +602,13 @@ impl AppState {
             && *rid == b.id
         {
             let r = child.add(egui::TextEdit::singleline(buf).desired_width(rect.width() - 110.0));
-            r.request_focus();
+            if std::mem::take(&mut self.ui.outliner.focus_rename) {
+                r.request_focus();
+            }
+            // Enter or clicking elsewhere keeps the name; Esc cancels.
             if r.lost_focus() {
-                if child.input(|i| i.key_pressed(egui::Key::Enter)) && !buf.trim().is_empty() {
+                let cancel = child.input(|i| i.key_pressed(egui::Key::Escape));
+                if !cancel && !buf.trim().is_empty() && buf.trim() != b.name {
                     actions.push(OutlinerAction::RenameBody(b.id, buf.trim().to_string()));
                 }
                 self.ui.outliner.renaming = None;
@@ -654,6 +668,7 @@ impl AppState {
         resp.context_menu(|ui| {
             if ui.button(S::OUTLINER_RENAME).clicked() {
                 self.ui.outliner.renaming = Some((RenameTarget::Body(b.id), b.name.clone()));
+                self.ui.outliner.focus_rename = true;
                 ui.close();
             }
             if ui.button("Frame").clicked() {

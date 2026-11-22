@@ -57,6 +57,16 @@ fn newell(p: &[DVec3]) -> DVec3 {
 /// Topological and geometric checks on an output mesh. `tol` is a length
 /// tolerance (e.g. 1e-6 × body size). Fan-fallback polygons are reported
 /// as `FanFallback` (informational; export still proceeds).
+/// A polygon so thin that its Newell normal `nn` (twice its area vector)
+/// says nothing about its orientation: |nn| below 1% of perimeter squared
+/// (a square is at 12.5%).
+fn is_sliver(pts: &[DVec3], nn: DVec3) -> bool {
+    let perimeter: f64 = (0..pts.len())
+        .map(|k| (pts[(k + 1) % pts.len()] - pts[k]).length())
+        .sum();
+    nn.length() < 1e-2 * perimeter * perimeter
+}
+
 pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> {
     let mut issues = Vec::new();
     let nv = mesh.vertices.len() as u32;
@@ -128,7 +138,14 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             // The 3D test is only meaningful for polygons that don't wrap a
             // lot of curvature; the evaluator checks UV orientation itself.
             let flat = p.normals.iter().all(|m| m.dot(avg) > 0.8);
-            if flat && nn.normalize().dot(avg) < 0.0 {
+            // Slivers (e.g. a fill polygon whose corners all run along one
+            // curved CAD edge) have a near-zero, direction-less Newell
+            // normal; their orientation is checked in UV by the evaluator.
+            // On a plane (all CAD normals equal) even a sliver's normal is
+            // sound, and plane-chart regions get no UV check, so it stays
+            // checked here.
+            let planar = p.normals.iter().all(|m| m.dot(avg) > 1.0 - 1e-9);
+            if flat && (planar || !is_sliver(&pts, nn)) && nn.normalize().dot(avg) < 0.0 {
                 issues.push(Issue {
                     polygon: Some(pi),
                     vertices: p.verts.clone(),
@@ -326,4 +343,32 @@ pub fn blocking(issues: &[Issue]) -> Vec<&Issue> {
         .iter()
         .filter(|i| i.kind != IssueKind::FanFallback)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slivers_are_recognised() {
+        let sq = [DVec3::ZERO, DVec3::X, DVec3::new(1.0, 1.0, 0.0), DVec3::Y];
+        assert!(!is_sliver(&sq, newell(&sq)));
+        // Four consecutive points along one curved CAD edge, as an auto-fill
+        // quad on a STEP cube produced them (reported as "flipped" before).
+        let arc = [
+            DVec3::new(24.980, -7.106, 2.549),
+            DVec3::new(24.987, -10.888, 1.552),
+            DVec3::new(24.996, -15.275, 0.720),
+            DVec3::new(25.000, -20.061, 0.182),
+        ];
+        assert!(is_sliver(&arc, newell(&arc)));
+        // A long but real quad (1:20) is not a sliver.
+        let long = [
+            DVec3::ZERO,
+            DVec3::new(20.0, 0.0, 0.0),
+            DVec3::new(20.0, 1.0, 0.0),
+            DVec3::Y,
+        ];
+        assert!(!is_sliver(&long, newell(&long)));
+    }
 }

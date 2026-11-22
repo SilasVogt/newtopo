@@ -19,6 +19,9 @@ Where each non-trivial algorithm came from (SPEC §0 rule 4): public papers, ope
 | Largest-remainder count distribution | Hamilton's method (standard apportionment); own code |
 | TEMP auto-fill (to be replaced by the fill worker) | Ear clipping (Meisters' two-ears theorem; Eberly, "Triangulation by Ear Clipping", public note) + greedy convex pairing; own code |
 | Loop / ring / strip selection | Standard quad-mesh traversal; own code |
+| Snapping pcurve ends that share a CAD vertex (per-vertex proximity clusters, mean position) | Own design |
+| Sliver test for the 3D orientation check (Newell normal vs perimeter²) | Newell's method; threshold own design |
+| Preview transactions (snapshot document + undo/redo, commit as one step) | Own design on the existing snapshot undo (SPEC §4.7) |
 
 
 ## CAD kernel, import helper, reference models
@@ -70,5 +73,6 @@ Where each non-trivial algorithm came from (SPEC §0 rule 4): public papers, ope
 | Polygon triangulation for preview (Newell normal + ear clipping) | Newell's method (Sutherland et al. 1974); ear clipping (Meisters 1975); own implementation |
 | Orbit camera, framing, projection matrices (depth 0..1) | Standard formulas; own implementation |
 | Edge loop / ring / face strip walks over the output mesh | Own design from SPEC §6.14 |
+| Before/after compare (one camera, one render target per viewport slot) | Own design |
 | Fuzzy command matching (subsequence with word-start and run bonuses) | Own design |
 | Themes, icons, logo, colours, wording | Own design (no third-party art); fonts: Noto Sans (SIL OFL 1.1) |

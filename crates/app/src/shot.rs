@@ -532,7 +532,9 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             frames(6),
             &dir.join("10-filleted-box-slice.png"),
         )?;
-        // Save and reopen: same output.
+        // Apply the previewed Slice (nothing is written before Apply), then
+        // save and reopen: same output.
+        app.st.apply_preview();
         let p = tmp.join("filleted_box.ntopo");
         app.st.doc.save(&p).map_err(anyhow::Error::msg)?;
         let before = app.st.doc.scene.as_mut().map(|s| s.stats());
@@ -573,6 +575,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         // Export dialog.
         app.st.open_export_dialog();
         s.shoot(&ctx, &mut app, frames(8), &dir.join("13-export-dialog.png"))?;
+        app.st.ui.export = None;
     }
 
     // 2. Plate with holes: Connect on the hole walls, preview with auto-fill.
@@ -620,6 +623,22 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             frames(6),
             &dir.join("11-plate-connect-preview.png"),
         )?;
+        // Keep the Connect, then switch auto-fill on: it previews as
+        // Before | After with the same camera (SPEC §5.10); keep it on for
+        // the steps below.
+        app.st.apply_preview();
+        app.st.run(crate::commands::Cmd::AutoFill);
+        anyhow::ensure!(
+            app.st.doc.in_preview() && app.st.view.compare,
+            "auto-fill opens the compare"
+        );
+        s.shoot(
+            &ctx,
+            &mut app,
+            frames(10),
+            &dir.join("19-autofill-compare.png"),
+        )?;
+        app.st.apply_preview();
         // Edge mode: loop on a Connect line, then remove it as one step.
         app.st.view.preview = false;
         app.st.mode = Mode::Edge;
@@ -764,6 +783,8 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         app.st.cut_finish(false);
         report(&mut app, "cut", r0);
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        // Keep the setup: the undos below take back one edit each.
+        app.st.apply_preview();
         // Collapse and remove a generated edge; weld two generated vertices.
         app.st.tool.active = Tool::Select;
         app.st.mode = Mode::Edge;
@@ -782,6 +803,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             let r0 = app.st.doc.revision;
             app.st.collapse_selected();
             report(&mut app, "collapse", r0);
+            app.st.apply_preview();
             app.st.undo();
         }
         if lines.len() > 3 {
@@ -789,6 +811,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             let r0 = app.st.doc.revision;
             app.st.remove_selected();
             report(&mut app, "remove 3 edges (one step)", r0);
+            app.st.apply_preview();
             let r1 = app.st.doc.revision;
             app.st.undo();
             eprintln!(
@@ -802,6 +825,7 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         let gv: Vec<usize> = (0..app.st.vd.verts.len())
             .filter(|&i| matches!(&app.st.vd.verts[i].sel, crate::selection::VertSel::Key(_, k) if !k.is_cad()))
             .collect();
+        anyhow::ensure!(gv.len() >= 2, "the applied setup survives the undos");
         if gv.len() >= 2 {
             // The two closest generated vertices.
             let mut best = (f32::MAX, 0, 0);
@@ -1035,7 +1059,21 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
         });
         app.st.accept_import_list();
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
+        // The paste preview is still open, so the import is held: nothing
+        // is added to a scene that Discard could roll back.
+        anyhow::ensure!(
+            app.st.doc.in_preview() && app.st.ui.import_report.is_none(),
+            "an import waits for the open preview"
+        );
+        app.st.apply_preview();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 1.0);
         let report = app.st.ui.import_report.take();
+        anyhow::ensure!(
+            report
+                .as_ref()
+                .is_some_and(|r| r.bodies > 0 && r.errors.is_empty()),
+            "the held import runs once the preview is applied"
+        );
         eprintln!(
             "replace: list defaulted to Replace: {all_replace}; report: {:?}",
             report.map(|r| (r.bodies, r.errors, r.warnings))
@@ -1109,16 +1147,29 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             app.st.doc.revision
         );
         anyhow::ensure!(l > 0 && l == r, "Connect should reach both bodies");
+        // Apply, so Connect is its own undo step.
+        app.st.apply_preview();
         // A wheel tick changes both in the same gesture.
         app.st.wheel_count(1.0, true);
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.6);
         let (l2, r2) = (lines_on(&app, left), lines_on(&app, right));
         eprintln!("two-body wheel tick: left {l2} right {r2}");
         anyhow::ensure!(l2 > l && l2 == r2, "wheel tick should change both bodies");
-        // Two undos bring both back to nothing (connect, then the gesture).
-        app.st.undo();
+        app.st.apply_preview();
+        // Two undos bring both back to nothing: the gesture, then Connect.
         app.st.undo();
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        anyhow::ensure!(
+            lines_on(&app, left) == l && lines_on(&app, right) == l,
+            "the first undo takes back only the wheel tick"
+        );
+        app.st.undo();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        anyhow::ensure!(
+            app.st.vd.edges.iter().any(|e| e.body == left)
+                && app.st.vd.edges.iter().any(|e| e.body == right),
+            "the imported bodies are still there"
+        );
         anyhow::ensure!(
             lines_on(&app, left) == 0 && lines_on(&app, right) == 0,
             "each step covered both bodies"

@@ -508,18 +508,26 @@ fn evaluate_inner(
             continue;
         }
         let chart = bridge::chart_for(ctx, &mesh, r, &walks);
-        if matches!(chart, bridge::Chart::Plane { .. }) {
+        let plane = matches!(chart, bridge::Chart::Plane { .. });
+        // Without a CAD normal the plane chart's side is arbitrary.
+        if plane && bridge::plane_chart_normal(ctx, &mesh, &walks).is_none() {
             continue;
         }
         let fidf = |v: usize| mesh.final_v(v, &pole_target);
         let g = bridge::walk_geom(ctx, &mesh, &chart, &walks[0], &fidf);
         // Exported edges are straight: test the vertex polygon.
         let poly: Vec<DVec2> = g.occ.iter().map(|o| o.d).collect();
-        if geom2::signed_area(&poly) <= 0.0 {
+        let area = geom2::signed_area(&poly);
+        let reversed = if plane {
+            plane_chart_reversed(&poly)
+        } else {
+            area <= 0.0
+        };
+        if reversed {
             ev.internal.push(Issue {
                 kind: IssueKind::Flipped,
                 message: format!(
-                    "polygon reversed in its UV domain (face {})",
+                    "polygon reversed in its domain (face {})",
                     mesh.regions[r].face
                 ),
                 polygon: None,
@@ -704,4 +712,39 @@ fn stage3_cached(
     let v = (std::sync::Arc::new(a), std::sync::Arc::new(g));
     cache.put3(key, v.clone());
     v
+}
+
+/// Orientation test for a region spanning faces. It has no UV domain: its
+/// chart is the best-fit plane seen along the mean CAD normal, where a
+/// correctly wound polygon is counter-clockwise too, slivers and differing
+/// corner normals included. The projection is not exact, so only a clearly
+/// negative area counts (a zero-area polygon is reported as degenerate by
+/// validation).
+fn plane_chart_reversed(poly: &[DVec2]) -> bool {
+    let per: f64 = (0..poly.len())
+        .map(|k| (poly[(k + 1) % poly.len()] - poly[k]).length())
+        .sum();
+    geom2::signed_area(poly) < -1e-6 * per * per
+}
+
+#[cfg(test)]
+mod plane_chart_tests {
+    use super::*;
+
+    #[test]
+    fn a_reversed_sliver_across_faces_is_caught() {
+        // 100 × 1 in the chart plane: a sliver by the 3D test's measure.
+        let ccw = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(100.0, 0.0),
+            DVec2::new(100.0, 1.0),
+            DVec2::new(0.0, 1.0),
+        ];
+        assert!(!plane_chart_reversed(&ccw));
+        let cw: Vec<DVec2> = ccw.iter().rev().copied().collect();
+        assert!(plane_chart_reversed(&cw));
+        // No area: left to the degenerate check, not called flipped.
+        let flat = [DVec2::ZERO, DVec2::new(50.0, 0.0), DVec2::new(100.0, 0.0)];
+        assert!(!plane_chart_reversed(&flat));
+    }
 }

@@ -118,6 +118,23 @@ fn first_dir(path: &[DVec2]) -> DVec2 {
     DVec2::X
 }
 
+/// Mean CAD normal over a region's boundary, for its plane chart. `None`
+/// when no boundary edge carries a surface sample (a region bounded only
+/// by fill diagonals across faces): the chart then has an arbitrary side,
+/// so its winding says nothing about orientation.
+pub fn plane_chart_normal(ctx: &BodyCtx, mesh: &HMesh, walks: &[Vec<usize>]) -> Option<DVec3> {
+    let mut nrm = DVec3::ZERO;
+    for &h in walks.iter().flatten() {
+        let he = &mesh.he[h];
+        if let Some(uv) = he.uv.first()
+            && let Some(e) = ctx.face_eval(he.face, &[*uv]).first()
+        {
+            nrm += e.n;
+        }
+    }
+    (nrm.length() > 1e-9).then(|| nrm.normalize())
+}
+
 pub fn chart_for<'a>(ctx: &'a BodyCtx, mesh: &HMesh, r: usize, walks: &[Vec<usize>]) -> Chart<'a> {
     let reg = &mesh.regions[r];
     let single = !reg.multi
@@ -133,23 +150,13 @@ pub fn chart_for<'a>(ctx: &'a BodyCtx, mesh: &HMesh, r: usize, walks: &[Vec<usiz
         };
     }
     // Best-fit plane through all vertex positions; normal from CAD normals.
-    let mut pts = Vec::new();
-    let mut nrm = DVec3::ZERO;
-    for &h in walks.iter().flatten() {
-        let he = &mesh.he[h];
-        pts.push(mesh.verts[he.from].pos);
-        if let Some(uv) = he.uv.first()
-            && let Some(e) = ctx.face_eval(he.face, &[*uv]).first()
-        {
-            nrm += e.n;
-        }
-    }
+    let pts: Vec<DVec3> = walks
+        .iter()
+        .flatten()
+        .map(|&h| mesh.verts[mesh.he[h].from].pos)
+        .collect();
     let o = pts.iter().copied().sum::<DVec3>() / pts.len().max(1) as f64;
-    let n = if nrm.length() > 1e-9 {
-        nrm.normalize()
-    } else {
-        DVec3::Z
-    };
+    let n = plane_chart_normal(ctx, mesh, walks).unwrap_or(DVec3::Z);
     let e1 = n.any_orthonormal_vector();
     let e2 = n.cross(e1);
     Chart::Plane { o, e1, e2 }

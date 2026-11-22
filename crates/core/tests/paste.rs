@@ -236,6 +236,8 @@ fn paste_rules_on_split_patches() {
 fn paste_edits_and_joins() {
     let m = moved();
     let (mut s, a, b) = two(m);
+    // Joins need auto-fill to close the polygons they split.
+    s.apply(Op::SetAutofill { on: true }).unwrap();
     s.apply(Op::Connect {
         patches: on(a, &[0]),
         a: 6,

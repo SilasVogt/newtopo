@@ -147,6 +147,9 @@ struct ExportJob {
 pub struct Jobs {
     import: Option<ImportJob>,
     export: Option<ExportJob>,
+    /// A finished import that waits for the open preview to be applied or
+    /// discarded: added to a previewed scene, Discard would remove it.
+    held_import: Option<(PathBuf, ImportedFile, Vec<ImportChoice>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,8 +241,16 @@ impl AppState {
 
     // ------------------------------------------------------------ import
 
+    /// An import is running, waits in the object chooser, or is held for
+    /// an open preview. One at a time, so none overwrites another.
+    fn import_busy(&self) -> bool {
+        self.jobs.import.is_some()
+            || self.ui.import_list.is_some()
+            || self.jobs.held_import.is_some()
+    }
+
     pub fn import_dialog(&mut self) {
-        if self.jobs.import.is_some() {
+        if self.import_busy() {
             self.toast(ToastKind::Info, "An import is already running.");
             return;
         }
@@ -276,7 +287,7 @@ impl AppState {
             self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
             return;
         }
-        if self.jobs.import.is_some() {
+        if self.import_busy() {
             self.toast(
                 ToastKind::Info,
                 format!(
@@ -327,7 +338,17 @@ impl AppState {
         });
     }
 
+    /// The document was replaced: an import held for its preview doesn't
+    /// belong to the new one.
+    pub fn drop_held_import(&mut self) {
+        self.jobs.held_import = None;
+    }
+
     pub fn poll_jobs(&mut self, ctx: &egui::Context) {
+        if self.jobs.held_import.is_some() && !self.doc.in_preview() {
+            let (path, file, choices) = self.jobs.held_import.take().expect("held");
+            self.finish_import(&path, file, choices);
+        }
         if let Some(job) = &self.jobs.import {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
             match job.rx.try_recv() {
@@ -432,6 +453,11 @@ impl AppState {
     }
 
     fn finish_import(&mut self, path: &Path, file: ImportedFile, choices: Vec<ImportChoice>) {
+        if self.doc.in_preview() {
+            self.jobs.held_import = Some((path.to_path_buf(), file, choices));
+            self.toast(ToastKind::Info, S::IMPORT_WAITS_FOR_PREVIEW);
+            return;
+        }
         let mut report = ImportReport {
             file: path
                 .file_name()
@@ -605,6 +631,8 @@ impl AppState {
         };
         match self.doc.open(&path) {
             Ok(()) => {
+                self.end_compare();
+                self.drop_held_import();
                 self.demo = None;
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
@@ -632,6 +660,9 @@ impl AppState {
     pub fn save(&mut self, save_as: bool) {
         if !self.doc.has_scene() {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
+            return;
+        }
+        if self.blocked_by_preview() {
             return;
         }
         let path = match (&self.doc.path, save_as) {
@@ -693,7 +724,8 @@ impl AppState {
             return;
         }
         self.next_autosave = self.time + interval;
-        if !self.doc.is_dirty() {
+        // An open preview isn't written anywhere, autosave included.
+        if !self.doc.is_dirty() || self.doc.in_preview() {
             return;
         }
         let Some(p) = autosave_path(&self.paths, self.doc.path.as_deref()) else {
@@ -722,6 +754,8 @@ impl AppState {
             Ok(()) => {
                 // The user chose this autosave: it is ours to clean up now.
                 self.owned_autosaves.insert(autosave.to_path_buf());
+                self.end_compare();
+                self.drop_held_import();
                 self.demo = None;
                 self.doc.path = original;
                 self.doc.bump();
@@ -739,6 +773,9 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_NO_SCENE);
             return;
         }
+        if self.blocked_by_preview() {
+            return;
+        }
         self.ui.export = Some(ExportDialog {
             format: self.prefs.export_format,
             opts: self.prefs.export.clone(),
@@ -748,7 +785,10 @@ impl AppState {
 
     /// Owned export data for the selected objects, or every object
     /// (hidden ones included) when nothing is selected (SPEC §8.3, §9.3).
-    pub fn export_items(&self) -> Option<Vec<ExportItem>> {
+    pub fn export_items(&mut self) -> Option<Vec<ExportItem>> {
+        // The output cache is otherwise refreshed only when the viewport is
+        // drawn; a hidden viewport must not leave discarded geometry in it.
+        self.ensure_view_data();
         let scene = self.doc.scene.as_ref()?;
         let (bodies, layers) =
             guard(|| (scene.doc().bodies.clone(), scene.doc().layers.clone())).ok()?;
@@ -794,6 +834,9 @@ impl AppState {
 
     /// Export to `path` on a worker thread (no file dialog).
     pub fn export_to(&mut self, path: PathBuf, d: ExportDialog) {
+        if self.blocked_by_preview() {
+            return;
+        }
         let Some(objects) = self.export_items() else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;

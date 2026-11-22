@@ -204,6 +204,28 @@ pub enum Op {
     },
 }
 
+impl Op {
+    /// Changes the output mesh (lines, edits, auto-fill, link, symmetry),
+    /// so the app previews it and waits for Apply. Names, layers,
+    /// visibility, locks and units take effect at once.
+    pub fn changes_mesh(&self) -> bool {
+        !matches!(
+            self,
+            Op::SetUnits { .. }
+                | Op::RenameBody { .. }
+                | Op::SetBodyLocked { .. }
+                | Op::SetLayerVisible { .. }
+                | Op::SetLayerLocked { .. }
+                | Op::CreateLayer { .. }
+                | Op::DeleteLayer { .. }
+                | Op::RenameLayer { .. }
+                | Op::MoveBodyToLayer { .. }
+                | Op::SetActiveLayer { .. }
+                | Op::SetBodyVisible { .. }
+        )
+    }
+}
+
 fn default_spacing() -> Spacing {
     Spacing::ArcLength
 }

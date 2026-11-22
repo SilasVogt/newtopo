@@ -102,6 +102,10 @@ pub struct ViewState {
     pub shown: bool,
     /// The tool status pill drawn this frame, for toast placement.
     pub chip_rect: Option<egui::Rect>,
+    /// While previewing: show Before | After side by side (same camera).
+    pub compare: bool,
+    /// Preview-mode setting to restore when an auto-fill compare ends.
+    pub compare_restore_preview: Option<bool>,
 }
 
 impl Default for ViewState {
@@ -118,6 +122,8 @@ impl Default for ViewState {
             rect: egui::Rect::NOTHING,
             shown: false,
             chip_rect: None,
+            compare: false,
+            compare_restore_preview: None,
         }
     }
 }
@@ -157,6 +163,8 @@ pub struct Confirm {
 
 #[derive(Default)]
 pub struct UiState {
+    /// A text field had keyboard focus at the end of the last frame.
+    pub was_typing: bool,
     pub palette: crate::palette::PaletteState,
     pub radial: crate::palette::RadialState,
     pub key_capture: Option<crate::palette::KeyCapture>,
@@ -203,6 +211,9 @@ pub struct AppState {
     pub vd: ViewData,
     vd_key: Option<(u64, DisplayParams, bool)>,
     pub vd_rev: u64,
+    /// The view of the document before the open preview, for the compare
+    /// split: (document revision it was built at, data, render revision).
+    pub before_vd: Option<((u64, DisplayParams), ViewData, u64)>,
     pub overlay: Arc<RenderScene>,
     pub overlay_sig: u64,
     pub overlay_rev: u64,
@@ -285,6 +296,7 @@ impl App {
             vd: ViewData::default(),
             vd_key: None,
             vd_rev: newtopo_render::egui_viewport::next_revision(),
+            before_vd: None,
             overlay: Arc::new(RenderScene::default()),
             overlay_sig: 0,
             overlay_rev: newtopo_render::egui_viewport::next_revision(),
@@ -446,6 +458,7 @@ impl App {
         if st.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        st.ui.was_typing = ctx.egui_wants_keyboard_input();
     }
 
     pub fn on_exit(&mut self) {
@@ -731,9 +744,8 @@ impl AppState {
     }
 
     /// Rebuild view data if the document or display settings changed.
-    pub fn ensure_view_data(&mut self) {
-        self.locked = self.compute_locked();
-        let params = DisplayParams {
+    pub fn display_params(&self) -> DisplayParams {
+        DisplayParams {
             preview: self.view.preview,
             wireframe: self.view.wireframe,
             show_verts: self.mode == Mode::Vertex && !self.view.preview,
@@ -741,7 +753,35 @@ impl AppState {
             up: self.prefs.up,
             hidden: self.effective_hidden(),
             colors: self.colors(),
+        }
+    }
+
+    /// The compare split's "before" view: the document as it was when the
+    /// open preview started. Rebuilt only when the preview changes.
+    pub fn ensure_before_view(&mut self) {
+        if !self.doc.in_preview() {
+            self.before_vd = None;
+            return;
+        }
+        let params = self.display_params();
+        let key = (self.doc.revision, params.clone());
+        if self.before_vd.as_ref().is_some_and(|(k, _, _)| *k == key) {
+            return;
+        }
+        let Some(scene) = self.doc.scene.as_mut() else {
+            return;
         };
+        let vd = crate::docstate::guard(|| {
+            scene.with_preview_base(|s| crate::viewdata::from_scene(s, &params))
+        })
+        .ok()
+        .flatten();
+        self.before_vd = vd.map(|v| (key, v, newtopo_render::egui_viewport::next_revision()));
+    }
+
+    pub fn ensure_view_data(&mut self) {
+        self.locked = self.compute_locked();
+        let params = self.display_params();
         let key = (self.doc.revision, params.clone(), self.demo.is_some());
         if self.vd_key.as_ref() == Some(&key) {
             return;
@@ -799,6 +839,9 @@ impl AppState {
             }
             _ => {}
         }
+        if ops.iter().any(|o| o.changes_mesh()) {
+            self.doc.begin_preview();
+        }
         // All or nothing, one undo step.
         if !coalesced {
             self.doc.end_gesture();
@@ -811,6 +854,7 @@ impl AppState {
                 (outs.len(), outs.iter().map(|o| o.lines_added).sum())
             }
             Err(ApplyError::Refused(r)) if r.needs_confirmation => {
+                self.doc.close_empty_preview();
                 self.ui.confirm = Some(Confirm {
                     title: S::DLG_CONFIRM.into(),
                     body: r.reason.clone(),
@@ -819,6 +863,7 @@ impl AppState {
                 (0, 0)
             }
             Err(e) => {
+                self.doc.close_empty_preview();
                 let kind = if matches!(e, ApplyError::Engine(_)) {
                     ToastKind::Error
                 } else {
@@ -835,6 +880,10 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_DEMO_READONLY);
             return None;
         }
+        // Mesh changes are previewed and written only on Apply.
+        if op.changes_mesh() {
+            self.doc.begin_preview();
+        }
         let r = if coalesced {
             self.doc.apply_coalesced(op.clone())
         } else {
@@ -848,6 +897,7 @@ impl AppState {
                 Some(o)
             }
             Err(ApplyError::Refused(r)) if r.needs_confirmation => {
+                self.doc.close_empty_preview();
                 self.ui.confirm = Some(Confirm {
                     title: S::DLG_CONFIRM.into(),
                     body: r.reason.clone(),
@@ -856,6 +906,7 @@ impl AppState {
                 None
             }
             Err(e) => {
+                self.doc.close_empty_preview();
                 let kind = if matches!(e, ApplyError::Engine(_)) {
                     ToastKind::Error
                 } else {
@@ -867,7 +918,133 @@ impl AppState {
         }
     }
 
+    /// The Apply / Discard bar shown over the viewport while a preview is
+    /// open.
+    fn preview_bar(&mut self, ctx: &egui::Context) {
+        if !self.doc.in_preview() || !self.view.shown {
+            return;
+        }
+        let pal = self.pal;
+        let rect = self.view.rect;
+        // Above the tool status pill at the bottom centre.
+        let bottom = self
+            .view
+            .chip_rect
+            .map(|c| c.top() - 10.0)
+            .unwrap_or(rect.bottom() - 16.0);
+        let mut apply = false;
+        let mut discard = false;
+        egui::Area::new(egui::Id::new("preview-bar"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(rect.center().x, bottom))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(pal.panel_raised)
+                    .stroke(egui::Stroke::new(1.0, pal.accent.gamma_multiply(0.6)))
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .shadow(egui::Shadow {
+                        offset: [0, 6],
+                        blur: 18,
+                        spread: 0,
+                        color: Color32::from_black_alpha(if pal.dark { 110 } else { 40 }),
+                    })
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(S::PREVIEW_TITLE)
+                                    .font(theme::medium(13.5))
+                                    .color(pal.accent),
+                            );
+                            ui.label(RichText::new(S::PREVIEW_NOTE).small().color(pal.text_dim));
+                            ui.add_space(10.0);
+                            let on = self.view.compare;
+                            if ui
+                                .add(
+                                    egui::Button::new(S::PREVIEW_COMPARE)
+                                        .selected(on)
+                                        .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Show the mesh before and after side by side")
+                                .clicked()
+                            {
+                                self.view.compare = !on;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(S::PREVIEW_DISCARD)
+                                        .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Throw these changes away  (Esc)")
+                                .clicked()
+                            {
+                                discard = true;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(S::PREVIEW_APPLY).color(pal.accent_text),
+                                    )
+                                    .fill(pal.accent)
+                                    .min_size(egui::vec2(72.0, 26.0)),
+                                )
+                                .on_hover_text("Keep these changes  (Enter)")
+                                .clicked()
+                            {
+                                apply = true;
+                            }
+                        });
+                    });
+            });
+        if apply {
+            self.apply_preview();
+        } else if discard {
+            self.discard_preview();
+        }
+    }
+
+    /// Write the previewed changes (one undo step).
+    pub fn apply_preview(&mut self) {
+        if self.doc.in_preview() {
+            self.doc.commit_preview();
+        }
+        self.end_compare();
+    }
+
+    /// Throw the previewed changes away.
+    pub fn discard_preview(&mut self) {
+        if self.doc.in_preview() {
+            self.doc.cancel_preview();
+            self.toast(ToastKind::Info, S::PREVIEW_DISCARDED);
+        }
+        self.end_compare();
+    }
+
+    pub(crate) fn end_compare(&mut self) {
+        self.view.compare = false;
+        if let Some(p) = self.view.compare_restore_preview.take() {
+            self.view.preview = p;
+        }
+    }
+
+    /// Writing the document (save, export, bridge) waits for an open
+    /// preview to be applied or discarded. Returns true when it's blocked.
+    pub fn blocked_by_preview(&mut self) -> bool {
+        if self.doc.in_preview() {
+            self.toast(ToastKind::Info, S::PREVIEW_PENDING);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn undo(&mut self) {
+        // Undo while previewing discards the preview.
+        if self.doc.in_preview() {
+            self.discard_preview();
+            return;
+        }
         match self.doc.undo() {
             Ok(_) => {}
             Err(e) => self.toast(ToastKind::Error, e),
@@ -1038,6 +1215,17 @@ impl AppState {
             }
             return;
         };
+        // Auto-fill is easiest to judge next to the raw mesh, on the output
+        // mesh itself (preview display), until Apply or Discard.
+        // Inside an already open preview too; the display mode to return to
+        // is saved once.
+        if matches!(which, SettingToggle::AutoFill) {
+            self.view.compare = true;
+            if self.view.compare_restore_preview.is_none() {
+                self.view.compare_restore_preview = Some(self.view.preview);
+            }
+            self.view.preview = true;
+        }
         let op = match which {
             SettingToggle::AutoFill => Op::SetAutofill {
                 on: !settings.autofill,
@@ -1181,6 +1369,8 @@ impl AppState {
     pub fn do_pending(&mut self, what: PendingAfterPrompt) {
         match what {
             PendingAfterPrompt::New => {
+                self.end_compare();
+                self.drop_held_import();
                 self.doc.close();
                 self.demo = None;
                 self.sel = Selection::default();
@@ -1197,7 +1387,16 @@ impl AppState {
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
+        // egui drops text focus on Esc before this runs, so "was typing at
+        // the end of the last frame" is what tells us Esc belonged to a
+        // text field.
         let typing = ctx.egui_wants_keyboard_input();
+        // The palette and dialogs close on Esc even from their own fields.
+        let was_typing = std::mem::take(&mut self.ui.was_typing);
+        let esc_in_text = (typing || was_typing)
+            && !self.ui.palette.open
+            && self.active_modal().is_none()
+            && self.updates.shown.is_none();
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         for ev in events {
             // Key capture for the keymap editor swallows everything.
@@ -1244,7 +1443,11 @@ impl AppState {
                 continue;
             }
             if key == Key::Escape {
-                self.escape();
+                // In a text field Esc belongs to the field (it leaves it or
+                // cancels a rename), not to dialogs or tools behind it.
+                if !esc_in_text {
+                    self.escape();
+                }
                 continue;
             }
             if typing || self.ui.palette.open {
@@ -1258,6 +1461,17 @@ impl AppState {
                 continue;
             }
             if self.tool_key(key, mods) {
+                continue;
+            }
+            // Enter applies an open preview (after the tool had its turn,
+            // so Cut's Enter still finishes the path).
+            if key == Key::Enter
+                && mods.is_none()
+                && self.active_modal().is_none()
+                && self.updates.shown.is_none()
+                && self.doc.in_preview()
+            {
+                self.apply_preview();
                 continue;
             }
             let b = Binding::new(key, mods);
@@ -1306,6 +1520,8 @@ impl AppState {
         } else if self.drag.is_some() {
             self.drag = None;
         } else if self.tool.cancel_pending() {
+        } else if self.doc.in_preview() {
+            self.discard_preview();
         } else if self.tool.active != Tool::Select {
             self.tool.active = Tool::Select;
         } else if self.view.isolate.is_some() {
@@ -1339,6 +1555,24 @@ impl AppState {
                         self.menus(ui);
                     });
                     ui.add_space(10.0);
+                    sep(ui, &pal);
+                    // Undo / redo.
+                    for (icon, cmd, can) in [
+                        (Icon::Undo, Cmd::Undo, self.doc.can_undo()),
+                        (Icon::Redo, Cmd::Redo, self.doc.can_redo()),
+                    ] {
+                        let r = ui
+                            .add_enabled_ui(can, |ui| icons::icon_button(ui, icon, false, 26.0))
+                            .inner
+                            .on_hover_text(format!("{}  ({})", cmd.label(), self.keymap.label(cmd)))
+                            .on_disabled_hover_text(format!(
+                                "Nothing to {}",
+                                cmd.label().to_lowercase()
+                            ));
+                        if r.clicked() {
+                            self.run(cmd);
+                        }
+                    }
                     sep(ui, &pal);
                     // Component modes.
                     for (m, icon, label, cmd) in [
@@ -1396,9 +1630,12 @@ impl AppState {
                                 icons::icon_text_button(ui, icon, label, on)
                             })
                             .inner;
-                        if r.on_hover_text(format!("{label}  ({})", self.keymap.label(cmd)))
-                            .clicked()
-                        {
+                        let tip = if cmd == Cmd::AutoFill {
+                            format!("{}  ({})", S::AUTOFILL_TIP, self.keymap.label(cmd))
+                        } else {
+                            format!("{label}  ({})", self.keymap.label(cmd))
+                        };
+                        if r.on_hover_text(tip).clicked() {
                             self.run(cmd);
                         }
                     }
@@ -1712,6 +1949,7 @@ impl AppState {
         self.radial_ui(ctx);
         self.key_capture_ui(ctx);
         self.prefs_window(ctx);
+        self.preview_bar(ctx);
         self.dialogs_ui(ctx);
         self.update_dialogs(ctx);
     }

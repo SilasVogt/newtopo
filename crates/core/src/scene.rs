@@ -43,6 +43,15 @@ struct BodyCache {
     edge_polylines: Vec<Vec<DVec3>>,
 }
 
+/// Where an open preview started.
+struct PreviewMark {
+    doc: Arc<Document>,
+    /// The whole undo stack (cheap: shared snapshots). Provisional ops may
+    /// trim the live stack at the depth limit, so a length isn't enough.
+    undo: Vec<Arc<Document>>,
+    redo: Vec<Arc<Document>>,
+}
+
 pub struct Scene {
     pub kernel: Arc<dyn CadKernel>,
     doc: Arc<Document>,
@@ -52,6 +61,9 @@ pub struct Scene {
     /// Some(pushed) while coalescing: `pushed` says whether this gesture
     /// already pushed its undo snapshot.
     coalesce: Option<bool>,
+    /// Open preview: changes are shown but not yet applied (see
+    /// [`Scene::begin_preview`]).
+    preview: Option<PreviewMark>,
     bodies: BTreeMap<BodyId, BodyCache>,
     evals: BTreeMap<BodyId, (u64, BodyEval)>,
     stashed: Option<(u64, BodyId, BodyEval)>,
@@ -95,6 +107,7 @@ impl Scene {
             redo: vec![],
             saved: None,
             coalesce: None,
+            preview: None,
             bodies: BTreeMap::new(),
             evals: BTreeMap::new(),
             stashed: None,
@@ -354,7 +367,89 @@ impl Scene {
         self.apply(op)
     }
 
+    /// Start a preview: the ops that follow change the scene as usual, but
+    /// stay provisional until [`Scene::commit_preview`] turns them into one
+    /// undo step or [`Scene::cancel_preview`] puts everything back. Does
+    /// nothing if a preview is already open.
+    pub fn begin_preview(&mut self) {
+        if self.preview.is_none() {
+            self.coalesce = None;
+            self.preview = Some(PreviewMark {
+                doc: self.doc.clone(),
+                undo: self.undo.clone(),
+                redo: self.redo.clone(),
+            });
+        }
+    }
+
+    pub fn in_preview(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    /// A preview is open but nothing has changed in it.
+    pub fn preview_is_empty(&self) -> bool {
+        self.preview.as_ref().is_some_and(|m| *m.doc == *self.doc)
+    }
+
+    /// The document as it was when the preview started.
+    pub fn preview_base(&self) -> Option<&Document> {
+        self.preview.as_ref().map(|m| m.doc.as_ref())
+    }
+
+    /// Run `f` on the scene as it was before the preview (read-only use:
+    /// views, stats), then return to the previewed state. `None` without a
+    /// preview.
+    pub fn with_preview_base<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
+        let mark = self.preview.take()?;
+        let current = std::mem::replace(&mut self.doc, mark.doc.clone());
+        let coalesce = self.coalesce.take();
+        // Put the preview back even if `f` panics (callers catch panics).
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        self.doc = current;
+        self.coalesce = coalesce;
+        self.preview = Some(mark);
+        match r {
+            Ok(r) => Some(r),
+            Err(e) => std::panic::resume_unwind(e),
+        }
+    }
+
+    /// Keep the previewed changes as one undo step.
+    pub fn commit_preview(&mut self) {
+        let Some(m) = self.preview.take() else {
+            return;
+        };
+        self.coalesce = None;
+        self.undo = m.undo;
+        if *m.doc != *self.doc {
+            self.undo.push(m.doc);
+            if self.undo.len() > UNDO_DEPTH {
+                let n = self.undo.len() - UNDO_DEPTH;
+                self.undo.drain(0..n);
+            }
+        } else {
+            // Nothing changed after all: keep the redo history too.
+            self.redo = m.redo;
+        }
+    }
+
+    /// Drop the previewed changes: document, undo and redo are as before.
+    pub fn cancel_preview(&mut self) {
+        let Some(m) = self.preview.take() else {
+            return;
+        };
+        self.coalesce = None;
+        self.doc = m.doc;
+        self.undo = m.undo;
+        self.redo = m.redo;
+    }
+
     pub fn undo(&mut self) -> bool {
+        // Undo while previewing discards the preview.
+        if self.preview.is_some() {
+            self.cancel_preview();
+            return true;
+        }
         self.coalesce = None;
         match self.undo.pop() {
             Some(d) => {
@@ -366,6 +461,9 @@ impl Scene {
         }
     }
     pub fn redo(&mut self) -> bool {
+        if self.preview.is_some() {
+            return false;
+        }
         self.coalesce = None;
         match self.redo.pop() {
             Some(d) => {
@@ -377,10 +475,10 @@ impl Scene {
         }
     }
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        self.preview.is_some() || !self.undo.is_empty()
     }
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        self.preview.is_none() && !self.redo.is_empty()
     }
     /// True if the document changed since the last save/load.
     pub fn is_modified(&self) -> bool {

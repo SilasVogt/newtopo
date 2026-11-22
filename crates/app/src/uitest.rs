@@ -675,3 +675,150 @@ fn only_one_update_dialog_at_a_time() {
     h.frames(1);
     assert_eq!(h.app.st.updates.shown, Some(UpdateDialog::Ask));
 }
+
+#[test]
+fn rename_field_can_be_left_and_cancelled() {
+    use crate::panels::RenameTarget;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let id = h.app.st.layer_rows()[0].id;
+    let name = |h: &Harness| {
+        h.app
+            .st
+            .layer_rows()
+            .iter()
+            .find(|l| l.id == id)
+            .map(|l| l.name.clone())
+    };
+    h.app.st.ui.outliner.renaming = Some((RenameTarget::Layer(id), "Renamed".into()));
+    h.app.st.ui.outliner.focus_rename = true;
+    h.frames(3);
+    assert!(h.app.st.ui.outliner.renaming.is_some(), "still editing");
+    assert!(
+        !h.app.st.ui.outliner.focus_rename,
+        "focus is asked for once"
+    );
+    // Clicking elsewhere leaves the field and keeps the typed name.
+    h.click(pos2(800.0, 500.0), Modifiers::NONE);
+    assert!(h.app.st.ui.outliner.renaming.is_none(), "the field let go");
+    assert_eq!(name(&h).as_deref(), Some("Renamed"));
+    // Esc cancels without renaming (and doesn't reach tools or dialogs).
+    h.app.st.ui.outliner.renaming = Some((RenameTarget::Layer(id), "Other".into()));
+    h.app.st.ui.outliner.focus_rename = true;
+    h.frames(2);
+    // With a mesh preview open, that Esc cancels the rename only.
+    h.app.st.apply(newtopo_core::Op::SetAutofill { on: true });
+    h.frames(2);
+    assert!(h.app.st.doc.in_preview());
+    assert!(h.app.st.ui.outliner.renaming.is_some());
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.outliner.renaming.is_none());
+    assert_eq!(name(&h).as_deref(), Some("Renamed"));
+    assert!(h.app.st.doc.in_preview(), "the preview survives");
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview(), "the next Esc discards it");
+}
+
+#[test]
+fn mesh_changes_preview_until_applied() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let autofill = |h: &Harness| h.app.st.scene_toggles().is_some_and(|s| s.autofill);
+    assert!(!autofill(&h), "new scenes start with auto-fill off");
+
+    // A mesh change opens a preview and isn't written yet.
+    h.app.st.apply(Op::SetAutofill { on: true });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    assert!(autofill(&h), "the preview shows the change");
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(
+        h.app.st.doc.save(&tmp.path().join("x.ntopo")).is_err(),
+        "nothing is saved while previewing"
+    );
+    // Enter applies.
+    h.key(Key::Enter, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h));
+    assert!(h.app.st.doc.save(&tmp.path().join("x.ntopo")).is_ok());
+
+    // Esc discards.
+    h.app.st.apply(Op::SetAutofill { on: false });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h), "discarded: still on");
+    assert!(
+        !h.app.st.doc.is_dirty(),
+        "a discarded preview leaves a saved document saved"
+    );
+
+    // Undo discards too, and the applied change undoes in one step.
+    h.app.st.apply(Op::SetAutofill { on: false });
+    h.app.st.run(Cmd::Undo);
+    assert!(!h.app.st.doc.in_preview());
+    assert!(autofill(&h));
+    assert!(!h.app.st.doc.is_dirty(), "undo of a preview too");
+    h.app.st.run(Cmd::Undo);
+    assert!(!autofill(&h), "the applied preview was one undo step");
+}
+
+#[test]
+fn autofill_compare_shows_the_mesh_even_when_compare_was_on() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    // A preview in CAD display, with Compare already switched on.
+    h.app.st.apply(Op::SetLink { on: true });
+    h.app.st.apply(Op::SetAutofill { on: true });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    h.app.st.view.preview = false;
+    h.app.st.view.compare = true;
+    h.app.st.run(Cmd::AutoFill);
+    assert!(h.app.st.view.compare);
+    assert!(h.app.st.view.preview, "both sides show the output mesh");
+    // Discard returns to the display mode from before.
+    h.app.st.discard_preview();
+    assert!(!h.app.st.view.compare);
+    assert!(!h.app.st.view.preview);
+}
+
+#[test]
+fn refused_op_leaves_no_preview_open() {
+    use newtopo_core::Op;
+    use newtopo_core::ops::PatchSel;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    // No such body/face: the op is refused, so nothing is pending.
+    let r = h.app.st.apply(Op::Connect {
+        patches: PatchSel {
+            faces: vec![9999],
+            ..Default::default()
+        },
+        a: 4,
+        b: 0,
+        start_on_seam: false,
+    });
+    assert!(r.is_none(), "refused");
+    assert!(!h.app.st.doc.in_preview(), "no empty preview blocks saving");
+}
