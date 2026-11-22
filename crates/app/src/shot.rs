@@ -1128,16 +1128,29 @@ pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
             app.st.doc.revision
         );
         anyhow::ensure!(l > 0 && l == r, "Connect should reach both bodies");
+        // Apply, so Connect is its own undo step.
+        app.st.apply_preview();
         // A wheel tick changes both in the same gesture.
         app.st.wheel_count(1.0, true);
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.6);
         let (l2, r2) = (lines_on(&app, left), lines_on(&app, right));
         eprintln!("two-body wheel tick: left {l2} right {r2}");
         anyhow::ensure!(l2 > l && l2 == r2, "wheel tick should change both bodies");
-        // Two undos bring both back to nothing (connect, then the gesture).
-        app.st.undo();
+        app.st.apply_preview();
+        // Two undos bring both back to nothing: the gesture, then Connect.
         app.st.undo();
         settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        anyhow::ensure!(
+            lines_on(&app, left) == l && lines_on(&app, right) == l,
+            "the first undo takes back only the wheel tick"
+        );
+        app.st.undo();
+        settle(&mut s, &ctx, &mut app, &mut t, |_| true, 0.5);
+        anyhow::ensure!(
+            app.st.vd.edges.iter().any(|e| e.body == left)
+                && app.st.vd.edges.iter().any(|e| e.body == right),
+            "the imported bodies are still there"
+        );
         anyhow::ensure!(
             lines_on(&app, left) == 0 && lines_on(&app, right) == 0,
             "each step covered both bodies"
