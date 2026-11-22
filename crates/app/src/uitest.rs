@@ -775,6 +775,31 @@ fn mesh_changes_preview_until_applied() {
 }
 
 #[test]
+fn autofill_compare_shows_the_mesh_even_when_compare_was_on() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    // A preview in CAD display, with Compare already switched on.
+    h.app.st.apply(Op::SetLink { on: true });
+    h.app.st.apply(Op::SetAutofill { on: true });
+    h.frames(1);
+    assert!(h.app.st.doc.in_preview());
+    h.app.st.view.preview = false;
+    h.app.st.view.compare = true;
+    h.app.st.run(Cmd::AutoFill);
+    assert!(h.app.st.view.compare);
+    assert!(h.app.st.view.preview, "both sides show the output mesh");
+    // Discard returns to the display mode from before.
+    h.app.st.discard_preview();
+    assert!(!h.app.st.view.compare);
+    assert!(!h.app.st.view.preview);
+}
+
+#[test]
 fn refused_op_leaves_no_preview_open() {
     use newtopo_core::Op;
     use newtopo_core::ops::PatchSel;
