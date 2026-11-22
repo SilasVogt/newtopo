@@ -710,9 +710,18 @@ fn rename_field_can_be_left_and_cancelled() {
     h.app.st.ui.outliner.renaming = Some((RenameTarget::Layer(id), "Other".into()));
     h.app.st.ui.outliner.focus_rename = true;
     h.frames(2);
+    // With a mesh preview open, that Esc cancels the rename only.
+    h.app.st.apply(newtopo_core::Op::SetAutofill { on: true });
+    h.frames(2);
+    assert!(h.app.st.doc.in_preview());
+    assert!(h.app.st.ui.outliner.renaming.is_some());
     h.key(Key::Escape, Modifiers::NONE);
     assert!(h.app.st.ui.outliner.renaming.is_none());
     assert_eq!(name(&h).as_deref(), Some("Renamed"));
+    assert!(h.app.st.doc.in_preview(), "the preview survives");
+    h.frames(1);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.doc.in_preview(), "the next Esc discards it");
 }
 
 #[test]
@@ -750,12 +759,17 @@ fn mesh_changes_preview_until_applied() {
     h.key(Key::Escape, Modifiers::NONE);
     assert!(!h.app.st.doc.in_preview());
     assert!(autofill(&h), "discarded: still on");
+    assert!(
+        !h.app.st.doc.is_dirty(),
+        "a discarded preview leaves a saved document saved"
+    );
 
     // Undo discards too, and the applied change undoes in one step.
     h.app.st.apply(Op::SetAutofill { on: false });
     h.app.st.run(Cmd::Undo);
     assert!(!h.app.st.doc.in_preview());
     assert!(autofill(&h));
+    assert!(!h.app.st.doc.is_dirty(), "undo of a preview too");
     h.app.st.run(Cmd::Undo);
     assert!(!autofill(&h), "the applied preview was one undo step");
 }

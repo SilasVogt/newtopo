@@ -163,6 +163,8 @@ pub struct Confirm {
 
 #[derive(Default)]
 pub struct UiState {
+    /// A text field had keyboard focus at the end of the last frame.
+    pub was_typing: bool,
     pub palette: crate::palette::PaletteState,
     pub radial: crate::palette::RadialState,
     pub key_capture: Option<crate::palette::KeyCapture>,
@@ -456,6 +458,7 @@ impl App {
         if st.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        st.ui.was_typing = ctx.egui_wants_keyboard_input();
     }
 
     pub fn on_exit(&mut self) {
@@ -1214,9 +1217,13 @@ impl AppState {
         };
         // Auto-fill is easiest to judge next to the raw mesh, on the output
         // mesh itself (preview display), until Apply or Discard.
-        if matches!(which, SettingToggle::AutoFill) && !self.doc.in_preview() {
+        // Inside an already open preview too; the display mode to return to
+        // is saved once.
+        if matches!(which, SettingToggle::AutoFill) && !self.view.compare {
             self.view.compare = true;
-            self.view.compare_restore_preview = Some(self.view.preview);
+            if self.view.compare_restore_preview.is_none() {
+                self.view.compare_restore_preview = Some(self.view.preview);
+            }
             self.view.preview = true;
         }
         let op = match which {
@@ -1379,7 +1386,16 @@ impl AppState {
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
+        // egui drops text focus on Esc before this runs, so "was typing at
+        // the end of the last frame" is what tells us Esc belonged to a
+        // text field.
         let typing = ctx.egui_wants_keyboard_input();
+        // The palette and dialogs close on Esc even from their own fields.
+        let was_typing = std::mem::take(&mut self.ui.was_typing);
+        let esc_in_text = (typing || was_typing)
+            && !self.ui.palette.open
+            && self.active_modal().is_none()
+            && self.updates.shown.is_none();
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         for ev in events {
             // Key capture for the keymap editor swallows everything.
@@ -1428,7 +1444,7 @@ impl AppState {
             if key == Key::Escape {
                 // In a text field Esc belongs to the field (it leaves it or
                 // cancels a rename), not to dialogs or tools behind it.
-                if !typing {
+                if !esc_in_text {
                     self.escape();
                 }
                 continue;

@@ -59,6 +59,9 @@ pub struct DocState {
     /// Bumped on every change; view caches compare against it.
     pub revision: u64,
     saved_revision: u64,
+    /// The document had no unsaved changes when the open preview began, so
+    /// discarding the preview leaves it clean again.
+    preview_clean: bool,
 }
 
 impl DocState {
@@ -76,6 +79,15 @@ impl DocState {
 
     pub fn bump(&mut self) {
         self.revision += 1;
+    }
+
+    /// After a discarded preview: the document is back to what it was when
+    /// the preview began, so it is as saved as it was then. `revision`
+    /// still moves forward for the view caches.
+    fn restore_clean(&mut self) {
+        if self.preview_clean {
+            self.saved_revision = self.revision;
+        }
     }
 
     pub fn title(&self) -> String {
@@ -193,6 +205,9 @@ impl DocState {
 
     /// Open a preview (no-op without a scene or if one is open).
     pub fn begin_preview(&mut self) {
+        if !self.in_preview() {
+            self.preview_clean = !self.is_dirty();
+        }
         if let Some(s) = self.scene.as_mut() {
             let _ = guard(|| s.begin_preview());
         }
@@ -230,6 +245,7 @@ impl DocState {
             }
             let _ = guard(|| s.cancel_preview());
             self.bump();
+            self.restore_clean();
         }
     }
 
@@ -249,9 +265,14 @@ impl DocState {
         let Some(scene) = self.scene.as_mut() else {
             return Ok(false);
         };
+        // Undo with a preview open discards the preview.
+        let discards = guard(|| scene.in_preview()).unwrap_or(false);
         let r = guard(|| scene.undo())?;
         if r {
             self.bump();
+            if discards {
+                self.restore_clean();
+            }
         }
         Ok(r)
     }

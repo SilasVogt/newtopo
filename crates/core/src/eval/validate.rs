@@ -141,7 +141,11 @@ pub fn validate(mesh: &OutputMesh, topo: &BodyTopology, tol: f64) -> Vec<Issue> 
             // Slivers (e.g. a fill polygon whose corners all run along one
             // curved CAD edge) have a near-zero, direction-less Newell
             // normal; their orientation is checked in UV by the evaluator.
-            if flat && !is_sliver(&pts, nn) && nn.normalize().dot(avg) < 0.0 {
+            // On a plane (all CAD normals equal) even a sliver's normal is
+            // sound, and plane-chart regions get no UV check, so it stays
+            // checked here.
+            let planar = p.normals.iter().all(|m| m.dot(avg) > 1.0 - 1e-9);
+            if flat && (planar || !is_sliver(&pts, nn)) && nn.normalize().dot(avg) < 0.0 {
                 issues.push(Issue {
                     polygon: Some(pi),
                     vertices: p.verts.clone(),

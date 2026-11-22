@@ -403,11 +403,15 @@ impl Scene {
         let mark = self.preview.take()?;
         let current = std::mem::replace(&mut self.doc, mark.doc.clone());
         let coalesce = self.coalesce.take();
-        let r = f(self);
+        // Put the preview back even if `f` panics (callers catch panics).
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
         self.doc = current;
         self.coalesce = coalesce;
         self.preview = Some(mark);
-        Some(r)
+        match r {
+            Ok(r) => Some(r),
+            Err(e) => std::panic::resume_unwind(e),
+        }
     }
 
     /// Keep the previewed changes as one undo step.
