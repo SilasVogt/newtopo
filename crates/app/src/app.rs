@@ -106,6 +106,9 @@ pub struct ViewState {
     pub compare: bool,
     /// Preview-mode setting to restore when an auto-fill compare ends.
     pub compare_restore_preview: Option<bool>,
+    /// A named view switched the camera to orthographic; the next orbit
+    /// switches it back to perspective.
+    pub auto_ortho: bool,
 }
 
 impl Default for ViewState {
@@ -124,6 +127,7 @@ impl Default for ViewState {
             chip_rect: None,
             compare: false,
             compare_restore_preview: None,
+            auto_ortho: false,
         }
     }
 }
@@ -1138,7 +1142,7 @@ impl AppState {
                 self.toast(ToastKind::Info, msg);
             }
             Frame => self.frame_selection(),
-            Ortho => self.view.camera.ortho = !self.view.camera.ortho,
+            Ortho => self.toggle_ortho(),
             Hide => self.hide_selected(),
             UnhideAll => {
                 self.view.hidden.clear();
@@ -1147,13 +1151,13 @@ impl AppState {
             }
             Isolate => self.isolate_step(),
             ExitIsolate => self.view.isolate = None,
-            ViewFront => self.view.camera.set_view(newtopo_render::NamedView::Front),
-            ViewBack => self.view.camera.set_view(newtopo_render::NamedView::Back),
-            ViewLeft => self.view.camera.set_view(newtopo_render::NamedView::Left),
-            ViewRight => self.view.camera.set_view(newtopo_render::NamedView::Right),
-            ViewTop => self.view.camera.set_view(newtopo_render::NamedView::Top),
-            ViewBottom => self.view.camera.set_view(newtopo_render::NamedView::Bottom),
-            ViewIso => self.view.camera.set_view(newtopo_render::NamedView::Iso),
+            ViewFront => self.named_view(newtopo_render::NamedView::Front),
+            ViewBack => self.named_view(newtopo_render::NamedView::Back),
+            ViewLeft => self.named_view(newtopo_render::NamedView::Left),
+            ViewRight => self.named_view(newtopo_render::NamedView::Right),
+            ViewTop => self.named_view(newtopo_render::NamedView::Top),
+            ViewBottom => self.named_view(newtopo_render::NamedView::Bottom),
+            ViewIso => self.named_view(newtopo_render::NamedView::Iso),
             HidePanels => self
                 .ui
                 .dock_actions

@@ -122,7 +122,7 @@ impl AppState {
         self.ensure_view_data();
         if self.view.needs_frame && self.vd.bounds.is_some() && rect.width() > 10.0 {
             self.view.needs_frame = false;
-            self.view.camera.set_view(NamedView::Iso);
+            self.named_view(NamedView::Iso);
             self.frame_bounds(None);
         }
 
@@ -200,10 +200,14 @@ impl AppState {
             } else {
                 let h = self.view.rect.height().max(1.0) as f64;
                 match kind {
-                    NavKind::Orbit => self
-                        .view
-                        .camera
-                        .orbit(-delta.x as f64 * 0.008, delta.y as f64 * 0.008),
+                    NavKind::Orbit => {
+                        if delta != egui::Vec2::ZERO {
+                            self.leave_auto_ortho();
+                        }
+                        self.view
+                            .camera
+                            .orbit(-delta.x as f64 * 0.008, delta.y as f64 * 0.008)
+                    }
                     NavKind::Pan => self.view.camera.pan_px(delta.x as f64, delta.y as f64, h),
                     NavKind::Zoom => self
                         .view
@@ -1577,10 +1581,35 @@ impl AppState {
             self.frame_bounds(None);
         }
         if r2.clicked() {
-            self.view.camera.ortho = !self.view.camera.ortho;
+            self.toggle_ortho();
         }
         if clicked && let Some(v) = hovered_view {
-            self.view.camera.set_view(v);
+            self.named_view(v);
+        }
+    }
+
+    /// Jump to a named view. The six axis views switch a perspective camera
+    /// to orthographic until the next orbit; an orthographic camera the user
+    /// chose stays as it is.
+    pub(crate) fn named_view(&mut self, v: NamedView) {
+        self.view.camera.set_view(v);
+        if v == NamedView::Iso {
+            self.leave_auto_ortho();
+        } else if !self.view.camera.ortho {
+            self.view.camera.ortho = true;
+            self.view.auto_ortho = true;
+        }
+    }
+
+    /// The user's own choice of projection; it is never switched back.
+    pub(crate) fn toggle_ortho(&mut self) {
+        self.view.camera.ortho = !self.view.camera.ortho;
+        self.view.auto_ortho = false;
+    }
+
+    fn leave_auto_ortho(&mut self) {
+        if std::mem::take(&mut self.view.auto_ortho) {
+            self.view.camera.ortho = false;
         }
     }
 

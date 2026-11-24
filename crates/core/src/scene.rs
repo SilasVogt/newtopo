@@ -525,13 +525,25 @@ impl Scene {
         h.finish()
     }
 
+    /// The evaluation caches. An evaluation that panicked leaves the lock
+    /// poisoned and its cache possibly half written; drop the caches and
+    /// carry on, so one failed operation does not break every later one.
+    fn caches_lock(&self) -> std::sync::MutexGuard<'_, HashMap<BodyId, eval::cache::EvalCache>> {
+        self.caches.lock().unwrap_or_else(|poisoned| {
+            let mut g = poisoned.into_inner();
+            g.clear();
+            self.caches.clear_poison();
+            g
+        })
+    }
+
     /// Evaluate one body (cached).
     pub fn eval(&mut self, body: BodyId) -> Option<&BodyEval> {
         let fp = self.fingerprint(body);
         let fresh = self.evals.get(&body).is_some_and(|(f, _)| *f == fp);
         if !fresh {
             let c = self.bodies.get(&body)?;
-            let mut caches = self.caches.lock().unwrap();
+            let mut caches = self.caches_lock();
             let cache = caches.entry(body).or_default();
             let ev = eval::evaluate_with(&c.ctx, &self.doc, body, cache);
             drop(caches);
@@ -543,7 +555,7 @@ impl Scene {
     /// Evaluate a body for a candidate document (no caching).
     pub(crate) fn eval_doc(&mut self, doc: &Document, body: BodyId) -> Option<BodyEval> {
         let c = self.bodies.get(&body)?;
-        let mut caches = self.caches.lock().unwrap();
+        let mut caches = self.caches_lock();
         let cache = caches.entry(body).or_default();
         Some(eval::evaluate_with(&c.ctx, doc, body, cache))
     }
@@ -557,7 +569,7 @@ impl Scene {
         let Some(c) = self.bodies.get(&body) else {
             return vec![];
         };
-        let mut caches = self.caches.lock().unwrap();
+        let mut caches = self.caches_lock();
         let cache = caches.entry(body).or_default();
         eval::body_patches_with(&c.ctx, doc, body, cache)
     }
@@ -565,7 +577,7 @@ impl Scene {
     /// Cache hits / misses of the last evaluation of a body, per level
     /// (face patches, face arrangement, region bridging+fill).
     pub fn cache_stats(&self, body: BodyId) -> Option<[(usize, usize); 3]> {
-        self.caches.lock().unwrap().get(&body).map(|c| c.last)
+        self.caches_lock().get(&body).map(|c| c.last)
     }
 
     /// Evaluated output for every body (lazy; only dirty bodies re-evaluate).
@@ -1032,5 +1044,23 @@ pub fn issue_reason(i: &Issue) -> &'static str {
         OpenBoundary | MissingEdge => "the mesh would get a hole",
         AnchorOff => "a vertex would leave its CAD anchor",
         FanFallback => "a polygon could only be fan-filled",
+    }
+}
+
+#[cfg(test)]
+mod poison_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicked_evaluation_does_not_break_the_caches() {
+        let scene = Scene::new(Arc::new(newtopo_kernel::mock::MockKernel::default()));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = scene.caches.lock().unwrap();
+            panic!("evaluation failed");
+        }));
+        assert!(r.is_err());
+        assert!(scene.caches.is_poisoned());
+        assert!(scene.caches_lock().is_empty());
+        assert!(!scene.caches.is_poisoned());
     }
 }

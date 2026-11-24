@@ -359,6 +359,34 @@ fn viewport_orbit_with_middle_drag() {
 }
 
 #[test]
+fn named_view_is_orthographic_until_the_next_orbit() {
+    let mut h = Harness::new(true);
+    let c = h.app.st.view.rect.center();
+    assert!(!h.app.st.view.camera.ortho);
+    h.app.st.run(Cmd::ViewTop);
+    assert!(h.app.st.view.camera.ortho, "a named view is orthographic");
+    h.drag(c, c + vec2(0.0, 80.0), PointerButton::Middle);
+    assert!(
+        !h.app.st.view.camera.ortho,
+        "orbiting returns to perspective"
+    );
+
+    // An orthographic camera the user chose stays orthographic.
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::ViewFront);
+    h.drag(c, c + vec2(120.0, 0.0), PointerButton::Middle);
+    assert!(h.app.st.view.camera.ortho, "the user's choice is kept");
+
+    // Switching by hand during a named view keeps that choice too.
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::ViewRight);
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::Ortho);
+    h.drag(c, c + vec2(120.0, 0.0), PointerButton::Middle);
+    assert!(h.app.st.view.camera.ortho);
+}
+
+#[test]
 fn locked_objects_are_left_out_of_select_all_and_edits() {
     let mut h = Harness::new(true);
     h.app.st.local.body_locked.insert(BodyId(0));

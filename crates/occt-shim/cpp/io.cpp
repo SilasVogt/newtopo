@@ -128,7 +128,12 @@ std::vector<uint32_t> invalid_faces(const ShapeMap &faces) {
 std::string label_name(const TDF_Label &l) {
   Handle(TDataStd_Name) n;
   if (!l.IsNull() && l.FindAttribute(TDataStd_Name::GetID(), n)) {
-    return to_utf8(n->Get());
+    std::string name = to_utf8(n->Get());
+    // An instance the file leaves unnamed carries XCAF's placeholder
+    // ("=>[0:1:1:2]", the entry of its prototype). That is not a name.
+    if (name.rfind("=>[", 0) != 0) {
+      return name;
+    }
   }
   return std::string();
 }
@@ -289,7 +294,9 @@ private:
     }
     for (size_t i = 0; i < parts.size(); ++i) {
       Attrs pa = a;
-      pa.name = a.name + "." + std::to_string(i + 1);
+      if (!a.name.empty()) {
+        pa.name = a.name + "." + std::to_string(i + 1);
+      }
       emit_body(parts[i], pa, loc);
     }
   }
