@@ -631,7 +631,8 @@ tool, then exit isolate.
 
 ### 5.9 Feedback
 - Every tool shows a one-line hint in the status bar.
-- Refusals are toasts with a reason. Nothing fails silently.
+- Refusals are toasts with a reason. Nothing fails silently. Engine
+  errors also offer a problem report (§5.11).
 - Long work (import, export, bridge sends) shows progress with cancel.
 - The top bar has Undo and Redo buttons (disabled when there's nothing to
   undo or redo), next to the menus.
@@ -655,6 +656,114 @@ user applies it.
   closes). Switching auto-fill on or off opens the compare in preview
   display with a short explanation of what auto-fill does, and restores the
   display mode when the preview ends.
+
+### 5.11 Crash logs and problem reports
+The app keeps a log and helps the user report problems. It never sends
+anything by itself: no telemetry, no uploads, no HTTP requests from this
+feature.
+
+- **Log**: `logs/newtopo.log` in the data directory (Linux
+  `~/.local/share/newtopo/`, Windows `%APPDATA%\newtopo\data\`, macOS
+  `~/Library/Application Support/newtopo/`), moved to `newtopo.log.1` at
+  1 MiB (one old file kept), plus the last 2,000 lines in memory. If the
+  file cannot be moved aside it is emptied instead, and if that fails too
+  nothing more is written to it, so it never grows past that bound. An
+  oversized file that cannot be rotated at start is left alone and not
+  written this session. It
+  records app start (version, commit, platform, graphics adapter), imports,
+  every applied, refused or failed op (name and outcome, no geometry),
+  undo/redo, preview apply/discard, open, save, autosave, export and
+  import jobs, warnings and errors. Lines about files name the file only,
+  never its folder; toasts are not logged as such (warning and error
+  toasts are, with file names only). Every line is cleaned before it is
+  stored: the folders the app works with (data and config folders, and
+  the folders of every file opened, saved, autosaved, imported, exported
+  or used for a report) are removed as written, the home directory is
+  replaced by `~` and the OS user name by `<user>`, and the folders of any
+  other path are removed (`…/part.step`). Stderr logging (`RUST_LOG`,
+  default `warn`) is unchanged. Screenshot and test runs write no log
+  file.
+- **Panics**: a panic hook records message, source location and a
+  backtrace (scrubbed the same way). Engine panics caught by the app (the
+  engine guard and the import/export job threads) keep their toast and also
+  open the report dialog, once per distinct failure (message and location),
+  and only through the one-dialog-at-a-time order (after the confirm,
+  unsaved, recovery and import dialogs). Each running app (session) owns
+  its files in `sessions/` in the data directory, named after its process
+  (id and start time): `<id>.lock` exists while it runs and is removed on
+  a clean exit; a panic on the UI thread also writes `<id>.crash.json`,
+  which the app removes when it catches the panic (a panic that repeats,
+  e.g. every frame, keeps the file until it stops for a second instead of
+  rewriting it each time; a write that fails is tried again by the next
+  panic). At the next start, the crash file of a session
+  whose process has ended, next to its leftover marker, offers the report
+  for that crash (the newest, once no dialog that goes first is open: the
+  autosave recovery, an unsaved-changes prompt, a confirmation or an import
+  dialog); all files of
+  ended sessions are then removed, and sessions still running (another
+  window) are left alone. A clean exit, a `--shot`/`--window-shot` run or
+  an OS kill without a crash file offers nothing. Refusals ("can't do
+  that: …") never open it.
+- **Opening it**: also *Help > Report a problem…* and the command palette,
+  at any time, with no error attached.
+- **Dialog**: a header with a plain-language summary; left, toggles and a
+  comment box; right, the exact files of the report with sizes, the zip's
+  total and the error line; footer with *Close*, *Save report…* and *Open
+  GitHub issue*; a strip "Fix it with an AI coding agent" with *Copy
+  prompt*. The right column follows the toggles live.
+- **Report contents** (one `newtopo-report-<date>.zip`):
+  - always: `error.txt` (message, what the user was doing, location,
+    thread, time, version, commit, backtrace) and `log.txt` (the end of the
+    log file, at most 256 KiB, earlier sessions included; when the file
+    may lack lines of this session, because it could not be opened,
+    rotated or written, the lines kept in memory follow after a marker
+    line. A report offered at the next start after a crash reads only
+    the file, so in that state it can lack the crashed session's log);
+  - **Steps taken** (on by default): `steps.json`, an op script
+    (`version`, `input`, `ops`, §10) for the scene open when the report is
+    made, which `newtopo-cli run` replays (`input` is the first CAD file
+    imported into that scene, or the scene file opened; `ops` every op
+    applied to it or failed, including ones later undone or discarded with
+    a preview), plus a `session` timeline of the whole session (earlier
+    scenes before *File > New* or *Open*, refused ops, undo/redo, preview
+    apply/discard and imports, file names only). Names the user typed
+    (bodies, layers) are cleaned like the log;
+  - **The model** (off by default): the CAD files imported this session
+    that are still readable and a copy of the open scene, under `model/`,
+    as they are on disk. Their names in the zip extract on Windows, macOS
+    and Linux: the scrubbed user name reads `[user]` (text keeps
+    `<user>`), other characters Windows forbids become `_`, trailing dots
+    and spaces go, device names (`CON`, `nul.step`) get a leading `_`, and
+    names that differ only in case are numbered;
+  - **PC details** (on by default): `system.txt` with OS and version,
+    kernel, architecture, CPU and thread count, memory, graphics adapter,
+    backend and driver, display and UI scale. Never the host name, user
+    name or a path;
+  - the comment, as `comment.txt`, when one was written.
+  All report text is scrubbed, and folders are stripped from file paths
+  (`…/part.step`); source-code locations (`*.rs`) are kept.
+- **Save report…** asks where to save (default name
+  `newtopo-report-<date>.zip`), writes exactly the listed files and shows
+  the file in the file manager. A listed file that can no longer be read
+  is left out, noted in `missing.txt`, and named in a warning; the rest is
+  saved.
+- **Open GitHub issue** saves the zip first if the current choices are not
+  saved yet, then opens `https://github.com/SilasVogt/newtopo/issues/new`
+  with a title and body: error line and location, version, platform
+  (only with PC details on), the comment and a line asking to attach the
+  zip. The link stays under 6,000 characters (the comment, then the error
+  line, are shortened); the log is never in it. Only that page is opened.
+- **Copy prompt** puts instructions for an AI coding agent on the
+  clipboard: fork the repository, check out the commit (or version tag) of
+  the build that failed (the running build when no error is attached),
+  reproduce from the report (naming the zip and its files,
+  and saying that `newtopo-cli run` replays undone and discarded ops too),
+  fix the cause, add a regression test, run `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace`, and open a pull request against `main`. It
+  inlines the error (first 60 lines), `steps.json` when included and at
+  most 6 KiB, the PC details when included, and the comment; nothing that
+  is switched off.
 
 ---
 

@@ -357,3 +357,52 @@ pub const COMPARE_BEFORE: &str = "Before";
 pub const COMPARE_AFTER: &str = "After";
 pub const AUTOFILL_EXPLAIN: &str = "Auto-fill closes the polygons left between your lines and the CAD edges: it connects vertices that already exist into quads and triangles. It adds edges, never new vertices, and only runs while you have it switched on.";
 pub const AUTOFILL_TIP: &str = "Auto-fill: connect the existing vertices of each remaining polygon into quads and triangles (adds edges, never vertices). Off by default; turning it on shows a before/after preview to apply or discard.";
+
+// Problem reports (SPEC §5.11)
+pub const REPORT_TITLE_MANUAL: &str = "Report a problem";
+pub const REPORT_SUB_MANUAL: &str =
+    "Tell us what went wrong. You choose what goes into the report.";
+pub const REPORT_TITLE_CRASH: &str = "newtopo closed unexpectedly";
+pub const REPORT_SUB_CRASH: &str =
+    "The last session ended with this error. A report helps get it fixed.";
+pub const REPORT_TITLE_COULD_NOT: &str = "could not finish";
+pub const REPORT_TITLE_ERROR: &str = "Something went wrong";
+pub const REPORT_SUB_ERROR: &str =
+    "Your scene is still open; save a copy to be safe. A report helps get this fixed.";
+pub const REPORT_ADD: &str = "Add to the report";
+pub const REPORT_STEPS: &str = "Steps taken";
+pub const REPORT_STEPS_NONE: &str = "No operations in this session yet";
+pub const REPORT_STEPS_ONE: &str = "The 1 operation of this session";
+pub const REPORT_STEPS_MANY: &str = "operations of this session";
+pub const REPORT_MODEL: &str = "The model";
+pub const REPORT_MODEL_NONE: &str = "No model open";
+pub const REPORT_MODEL_SCENE: &str = "the open scene";
+pub const REPORT_SCENE_FAILED: &str = "The open scene couldn't be copied into the report";
+pub const REPORT_PC: &str = "PC details";
+pub const REPORT_PC_DESC: &str = "System, graphics card, memory";
+pub const REPORT_COMMENT_HINT: &str = "What were you doing? (optional)";
+pub const REPORT_CONTAINS: &str = "What the report contains";
+pub const REPORT_NOT_INCLUDED: &str = "not included";
+pub const REPORT_NO_ERROR: &str = "No error attached";
+pub const REPORT_PRIVACY: &str = "Nothing is sent by the app. Your user name and the folders \
+     of full file paths are removed; file names are kept.";
+pub const REPORT_PRIVACY_MODEL: &str =
+    "Nothing is sent by the app. Model files are included as they are.";
+pub const REPORT_SAVE: &str = "Save report…";
+pub const REPORT_SAVE_TITLE: &str = "Save problem report";
+pub const REPORT_OPEN_ISSUE: &str = "Open GitHub issue";
+pub const REPORT_AI_TITLE: &str = "Fix it with an AI coding agent";
+pub const REPORT_AI_DESC: &str = "Copies instructions: fork the repository, reproduce with this report, fix, run the tests, open a pull request.";
+pub const REPORT_COPY_PROMPT: &str = "Copy prompt";
+pub const REPORT_COPIED: &str = "Copied";
+pub const REPORT_SAVED: &str = "Report saved:";
+pub const REPORT_SAVE_FAILED: &str = "Couldn't save the report";
+/// Followed by the files left out of a saved report (they could not be
+/// read any more).
+pub const REPORT_NOT_SAVED: &str =
+    "Saved without these files (they could no longer be read; see missing.txt):";
+pub const REPORT_ISSUE_OPENED: &str =
+    "GitHub opened in your browser. Drag the report file into the issue.";
+pub const REPORT_ISSUE_FAILED: &str = "Couldn't open the browser";
+pub const REPORT_PROMPT_COPIED: &str =
+    "Prompt copied. Paste it into your AI coding agent with the report file.";

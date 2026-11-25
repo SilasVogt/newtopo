@@ -814,3 +814,305 @@ fn refused_op_leaves_no_preview_open() {
     assert!(r.is_none(), "refused");
     assert!(!h.app.st.doc.in_preview(), "no empty preview blocks saving");
 }
+
+// ------------------------------------------------------------ problem reports (SPEC §5.11)
+
+fn report_origin(h: &Harness) -> Option<crate::report::ui::Origin> {
+    h.app.st.ui.report.as_ref().map(|d| d.origin)
+}
+
+#[test]
+fn report_opens_once_after_a_caught_panic() {
+    use crate::jobs::Modal;
+    use crate::report::ui::Origin;
+    fn boom() {
+        panic!("engine blew up")
+    }
+    let mut h = Harness::new(false);
+    let r: Result<(), String> = crate::docstate::guard(boom);
+    assert!(r.is_err());
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Caught));
+    assert_eq!(h.app.st.active_modal(), Some(Modal::Report));
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    assert_eq!(d.failure().unwrap().message, "engine blew up");
+    // A second failure while it is open doesn't replace or stack it.
+    let _ = crate::docstate::guard(|| panic!("another one"));
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    assert_eq!(d.failure().unwrap().message, "engine blew up");
+    // Esc closes it; the same failure again doesn't reopen it.
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.report.is_none());
+    let _ = crate::docstate::guard(boom);
+    h.frames(2);
+    assert!(h.app.st.ui.report.is_none(), "once per failure");
+    // A new failure does.
+    let _ = crate::docstate::guard(|| panic!("a different failure"));
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Caught));
+}
+
+#[test]
+fn refusals_do_not_open_the_report() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let r = h.app.st.apply(Op::DeleteRule {
+        rule: newtopo_core::keys::RuleId(4242),
+    });
+    assert!(r.is_none(), "refused");
+    h.frames(3);
+    assert!(h.app.st.ui.report.is_none());
+    assert!(!h.app.st.toasts.items.is_empty(), "the refusal is a toast");
+    // It is in the session's steps, as refused.
+    let steps = h.app.st.session.steps_json();
+    assert!(steps.contains("\"refused\""), "{steps}");
+    assert_eq!(h.app.st.session.op_count(), 0);
+}
+
+#[test]
+fn report_from_help_has_no_error_and_never_stacks() {
+    use crate::report::ui::Origin;
+    let mut h = Harness::new(true);
+    h.app.st.run(Cmd::ReportProblem);
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Manual));
+    assert!(h.app.st.ui.report.as_ref().unwrap().failure().is_none());
+    h.app.st.ui.report.as_mut().unwrap().choices.comment = "typed".into();
+    // Opening again (palette, menu) keeps the open one.
+    h.app.st.run(Cmd::ReportProblem);
+    assert_eq!(
+        h.app.st.ui.report.as_ref().unwrap().choices.comment,
+        "typed"
+    );
+    // The palette lists it.
+    assert!(crate::commands::ALL.contains(&Cmd::ReportProblem));
+}
+
+#[test]
+fn saving_writes_the_listed_files_and_issue_links_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::new(false);
+    let _ = crate::docstate::guard(|| panic!("save test failure"));
+    h.frames(2);
+    let path = dir.path().join("report.zip");
+    {
+        let d = h.app.st.ui.report.as_mut().expect("open");
+        d.save_to = Some(path.clone());
+        d.choices.pc = false;
+    }
+    // Open GitHub issue saves first, then opens the page once.
+    h.app.st.open_issue();
+    assert!(path.exists(), "saved before opening the issue");
+    assert_eq!(h.app.st.opened_urls.len(), 1);
+    let url = &h.app.st.opened_urls[0];
+    assert!(url.starts_with(crate::report::ISSUE_URL));
+    assert!(url.len() <= crate::report::MAX_ISSUE_URL);
+    assert!(url.contains("report.zip"));
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    let listed: Vec<String> = d
+        .rows()
+        .into_iter()
+        .filter(|r| r.included)
+        .map(|r| r.name)
+        .collect();
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let inside: Vec<String> = (0..z.len())
+        .map(|i| z.by_index(i).unwrap().name().unwrap().to_string())
+        .collect();
+    assert_eq!(inside, listed);
+    assert!(!inside.iter().any(|n| n == "system.txt"), "PC details off");
+}
+
+#[test]
+fn previous_crash_is_offered_after_recovery_with_the_recovered_scene() {
+    use crate::report::crash;
+    use crate::report::ui::Origin;
+    let dir = tempfile::tempdir().unwrap();
+    // A session that crashed: marker left, crash file written. `main`
+    // finds it before the app starts.
+    let (session, none) = crash::begin_session(dir.path());
+    assert!(none.is_none());
+    session.write_crash(&crash::Failure::from_message("hard crash"));
+    let prev = crash::begin_session(dir.path()).1.expect("crash found");
+    let mut h = Harness::new(false);
+    h.app.st.ui.recovery = vec![dir.path().join("scene.ntopo.autosave")];
+    h.app.st.offer_previous_crash(prev);
+    // `main` sets the adapter after `App::new`.
+    h.app.st.gpu_info = Some(crate::report::system::GpuInfo {
+        name: "TestGPU 9000".into(),
+        backend: "Vulkan".into(),
+        device_type: "DiscreteGpu".into(),
+        driver: "1.0".into(),
+    });
+    h.frames(2);
+    assert!(
+        h.app.st.ui.report.is_none(),
+        "the recovery dialog comes first"
+    );
+    // The user recovers the scene.
+    h.app.st.ui.recovery.clear();
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().expect("offered");
+    assert_eq!(d.origin, Origin::PreviousCrash);
+    assert_eq!(d.failure().unwrap().message, "hard crash");
+    assert!(d.has_model(), "the recovered scene can be attached");
+    assert!(
+        d.contents.system.contains("TestGPU 9000"),
+        "{}",
+        d.contents.system
+    );
+    // Offered once.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.app.st.ui.report.is_none());
+}
+
+#[test]
+fn previous_crash_waits_behind_the_quit_prompt() {
+    use crate::report::crash;
+    use crate::report::ui::Origin;
+    let dir = tempfile::tempdir().unwrap();
+    // A crash of a session that has ended (another process).
+    let gone = crash::Owner {
+        pid: u32::MAX - 5,
+        start: 1,
+    };
+    let (old, _) = crash::begin_session_as(dir.path(), gone, &|_: &crash::Owner| false);
+    old.write_crash(&crash::Failure::from_message("crash before quit"));
+    let prev = crash::begin_session(dir.path()).1.expect("crash found");
+    let mut h = Harness::new(false);
+    h.app.st.offer_previous_crash(prev);
+    // The user asked to quit with unsaved changes: that prompt goes first.
+    h.app.st.ui.unsaved_prompt = Some(crate::app::PendingAfterPrompt::Quit);
+    h.frames(3);
+    assert!(h.app.st.ui.report.is_none(), "not taken behind the prompt");
+    assert!(old.crash_file().exists(), "kept on disk while it waits");
+    // Cancel: now it is offered, and only then consumed.
+    h.app.st.ui.unsaved_prompt = None;
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().expect("offered");
+    assert_eq!(d.origin, Origin::PreviousCrash);
+    assert!(!old.crash_file().exists(), "consumed once offered");
+}
+
+#[test]
+fn a_cancelled_or_failed_save_does_not_open_the_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::new(false);
+    let _ = crate::docstate::guard(|| panic!("failed save test"));
+    h.frames(2);
+    let d = h.app.st.ui.report.as_mut().expect("open");
+    d.save_to = Some(dir.path().join("no/such/folder/report.zip"));
+    h.app.st.open_issue();
+    assert!(
+        h.app.st.opened_urls.is_empty(),
+        "no page asking for a missing file"
+    );
+    assert!(h.app.st.ui.report.as_ref().unwrap().saved.is_none());
+}
+
+#[test]
+fn folder_names_never_reach_the_report() {
+    use crate::jobs::ExportDialog;
+    use crate::report::ui::Origin;
+    use crate::report::{Data, agent_prompt, issue_url, parts};
+    use newtopo_core::Op;
+    use newtopo_kernel::mock::{MockBody, MockKernel};
+    // The app logger feeds the in-memory log the report reads here.
+    crate::report::log::init(None);
+    let tmp = tempfile::tempdir().unwrap();
+    let secret = tmp.path().join("Secret Client (NDA)");
+    std::fs::create_dir_all(&secret).unwrap();
+    let mut h = Harness::new(false);
+    let mut scene = newtopo_core::scene::Scene::new(std::sync::Arc::new(MockKernel::new()));
+    let body = scene
+        .add_body(
+            &MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)).to_brep_bytes(),
+            newtopo_kernel::BodyAttributes {
+                name: "box".into(),
+                transform: glam::DMat4::IDENTITY,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    h.app.st.doc.set_scene(scene, None);
+    h.frames(1);
+    // A body renamed to a path-like name.
+    let path_name = format!("{}/part.step", secret.display());
+    h.app.st.apply(Op::RenameBody {
+        body,
+        name: path_name,
+    });
+    // Save and export into the client's folder, and fail to open from it.
+    h.app.st.doc.path = Some(secret.join("part.ntopo"));
+    h.app.st.save(false);
+    assert!(secret.join("part.ntopo").exists(), "saved");
+    let d = ExportDialog {
+        format: newtopo_core::export::Format::Obj,
+        opts: h.app.st.prefs.export.clone(),
+        units: h.app.st.prefs.units.clone(),
+    };
+    h.app.st.export_to(secret.join("part.obj"), d);
+    for _ in 0..400 {
+        if !h.app.st.busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.frames(1);
+    }
+    assert!(secret.join("part.obj").exists(), "exported");
+    h.app.st.open_scene(Some(secret.join("missing.ntopo")));
+    // An error whose message names the folder.
+    let f = crate::report::crash::Failure::from_message(&format!(
+        "Couldn't read {}/part.ntopo",
+        secret.display()
+    ));
+    h.app.st.open_report(Some(f), Origin::Caught);
+    let d = h.app.st.ui.report.as_ref().expect("open");
+    let log = &d.contents.log;
+    for line in [
+        "saved: part.ntopo",
+        "export finished: part.obj",
+        "open failed: missing.ntopo",
+    ] {
+        assert!(log.contains(line), "{line:?} not logged:\n{log}");
+    }
+    let mut ch = d.choices.clone();
+    ch.comment = "it broke".into();
+    let mut texts: Vec<(String, String)> = parts(&d.contents, &ch)
+        .into_iter()
+        .filter_map(|p| match p.data {
+            Data::Bytes(b) => Some((p.name, String::from_utf8_lossy(&b).into_owned())),
+            Data::File(_) => None,
+        })
+        .collect();
+    for n in ["error.txt", "log.txt", "steps.json"] {
+        assert!(texts.iter().any(|(name, _)| name == n), "{n} in the report");
+    }
+    texts.push(("issue".into(), issue_url(&d.contents, &ch, "r.zip")));
+    texts.push(("prompt".into(), agent_prompt(&d.contents, &ch, "r.zip")));
+    let tmp_name = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    for (name, text) in &texts {
+        for bad in ["Secret", "NDA", tmp_name.as_str()] {
+            assert!(!text.contains(bad), "{bad:?} in {name}:\n{text}");
+        }
+    }
+    let steps = &texts.iter().find(|(n, _)| n == "steps.json").unwrap().1;
+    assert!(steps.contains("…/part.step"), "{steps}");
+}
