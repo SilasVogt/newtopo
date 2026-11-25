@@ -35,8 +35,12 @@ impl Scrubber {
         Scrubber { homes, user }
     }
 
-    /// This machine's home directory and user name.
+    /// This machine's home directory and user name (in tests, the test
+    /// identity once [`use_test_identity`] ran on the thread).
     pub fn current() -> &'static Scrubber {
+        if let Some(s) = test_identity() {
+            return s;
+        }
         static S: OnceLock<Scrubber> = OnceLock::new();
         S.get_or_init(|| {
             let home = directories::BaseDirs::new()
@@ -81,6 +85,39 @@ impl Scrubber {
     pub fn clean(&self, text: &str) -> String {
         redact_dirs(&self.scrub(&strip_known(text)))
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_IDENTITY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Home directory of the test identity: no real machine has it.
+#[cfg(test)]
+pub const TEST_HOME: &str = "/home/zqtester-home-5c7a";
+/// User name of the test identity.
+#[cfg(test)]
+pub const TEST_USER: &str = "zqtester5c7a";
+
+/// From now on this test (its thread) scrubs [`TEST_HOME`] and
+/// [`TEST_USER`] instead of the machine's, so assertions about what leaves
+/// the machine do not depend on who runs the tests.
+#[cfg(test)]
+pub fn use_test_identity() {
+    TEST_IDENTITY.with(|t| t.set(true));
+}
+
+#[cfg(test)]
+fn test_identity() -> Option<&'static Scrubber> {
+    static T: OnceLock<Scrubber> = OnceLock::new();
+    TEST_IDENTITY
+        .with(std::cell::Cell::get)
+        .then(|| T.get_or_init(|| Scrubber::new(Some(TEST_HOME), Some(TEST_USER))))
+}
+
+#[cfg(not(test))]
+fn test_identity() -> Option<&'static Scrubber> {
+    None
 }
 
 /// Shorthand for the machine scrubber.
@@ -193,9 +230,12 @@ fn path_len(s: &str) -> Option<usize> {
 }
 
 fn redact_one(path: &str) -> String {
+    // Only a source location on its own is kept: a candidate glued from
+    // several words, or holding a quote, bracket, comma or semicolon, may
+    // start with another path (`/mnt/acme/x.step,src/main.rs`).
     let code = {
         let p = path.trim_end_matches(|c: char| c.is_ascii_digit() || c == ':');
-        p.ends_with(".rs") && !p.contains(' ')
+        p.ends_with(".rs") && !p.contains(|c: char| c.is_whitespace() || "'\"`()[]{},;".contains(c))
     };
     if code {
         return path.to_string();
@@ -277,7 +317,10 @@ pub fn strip_known(text: &str) -> String {
 }
 
 /// Case-insensitive replace of the folder `dir` by `…` where it stands as
-/// a whole folder: not inside a longer name on either side.
+/// a whole folder: not inside a longer name on either side. Where a space
+/// follows and the path runs on to a later separator, `dir` may be the
+/// start of a longer folder name (`/srv/Acme Corp/x.step` with `/srv/Acme`
+/// known): that whole path is redacted instead (see [`redact_dirs`]).
 fn replace_dir(hay: &str, dir: &str) -> String {
     let mut out = String::with_capacity(hay.len());
     let mut i = 0;
@@ -291,9 +334,24 @@ fn replace_dir(hay: &str, dir: &str) -> String {
                 .next()
                 .is_some_and(|c| is_word(c) || c == '.' || c == '-')
         {
-            out.push('…');
-            prev = Some('…');
-            i += len;
+            let longer = rest[len..]
+                .starts_with(char::is_whitespace)
+                .then(|| path_len(rest))
+                .flatten()
+                .filter(|&p| p > len);
+            match longer {
+                Some(p) => {
+                    let r = redact_one(&rest[..p]);
+                    prev = r.chars().last();
+                    out.push_str(&r);
+                    i += p;
+                }
+                None => {
+                    out.push('…');
+                    prev = Some('…');
+                    i += len;
+                }
+            }
             continue;
         }
         let c = rest.chars().next().expect("non-empty");
@@ -501,6 +559,72 @@ mod tests {
         know_dir(Path::new("/"));
         know_dir(Path::new("parts"));
         assert_eq!(strip_known("/usr/parts/x"), "/usr/parts/x");
+    }
+
+    #[test]
+    fn source_locations_never_shield_other_paths() {
+        for (text, want) in [
+            // Glued over later words: the folders of the first path go.
+            (
+                "Opened /mnt/clients/acme/part.step then checked src/main.rs",
+                "Opened …/main.rs",
+            ),
+            // Glued without a space.
+            (
+                "Opened /mnt/clients/acme/part.step,src/main.rs",
+                "Opened …/main.rs",
+            ),
+            (
+                "Opened /mnt/clients/acme/x.step;crates/app/src/jobs.rs:709:5",
+                "Opened …/jobs.rs:709:5",
+            ),
+            // A private path and a source location on one line.
+            (
+                "panicked at /work/newtopo/crates/app/src/jobs.rs:709:5 while opening /mnt/clients/acme/part.step",
+                "panicked at /work/newtopo/crates/app/src/jobs.rs:709:5 while opening …/part.step",
+            ),
+            (
+                "panicked at crates/app/src/jobs.rs:709:5: can't read /mnt/clients/acme/part.step",
+                "panicked at crates/app/src/jobs.rs:709:5: can't read …/part.step",
+            ),
+        ] {
+            let got = redact_dirs(text);
+            assert_eq!(got, want, "{text}");
+            for secret in ["clients", "acme", "/mnt"] {
+                assert!(!got.contains(secret), "{secret} in {got}");
+            }
+        }
+        // A source location on its own is still kept.
+        for keep in [
+            "crates/app/src/jobs.rs:709:5",
+            "at /work/newtopo/crates/app/src/jobs.rs:709:5",
+        ] {
+            assert_eq!(redact_dirs(keep), keep);
+        }
+    }
+
+    #[test]
+    fn a_known_folder_that_starts_a_longer_name_is_not_cut_off() {
+        for (known, text) in [
+            ("/srv/Acme", "open /srv/Acme Corp/x.step"),
+            ("/srv/Acme Corp", "open /srv/Acme Corp (NDA)/x.step"),
+        ] {
+            assert_eq!(replace_dir(text, known), "open …/x.step", "{known}");
+            assert_eq!(
+                redact_dirs(&replace_dir(text, known)),
+                "open …/x.step",
+                "{known}"
+            );
+        }
+        // Where the known folder ends, it is still replaced as written.
+        for (text, want) in [
+            ("open /srv/Acme/x.step", "open …/x.step"),
+            ("folder /srv/Acme is read-only", "folder … is read-only"),
+            ("in '/srv/Acme': gone", "in '…': gone"),
+            ("/srv/Acme", "…"),
+        ] {
+            assert_eq!(replace_dir(text, "/srv/Acme"), want);
+        }
     }
 
     #[test]

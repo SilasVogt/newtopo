@@ -1,16 +1,13 @@
 use super::*;
 use newtopo_core::ops::Op;
 
-/// This machine's home directory and user name, as the scrubber sees them.
+/// The home directory and user name the fixtures put into the report: a
+/// controlled test identity (see [`scrub::use_test_identity`]), so the
+/// privacy assertions hold whoever runs the tests (`USER=root` and the
+/// prompt's "root cause", say).
 fn home_and_user() -> (String, String) {
-    let home = directories::BaseDirs::new()
-        .map(|d| d.home_dir().to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/home/someone".into());
-    let user = ["USER", "USERNAME", "LOGNAME"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok())
-        .unwrap_or_else(|| "someone".into());
-    (home, user)
+    scrub::use_test_identity();
+    (scrub::TEST_HOME.into(), scrub::TEST_USER.into())
 }
 
 fn failure() -> Failure {
@@ -63,14 +60,10 @@ fn contents(model: bool) -> Contents {
 
 fn no_private_data(text: &str) {
     let (home, user) = home_and_user();
-    // The repository's owner name is fixed text, not the user's.
-    let text = &text.replace(REPO, "").replace(ISSUE_URL, "");
-    assert!(!text.contains(&home), "home directory in:\n{text}");
-    if user.chars().count() >= 3 {
-        assert!(
-            !text.to_lowercase().contains(&user.to_lowercase()),
-            "user name in:\n{text}"
-        );
+    let text = text.to_lowercase();
+    // The parts of the test identity, each distinctive on its own.
+    for mark in [home.as_str(), "zqtester-home-5c7a", user.as_str()] {
+        assert!(!text.contains(mark), "{mark:?} in:\n{text}");
     }
 }
 
@@ -344,15 +337,18 @@ fn capture_runs_never_touch_the_session_files() {
     // running right away, before any window or graphics start-up.
     let st = start(&parse_args(&[]), Some(d));
     assert_eq!(st.data.as_deref(), Some(d));
-    assert_eq!(st.previous_crash.unwrap().message, "waiting crash");
+    let found = st.previous_crash.unwrap();
+    assert_eq!(found.failure.message, "waiting crash");
     let session = st.session.expect("marked");
     assert!(session.marker().exists());
+    assert!(prev.crash_file().exists(), "kept until offered");
+    found.offered();
     assert!(!prev.crash_file().exists(), "consumed");
     // So a panic during start-up (before the app exists) is offered next
     // time (this test's process stands in for the one that crashed).
     session.write_crash(&Failure::from_message("startup panic"));
     let st = start(&parse_args(&[]), Some(d));
-    assert_eq!(st.previous_crash.unwrap().message, "startup panic");
+    assert_eq!(st.previous_crash.unwrap().failure.message, "startup panic");
 }
 
 #[test]

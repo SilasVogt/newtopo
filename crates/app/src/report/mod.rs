@@ -53,8 +53,9 @@ pub struct Startup {
     /// This session's marker and crash file (already marked as running),
     /// for [`crash::activate`]; `None` for capture runs.
     pub session: Option<crash::SessionFiles>,
-    /// An earlier session's crash, to offer once the app is up.
-    pub previous_crash: Option<Failure>,
+    /// An earlier session's crash, to offer once the app is up (it stays
+    /// on disk until offered).
+    pub previous_crash: Option<crash::PreviousCrash>,
 }
 
 /// Start the crash-report session, before the window and graphics start

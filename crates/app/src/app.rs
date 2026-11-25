@@ -253,16 +253,19 @@ pub struct AppState {
     /// Report links opened (screenshot and test runs only record them).
     pub opened_urls: Vec<String>,
     /// The previous session's crash, offered after the recovery dialog.
-    pub previous_crash: Option<crate::report::crash::Failure>,
+    pub previous_crash: Option<crate::report::crash::PreviousCrash>,
 }
 
 impl AppState {
     /// The last session ended in this crash: offer a report for it once the
     /// recovery dialog (which has priority) is done.
-    pub fn offer_previous_crash(&mut self, f: crate::report::crash::Failure) {
-        log::warn!("the previous session ended in a crash: {}", f.message);
-        self.reported.insert(f.key());
-        self.previous_crash = Some(f);
+    pub fn offer_previous_crash(&mut self, p: crate::report::crash::PreviousCrash) {
+        log::warn!(
+            "the previous session ended in a crash: {}",
+            p.failure.message
+        );
+        self.reported.insert(p.failure.key());
+        self.previous_crash = Some(p);
     }
 }
 

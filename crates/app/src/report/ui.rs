@@ -153,9 +153,11 @@ impl AppState {
         crash::tick();
         if self.ui.recovery.is_empty()
             && self.ui.report.is_none()
-            && let Some(f) = self.previous_crash.take()
+            && let Some(p) = self.previous_crash.take()
         {
-            self.open_report(Some(f), Origin::PreviousCrash);
+            self.open_report(Some(p.failure.clone()), Origin::PreviousCrash);
+            // Only now: a start-up that fails before this leaves it on disk.
+            p.offered();
         }
         for f in crash::take_caught() {
             if !self.reported.insert(f.key()) {

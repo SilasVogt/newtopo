@@ -82,6 +82,9 @@ const REPEATS: u32 = 3;
 /// How long a repeating caught panic must stay away before its crash file
 /// is withdrawn.
 const WITHDRAW_AFTER: Duration = Duration::from_secs(1);
+/// Seconds a process's start time may move between two looks at it (see
+/// [`Owner::same_start`]).
+const START_SLACK: u64 = 5;
 
 /// Install the panic hook (once). It runs before the previous hook, which
 /// still prints the panic to stderr.
@@ -257,12 +260,14 @@ impl Owner {
 
     /// Whether the session's process is still running.
     pub fn alive(&self) -> bool {
-        match process(self.pid) {
-            Some((start, zombie)) => {
-                !zombie && (self.start == 0 || start == 0 || start == self.start)
-            }
-            None => false,
-        }
+        process(self.pid).is_some_and(|(start, zombie)| !zombie && self.same_start(start))
+    }
+
+    /// Whether a process that started at `start` is this one. Start times
+    /// are derived from the boot time, which moves when the wall clock is
+    /// stepped, so they may differ by a few seconds.
+    fn same_start(&self, start: u64) -> bool {
+        self.start == 0 || start == 0 || self.start.abs_diff(start) <= START_SLACK
     }
 
     fn id(&self) -> String {
@@ -403,10 +408,29 @@ impl CrashFile {
     }
 }
 
+/// An earlier session's crash, found at start-up. Its files stay on disk
+/// until [`PreviousCrash::offered`], so a start-up that fails before the
+/// app can offer it leaves it for the next start.
+#[derive(Debug)]
+pub struct PreviousCrash {
+    pub failure: Failure,
+    /// The crashed session's files; `None` when they are already gone.
+    files: Option<SessionFiles>,
+}
+
+impl PreviousCrash {
+    /// The report for this crash was offered: its files go.
+    pub fn offered(&self) {
+        if let Some(f) = &self.files {
+            f.end();
+        }
+    }
+}
+
 /// Start of an interactive session in the data folder `data`: returns this
 /// session's files (already marked as running) and the crash of an earlier
 /// session that ended in one.
-pub fn begin_session(data: &Path) -> (SessionFiles, Option<Failure>) {
+pub fn begin_session(data: &Path) -> (SessionFiles, Option<PreviousCrash>) {
     begin_session_as(data, Owner::current(), &|o: &Owner| o.alive())
 }
 
@@ -416,7 +440,7 @@ pub fn begin_session_as(
     data: &Path,
     me: Owner,
     alive: &dyn Fn(&Owner) -> bool,
-) -> (SessionFiles, Option<Failure>) {
+) -> (SessionFiles, Option<PreviousCrash>) {
     let dir = data.join(SESSIONS);
     let prev = previous_crash(&dir, me, alive);
     let files = SessionFiles { dir, owner: me };
@@ -433,12 +457,14 @@ pub fn end_session() {
 }
 
 /// The crash of an earlier session: sessions whose process has ended are
-/// consumed (marker and crash file); a crash file next to its leftover
-/// marker is a crash, the newest one is returned. A crash file without its
-/// marker is removed and not offered. Sessions still running are left
-/// alone. A session of this very process (same id and start time) cannot
-/// be running in parallel, so it counts as ended.
-fn previous_crash(dir: &Path, me: Owner, alive: &dyn Fn(&Owner) -> bool) -> Option<Failure> {
+/// consumed (marker and crash file), except the newest crash (a crash file
+/// next to its leftover marker), which is returned and stays on disk until
+/// it is offered. A crash file without its marker is removed and not
+/// offered. Sessions still running are left alone. A session of this very
+/// process (same id and start time) cannot be running in parallel, so it
+/// counts as ended; its files are the new session's, so they are consumed
+/// right away.
+fn previous_crash(dir: &Path, me: Owner, alive: &dyn Fn(&Owner) -> bool) -> Option<PreviousCrash> {
     let mut ids: Vec<String> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -451,7 +477,7 @@ fn previous_crash(dir: &Path, me: Owner, alive: &dyn Fn(&Owner) -> bool) -> Opti
         .collect();
     ids.sort();
     ids.dedup();
-    let mut found: Option<Failure> = None;
+    let mut found: Option<PreviousCrash> = None;
     for id in ids {
         let Some(owner) = Owner::parse(&id) else {
             continue;
@@ -469,11 +495,27 @@ fn previous_crash(dir: &Path, me: Owner, alive: &dyn Fn(&Owner) -> bool) -> Opti
             .then(|| std::fs::read_to_string(files.crash_file()).ok())
             .flatten()
             .and_then(|s| serde_json::from_str::<Failure>(&s).ok());
-        files.end();
-        if let Some(f) = failure
-            && found.as_ref().is_none_or(|g| f.time >= g.time)
+        let Some(failure) = failure else {
+            files.end();
+            continue;
+        };
+        if found
+            .as_ref()
+            .is_some_and(|g| failure.time < g.failure.time)
         {
-            found = Some(f);
+            files.end();
+            continue;
+        }
+        let files = if owner == me {
+            files.end();
+            None
+        } else {
+            Some(files)
+        };
+        // An older crash is superseded: consumed like the other ended
+        // sessions.
+        if let Some(older) = found.replace(PreviousCrash { failure, files }) {
+            older.offered();
         }
     }
     found
@@ -496,8 +538,25 @@ mod tests {
         start: 70,
     };
 
-    /// `begin_session_as` with the given processes still running.
+    /// `begin_session_as` with the given processes still running; a crash
+    /// found is offered right away, as the app does once it is up.
     fn begin(d: &Path, me: Owner, running: &[Owner]) -> (SessionFiles, Option<Failure>) {
+        let (files, prev) = begin_unoffered(d, me, running);
+        (
+            files,
+            prev.map(|p| {
+                p.offered();
+                p.failure
+            }),
+        )
+    }
+
+    /// `begin_session_as` without offering the crash found.
+    fn begin_unoffered(
+        d: &Path,
+        me: Owner,
+        running: &[Owner],
+    ) -> (SessionFiles, Option<PreviousCrash>) {
         let running = running.to_vec();
         begin_session_as(d, me, &move |o: &Owner| running.contains(o))
     }
@@ -583,6 +642,48 @@ mod tests {
     }
 
     #[test]
+    fn a_crash_stays_on_disk_until_it_is_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let (a, _) = begin(d, A, &[]);
+        a.write_crash(&Failure::from_message("A crashed"));
+        // B finds it, then its start-up fails before the app offers it
+        // (no window: the marker stays, no crash file of its own).
+        let (_b, prev) = begin_unoffered(d, B, &[]);
+        assert_eq!(prev.expect("found").failure.message, "A crashed");
+        assert!(a.crash_file().exists() && a.marker().exists(), "kept");
+        // C still gets it, and offers it: then it is gone.
+        let (_c, prev) = begin_unoffered(d, C, &[]);
+        let prev = prev.expect("still there");
+        assert_eq!(prev.failure.message, "A crashed");
+        prev.offered();
+        assert!(!a.crash_file().exists() && !a.marker().exists(), "consumed");
+        let (_a, prev) = begin(d, A, &[]);
+        assert!(prev.is_none(), "offered once");
+    }
+
+    #[test]
+    fn only_the_newest_crash_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let (a, _) = begin(d, A, &[]);
+        let (b, _) = begin(d, B, &[A]);
+        let mut old = Failure::from_message("older");
+        old.time = 100;
+        let mut new = Failure::from_message("newer");
+        new.time = 200;
+        b.write_crash(&old);
+        a.write_crash(&new);
+        let (_c, prev) = begin_unoffered(d, C, &[]);
+        assert_eq!(prev.expect("found").failure.message, "newer");
+        assert!(a.crash_file().exists(), "the offered one waits");
+        assert!(
+            !b.crash_file().exists() && !b.marker().exists(),
+            "superseded"
+        );
+    }
+
+    #[test]
     fn this_process_is_running() {
         let me = Owner::current();
         assert!(me.alive());
@@ -591,6 +692,17 @@ mod tests {
             start: 1,
         };
         assert!(!gone.alive());
+        // A start time that moved a little (the wall clock was stepped) is
+        // still this process; a different one is not.
+        if me.start > START_SLACK {
+            for start in [me.start - START_SLACK, me.start + START_SLACK] {
+                assert!(Owner { start, ..me }.alive(), "{start} vs {}", me.start);
+            }
+            for start in [me.start - START_SLACK - 1, me.start + START_SLACK + 60] {
+                assert!(!Owner { start, ..me }.alive(), "{start} vs {}", me.start);
+            }
+            assert!(me.same_start(me.start + 3) && !me.same_start(me.start + 6));
+        }
     }
 
     #[test]
