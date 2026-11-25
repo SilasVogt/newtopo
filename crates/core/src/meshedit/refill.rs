@@ -209,6 +209,11 @@ pub(crate) fn pair_triangles(w: &mut Work, max_fold_deg: f64) -> usize {
         if used.contains(&q) || used.contains(&r) {
             continue;
         }
+        // A quad on the same corners as a live polygon (the other side of
+        // a flat closed piece) would be a duplicate polygon.
+        if w.has_polygon_on(&quad, &[q, r]) {
+            continue;
+        }
         used.insert(q);
         used.insert(r);
         let wit_r = w

@@ -676,7 +676,7 @@ feature.
   written this session. It
   records app start (version, commit, platform, graphics adapter), imports,
   every applied, refused or failed op (name and outcome, no geometry),
-  undo/redo, preview apply/discard, open, save, autosave, export and
+  every mesh-mode edit (tool and outcome) and Discard mesh edits, undo/redo, preview apply/discard, open, save, autosave, export and
   import jobs, warnings and errors. Lines about files name the file only,
   never its folder; toasts are not logged as such (warning and error
   toasts are, with file names only). Every line is cleaned before it is
@@ -730,7 +730,12 @@ feature.
     applied to it or failed, including ones later undone or discarded with
     a preview), plus a `session` timeline of the whole session (earlier
     scenes before *File > New* or *Open*, refused ops, undo/redo, preview
-    apply/discard and imports, file names only). Names the user typed
+    apply/discard and imports, file names only). Mesh-mode edits (§9.5)
+    are not ops: each is a `mesh_edit` step (tool and outcome, logged
+    once when it makes its undo step) and Discard mesh edits a
+    `discard_mesh_edits` step; `mesh_edits` counts them for the open
+    scene, and when it is not zero the file's note and the agent prompt
+    say that `run` does not replay them. Names the user typed
     (bodies, layers) are cleaned like the log;
   - **The model** (off by default): the CAD files imported this session
     that are still readable and a copy of the open scene, under `model/`,
@@ -1215,7 +1220,9 @@ never back to rules; while a body has mesh edits its rules are locked.
   overrides is refused with *"‹name› has mesh edits, so its CAD lines are
   locked. Run "Discard mesh edits" to edit it in CAD mode again."* Import
   "Replace" (§8.1) of such a body is refused the same way: the replacement
-  is a new body, and the edited mesh belongs to the old one. Scene
+  is a new body, and the edited mesh belongs to the old one. Replacing
+  another body is refused too when a rule it shares with a body that has
+  mesh edits would be rewritten. Scene
   settings (auto-fill, link, symmetry), names, layers, visibility and locks
   still change; bodies without mesh edits stay fully CAD-editable.
 - **Discard mesh edits** (mesh tool panel, command palette; no prompt) drops
@@ -1227,7 +1234,9 @@ never back to rules; while a body has mesh edits its rules are locked.
   other op (§4.7). Undoing the first edit of a body unlocks it again.
 - **Kept** by the bake: vertex positions; polygons with their winding; the
   CAD face of each polygon (its *group*: normals, materials, export
-  grouping); the exact per-corner CAD normals; per-corner UVs if §9.2 ran;
+  grouping); the exact per-corner CAD normals; per-corner UVs if §9.2 ran
+  (not built yet: the evaluated output carries no UVs, so baked meshes
+  have none and no UV seams);
   edge flags **CAD** (lies on a CAD edge) and **hard** (§8.3, including
   `SetHard` overrides); **pinned** vertices (CAD vertices and poles).
 - **Dropped**: anchors, keys, surface paths, the line/fill/split distinction
@@ -1275,7 +1284,10 @@ never back to rules; while a body has mesh edits its rules are locked.
   normal limit (default 60°) away from the mean of the CAD normals at its
   corners (a flipped face). "Further from the result" (deviation limits)
   means from the polygons as exported: a quad counts the worse of its two
-  triangulations.
+  triangulations; a larger polygon its fan from the vertex centroid, or,
+  where that fan leaves a concave polygon, its boundary (never nearer
+  than the polygon). A respaced n-gon may be concave but never
+  self-intersecting.
 - **Attributes**: a vertex that stays where it was keeps its exact normals
   and UVs. A vertex that moves along existing edges gets normals and UVs
   interpolated along them, per side of each seam. Polygons keep their group.
@@ -1490,7 +1502,7 @@ parts that should be one surface, and very short edges.
 | --- | --- | --- |
 | Scope | whole mesh | The whole mesh or the selected vertices |
 | Distance | 0.01 % of the bounding-box diagonal | Vertices closer than this merge |
-| Mode | All | All pairs; Connected (only pairs joined by an edge); Unconnected (only pairs that share no polygon: welds, never collapses an existing polygon) |
+| Mode | All | All pairs; Connected (only pairs joined by an edge); Unconnected (only pairs that share no polygon, also among the members of one cluster: welds, never collapses an existing polygon) |
 | Position | Centroid | Centroid (free survivors move to the mean of their cluster) or Survivor (the survivor stays) |
 | With unselected | off | With a vertex scope: also merge selected vertices with unselected ones |
 | Preserve CAD / hard edges, normal limit | on / on, 60° | §9.5.2 |
@@ -1506,7 +1518,8 @@ parts that should be one surface, and very short edges.
 - **All at once**: every cluster is applied together, because closing a
   crack needs both ends of every glued edge at the same time. Polygons that
   lose corners shrink, polygons left with fewer than three corners
-  disappear, a polygon pinched at a repeated corner splits, and two polygons
+  disappear (no pinned vertex may lose its last polygon this way, in any
+  tool), a polygon pinched at a repeated corner splits, and two polygons
   left on the same corners with opposite winding (a closed pocket) both go.
   Edge flags follow their vertices; collapsed edges lose theirs; edges
   whose two sides now carry different UVs become seams.
@@ -1547,7 +1560,8 @@ leaving mesh mode.
 - **Click** selects one element, **Shift+click** adds it or, if it is
   selected, removes it; box and lasso as in CAD mode (§5.3).
 - **Loop**: Alt+click on an edge selects its edge loop (Shift+Alt adds;
-  double-click and `L` do the same). The loop walks straight on through
+  double-click and `L` do the same; a click that finds no loop keeps the
+  selection). The loop walks straight on through
   every vertex inside the surface with exactly four edges (the next edge is
   the one sharing no polygon with the previous one); an open boundary edge
   follows the boundary. It stops anywhere else, or when it closes. In
@@ -1555,8 +1569,14 @@ leaving mesh mode.
   preset Alt+click orbits; use double-click or `L` there.
 - **Shortest Path**: Ctrl+click selects the shortest edge path (by length,
   ties to lower vertex indices) from the last clicked vertex or edge to the
-  clicked one and adds it to the selection; the panel button joins the last
-  two clicked elements.
+  clicked one and adds it to the selection (between a vertex and an edge:
+  to the nearer end of the edge, plus the edge); the panel button joins
+  the last two clicked elements.
+- **Locks** (§5 outliner): a locked object, or one on a locked layer,
+  can't be picked, and mesh tools, slide drags, live value changes and
+  Discard mesh edits skip it even when its mesh selection was made before
+  the lock (a toast says so). Outliner rows don't select in mesh mode
+  (there is no object selection); double-click still frames.
 - Tools that need edge runs take the selected edges; in vertex mode, the
   edges whose two ends are selected. Vertex tools take the selected
   vertices; in edge mode, the selected edges' ends.
@@ -1682,7 +1702,8 @@ its quads concave is refused.
   `Alt+S`, Target Merge `Shift+W`, Merge by Distance `Alt+M`, Loop Cleanup
   `Shift+C`, Resample `Alt+R`, Decimate `Shift+D`; Discard mesh edits and
   Select shortest path from the palette. Esc cancels a slide drag, then a
-  first Target Merge pick, then the tool.
+  first Target Merge pick, then the tool; with nothing of those, it exits
+  isolate as in CAD mode.
 - A mesh edit, undo or redo that changes a body's mesh drops that body's
   mesh-mode selection (its indices no longer fit); a mesh tool's own edit
   carries the selection over (the run it worked on, or the merged vertex).

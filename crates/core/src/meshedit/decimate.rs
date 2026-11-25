@@ -528,7 +528,7 @@ fn plan_join(
         }
     }
     let uniq: BTreeSet<u32> = merged.iter().copied().collect();
-    if uniq.len() != merged.len() || merged.len() < 3 {
+    if uniq.len() != merged.len() || merged.len() < 3 || w.has_polygon_on(&merged, &[a, b]) {
         return None;
     }
     let pos = w.poly_pos(&merged);

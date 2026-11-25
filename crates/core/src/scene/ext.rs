@@ -376,8 +376,8 @@ impl Scene {
             .kernel
             .load_brep(brep)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        // Nothing below fails once the new body has a context; until then
-        // the scene does not own it, so unload it here.
+        // Until the new body is inserted below the scene does not own it,
+        // so every failure from here on unloads it.
         let ctx = match BodyCtx::build(self.kernel.clone(), kbody) {
             Ok(c) => c,
             Err(e) => {
@@ -461,6 +461,14 @@ impl Scene {
             heal,
             ..entry
         };
+        // A rule that also names patches of another body was rewritten
+        // above: refused if that body has mesh edits (its CAD stage is
+        // locked). The scene does not own the new body yet.
+        if let Err(r) = self.check_mesh_locks(&doc) {
+            drop(ctx);
+            self.kernel.unload(kbody);
+            anyhow::bail!("{}", r.reason);
+        }
         let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
         self.bodies.insert(
             id,

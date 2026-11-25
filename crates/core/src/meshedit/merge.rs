@@ -339,6 +339,10 @@ fn clusters(
                 || w.pos[u as usize].distance(ps) >= d
                 || !(in_s(u) || in_s(s))
                 || !may_join(w, u, s, p.mode)
+                // Unconnected never collapses a polygon, also not one that
+                // two members share.
+                || p.mode == MergeMode::Unconnected
+                    && members.iter().any(|&o| shares_polygon(w, u, o))
             {
                 continue;
             }

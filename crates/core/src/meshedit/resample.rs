@@ -286,7 +286,7 @@ fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String>
     if already {
         return Ok(false);
     }
-    let pairs = monotone_match(&t_old, &s_new); // (old index, slot index)
+    let pairs = match_slots(&t_old, &s_new)?; // (old index, slot index)
     let kept: Vec<usize> = pairs.iter().map(|p| p.0).collect();
     // 1. Remove unmatched old vertices by merging them into the previous
     //    surviving vertex of the piece (or the next one).
@@ -381,13 +381,34 @@ fn check_around(w: &Work, seq: &[u32]) -> Result<(), String> {
         let shape = if wp.verts.len() <= 4 {
             polygon_shape_ok(&pos, w.diag)
         } else {
-            area_vec(&pos).length() > 1e-12 * w.diag * w.diag
+            area_vec(&pos).length() > 1e-12 * w.diag * w.diag && simple_ngon(&pos)
         };
         if !shape || nrm.dot(w.reference_normal(&wp.verts, wp)) < w.min_cos {
             return Err("the new spacing would fold or flatten a neighbouring polygon".into());
         }
     }
     Ok(())
+}
+
+/// No two non-adjacent edges of the polygon touch (in its best-fit
+/// plane): a respaced n-gon may be concave, never self-intersecting.
+fn simple_ngon(pos: &[DVec3]) -> bool {
+    use crate::fill::geom::{project_best_fit, segments_touch};
+    let Some(uv) = project_best_fit(pos) else {
+        return false;
+    };
+    let n = uv.len();
+    for i in 0..n {
+        for j in i + 2..n {
+            if i == 0 && j == n - 1 {
+                continue; // adjacent through the closing edge
+            }
+            if segments_touch(uv[i], uv[i + 1], uv[j], uv[(j + 1) % n]) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Distribute `total` items over parts by weight, at least one each
@@ -412,6 +433,26 @@ fn largest_remainder(total: usize, weights: &[f64]) -> Vec<usize> {
         left -= 1;
     }
     out
+}
+
+/// Most cells of the matching table (about 36 MB).
+const MAX_MATCH_CELLS: usize = 4_000_000;
+
+/// Old vertices matched to new slots. Equal counts have one monotone
+/// match, index to index; otherwise the matching table must stay small
+/// (the output edge limit does not bound the input length).
+fn match_slots(t: &[f64], s: &[f64]) -> Result<Vec<(usize, usize)>, String> {
+    if t.len() == s.len() {
+        return Ok((0..t.len()).map(|i| (i, i)).collect());
+    }
+    if (t.len() + 1).saturating_mul(s.len() + 1) > MAX_MATCH_CELLS {
+        return Err(format!(
+            "{} vertices to match against {} new ones is more than this tool handles at once",
+            t.len(),
+            s.len()
+        ));
+    }
+    Ok(monotone_match(t, s))
 }
 
 /// Monotone matching of `min(a, b)` pairs between sorted parameter lists,
@@ -493,5 +534,29 @@ mod tests {
         assert!(m[0].1 == 1 || m[0].1 == 2);
         let m = monotone_match(&[0.3, 0.6], &[0.33, 0.66]);
         assert_eq!(m, vec![(0, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn matching_stays_small_for_long_runs() {
+        // Equal counts (Even spacing): index to index, the only full
+        // monotone match, without a table (20 000² cells would be 3.6 GB).
+        let n = 20_000;
+        let t: Vec<f64> = (0..n)
+            .map(|i| (i as f64 + 0.3) / (n as f64 + 1.0))
+            .collect();
+        let s: Vec<f64> = (0..n)
+            .map(|i| (i as f64 + 1.0) / (n as f64 + 1.0))
+            .collect();
+        let m = match_slots(&t, &s).unwrap();
+        assert_eq!(m.len(), n);
+        assert!(m.iter().enumerate().all(|(i, &p)| p == (i, i)));
+        let small = [0.1, 0.35, 0.8];
+        assert_eq!(
+            match_slots(&small, &[0.25, 0.5, 0.75]).unwrap(),
+            monotone_match(&small, &[0.25, 0.5, 0.75])
+        );
+        // Unequal counts on a long run are refused before any allocation.
+        assert!(match_slots(&t, &s[..n / 2]).is_err());
+        assert_eq!(match_slots(&small, &[0.5]).unwrap().len(), 1);
     }
 }

@@ -438,10 +438,14 @@ impl<'a> Work<'a> {
                 .any(|p| !aset.contains(p) && has_edge(&self.polys[*p as usize].verts, a, b))
         };
 
-        // Dead vertices.
+        // Dead vertices. A pinned vertex never disappears, not even one
+        // that only loses all its polygons.
         let mut dead = Vec::new();
         for &x in &touched {
             if others(x).is_empty() && !kept.iter().any(|k| k.contains(&x)) {
+                if self.pinned[x as usize] {
+                    return None;
+                }
                 dead.push(x);
             }
         }
@@ -800,6 +804,25 @@ impl<'a> Work<'a> {
         assign_witnesses(&w, &surf, &self.src.positions, self.max_dev)
     }
 
+    /// Is there a live polygon on exactly the corners `verts` (any order),
+    /// other than those in `except`?
+    pub fn has_polygon_on(&self, verts: &[u32], except: &[u32]) -> bool {
+        let Some(&first) = verts.first() else {
+            return false;
+        };
+        let mut want = verts.to_vec();
+        want.sort_unstable();
+        self.vpolys[first as usize].iter().any(|&q| {
+            let w = &self.polys[q as usize];
+            if !w.alive || except.contains(&q) || w.verts.len() != want.len() {
+                return false;
+            }
+            let mut have = w.verts.clone();
+            have.sort_unstable();
+            have == want
+        })
+    }
+
     /// Move `x` (unchecked) and record its provenance.
     pub fn set_position(&mut self, x: u32, p: DVec3, prov: Prov) {
         self.pos[x as usize] = p;
@@ -809,11 +832,15 @@ impl<'a> Work<'a> {
         }
     }
 
-    /// Checked move with witness redistribution.
+    /// Checked move with witness redistribution. The normal limit is
+    /// checked with the normals `prov` gives the moved corner.
     pub fn try_move(&mut self, x: u32, p: DVec3, prov: Prov) -> bool {
+        let old = std::mem::replace(&mut self.prov[x as usize], prov);
         if !self.move_ok(x, p) {
+            self.prov[x as usize] = old;
             return false;
         }
+        let prov = self.prov[x as usize].clone();
         let wit = self.move_deviation(x, p).unwrap_or_default();
         let around = self.vpolys[x as usize].clone();
         if let Some(ws) = &mut self.witnesses {
@@ -1379,15 +1406,30 @@ pub(crate) fn polygon_distance(p: DVec3, poly: &[DVec3]) -> f64 {
         4 => tri(0, 1, 2)
             .min(tri(0, 2, 3))
             .max(tri(0, 1, 3).min(tri(1, 2, 3))),
-        _ => fan_tris(poly)
-            .iter()
-            .map(|t| point_triangle_distance(p, t[0], t[1], t[2]))
-            .fold(f64::INFINITY, f64::min),
+        _ => {
+            let fan = fan_tris(poly);
+            let nrm = area_vec(poly);
+            if fan
+                .iter()
+                .all(|t| (t[1] - t[0]).cross(t[2] - t[0]).dot(nrm) > 0.0)
+            {
+                fan.iter()
+                    .map(|t| point_triangle_distance(p, t[0], t[1], t[2]))
+                    .fold(f64::INFINITY, f64::min)
+            } else {
+                // The centroid fan leaves a concave polygon (the centroid
+                // is not inside it): fall back to the boundary, which is
+                // never nearer than the polygon itself.
+                (0..poly.len())
+                    .map(|i| point_segment_distance(p, poly[i], poly[(i + 1) % poly.len()]))
+                    .fold(f64::INFINITY, f64::min)
+            }
+        }
     }
 }
 
-/// Triangles of a polygon for distance queries (fan from the centroid,
-/// which covers concave n-gons well enough for a bound).
+/// Triangles of a polygon for distance queries (fan from the centroid;
+/// [`polygon_distance`] checks that the fan stays inside the polygon).
 pub(crate) fn fan_tris(p: &[DVec3]) -> Vec<[DVec3; 3]> {
     if p.len() == 3 {
         return vec![[p[0], p[1], p[2]]];

@@ -1457,3 +1457,247 @@ fn merge_with_a_tiny_distance_does_not_overflow() {
         assert_eq!(r.mesh, m);
     }
 }
+
+// ------------------------------------------------------------- review cases
+
+/// A mesh from positions and polygons, each polygon with its own group and
+/// corner normal.
+fn polys_mesh(positions: Vec<DVec3>, polys: Vec<(Vec<u32>, u32, DVec3)>) -> EditMesh {
+    EditMesh {
+        pinned: vec![false; positions.len()],
+        positions,
+        polygons: polys
+            .into_iter()
+            .map(|(verts, g, n)| EditPolygon {
+                normals: vec![n; verts.len()],
+                verts,
+                group: newtopo_kernel::FaceId(g),
+                uvs: None,
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn same_corners(m: &EditMesh) -> Option<(usize, usize)> {
+    let sets: Vec<Vec<u32>> = m
+        .polygons
+        .iter()
+        .map(|p| {
+            let mut v = p.verts.clone();
+            v.sort_unstable();
+            v
+        })
+        .collect();
+    for i in 0..sets.len() {
+        for j in i + 1..sets.len() {
+            if sets[i] == sets[j] {
+                return Some((i, j));
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn a_merge_never_removes_a_pinned_vertex_indirectly() {
+    // Merging u into v removes both quads around d, which then has no
+    // polygon left; the four triangles stay a tetrahedron.
+    let (u, d, v, x, y, z) = (0u32, 1, 2, 3, 4, 5);
+    let p = |a: f64, b: f64, c: f64| DVec3::new(a, b, c);
+    let m = raw(
+        vec![
+            p(0.0, 0.0, 0.0),
+            p(0.5, 0.0, 0.5),
+            p(1.0, 0.0, 0.0),
+            p(0.5, -1.0, 0.0),
+            p(0.5, 1.0, 0.0),
+            p(0.5, 0.0, -1.0),
+        ],
+        vec![
+            vec![u, d, v, x],
+            vec![u, y, v, d],
+            vec![u, x, z],
+            vec![x, y, z],
+            vec![y, u, z],
+            vec![x, v, y],
+        ],
+    );
+    let mut w = work::Work::new(&m, 0);
+    let plan = w.plan_merge(u, v).expect("topologically fine unpinned");
+    assert_eq!(plan.dead, vec![d]);
+    w.pinned[d as usize] = true;
+    assert!(w.plan_merge(u, v).is_none(), "d is pinned");
+}
+
+#[test]
+fn a_move_is_checked_with_the_normals_it_will_carry() {
+    // Flat unit quad; three corners carry a normal tilted towards +x, the
+    // moving one +z. Sliding corner 0 4/7 of the way to corner 1 is fine
+    // with its old normal but not with the blended one it gets.
+    let t = DVec3::new(0.96, 0.0, 0.28).normalize();
+    let mut m = raw(
+        vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ],
+        vec![vec![0, 1, 2, 3]],
+    );
+    m.polygons[0].normals = vec![DVec3::Z, t, t, t];
+    let mut w = work::Work::new(&m, 0);
+    let to = DVec3::new(4.0 / 7.0, 0.0, 0.0);
+    assert!(w.move_ok(0, to), "fine with the old normal");
+    let prov = work::Prov::Mix(vec![(0, 3.0 / 7.0), (1, 4.0 / 7.0)]);
+    assert!(!w.try_move(0, to, prov), "past the limit with the new one");
+    assert_eq!(w.pos[0], DVec3::ZERO, "not moved");
+    assert_eq!(w.prov[0], work::Prov::Orig(0), "provenance unchanged");
+}
+
+/// A flat closed "pillow" of four corners: two triangles on top (+z) and
+/// `bottom` underneath (-z, another group).
+fn pillow(bottom: Vec<Vec<u32>>) -> EditMesh {
+    let p = |x: f64, y: f64, z: f64| DVec3::new(x, y, z);
+    let mut polys = vec![(vec![0, 1, 2], 0, DVec3::Z), (vec![0, 2, 3], 0, DVec3::Z)];
+    polys.extend(bottom.into_iter().map(|b| (b, 1, -DVec3::Z)));
+    polys_mesh(
+        vec![
+            p(0.0, 0.0, 0.01),
+            p(1.0, 0.0, 0.0),
+            p(1.0, 1.0, 0.01),
+            p(0.0, 1.0, 0.0),
+        ],
+        polys,
+    )
+}
+
+#[test]
+fn triangle_pairing_never_makes_a_duplicate_quad() {
+    // A flat tetrahedron: top pair split along 0-2, bottom pair along 1-3.
+    let m = pillow(vec![vec![1, 0, 3], vec![3, 2, 1]]);
+    assert!(m.issues().is_empty(), "{:?}", m.issues());
+    let mut w = work::Work::new(&m, 0);
+    let made = refill::pair_triangles(&mut w, 40.0);
+    assert_eq!(made, 1, "the second pair would duplicate the first quad");
+    let (out, _) = w.finish();
+    assert_eq!(same_corners(&out), None, "{:?}", out.polygons);
+}
+
+#[test]
+fn planar_never_joins_into_a_duplicate_polygon() {
+    // Two triangles on top, one quad underneath on the same corners.
+    let m = pillow(vec![vec![0, 3, 2, 1]]);
+    assert!(m.issues().is_empty(), "{:?}", m.issues());
+    let r = decimate(
+        &m,
+        &DecimateParams {
+            mode: DecimateMode::Planar,
+            ..Default::default()
+        },
+    );
+    if let Ok(r) = r {
+        assert_eq!(same_corners(&r.mesh), None, "{:?}", r.mesh.polygons);
+    }
+}
+
+#[test]
+fn unconnected_merge_never_collapses_an_edge_between_members() {
+    // Left sheet: a quad whose right border runs L(0)-T(1). Right sheet:
+    // triangle [R1, C, R2] and quad [R2, C, D, T'], with R1 and R2 both
+    // within the merge distance of L and T' of T.
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let (l, t, a, b) = (0u32, 1, 2, 3);
+    let (r1, r2, c, d, t2) = (4u32, 5, 6, 7, 8);
+    let m = raw(
+        vec![
+            p(0.0, 0.0),
+            p(0.0, 1.0),
+            p(-1.0, 0.0),
+            p(-1.0, 1.0),
+            p(0.003, -0.006),
+            p(0.006, 0.006),
+            p(0.3, 0.0),
+            p(1.0, 1.0),
+            p(0.001, 1.0),
+        ],
+        vec![vec![a, l, t, b], vec![r1, c, r2], vec![r2, c, d, t2]],
+    );
+    assert!(m.issues().is_empty(), "{:?}", m.issues());
+    let params = MergeParams {
+        distance: 0.01,
+        mode: MergeMode::Unconnected,
+        ..Default::default()
+    };
+    if let Ok(r) = merge_by_distance(&m, &VertexScope::All, &params) {
+        assert_eq!(
+            r.mesh.polygons.len(),
+            3,
+            "no polygon collapses: {:?}",
+            r.mesh.polygons
+        );
+    }
+}
+
+#[test]
+fn resample_refuses_a_self_intersecting_ngon() {
+    // A simple concave pentagon (counter-clockwise). Evenly respacing the
+    // run (8,4)-(0,4)-(0,0) moves (0,4) to (2,4), and the new edge to (0,0)
+    // crosses the edge (1,3)-(4,1).
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let m = raw(
+        vec![
+            p(4.0, 1.0),
+            p(1.0, 3.0),
+            p(8.0, 4.0),
+            p(0.0, 4.0),
+            p(0.0, 0.0),
+        ],
+        vec![vec![0, 1, 2, 3, 4]],
+    );
+    assert!(m.issues().is_empty(), "{:?}", m.issues());
+    let r = resample(
+        &m,
+        &Selection::Edges(vec![[2, 3], [3, 4]]),
+        &ResampleParams {
+            corner_angle_deg: 180.0,
+            fill_ngons: false,
+            ..Default::default()
+        },
+    );
+    match r {
+        Err(_) => {}
+        Ok(r) => assert_eq!(
+            r.mesh.positions[3],
+            p(0.0, 4.0),
+            "the run is left as it was"
+        ),
+    }
+}
+
+#[test]
+fn deviation_to_a_concave_ngon_is_never_underestimated() {
+    // A U: its vertex centroid (1.5, 1.75) lies in the notch, 0.5 from the
+    // polygon.
+    let p = |x: f64, y: f64| DVec3::new(x, y, 0.0);
+    let u = [
+        p(0.0, 0.0),
+        p(3.0, 0.0),
+        p(3.0, 3.0),
+        p(2.0, 3.0),
+        p(2.0, 1.0),
+        p(1.0, 1.0),
+        p(1.0, 3.0),
+        p(0.0, 3.0),
+    ];
+    let d = work::polygon_distance(p(1.5, 1.75), &u);
+    assert!(d >= 0.5 - 1e-12, "{d}");
+    // Inside a convex n-gon the distance is still exact.
+    let hex: Vec<DVec3> = (0..6)
+        .map(|k| {
+            let a = k as f64 * std::f64::consts::TAU / 6.0;
+            p(a.cos(), a.sin())
+        })
+        .collect();
+    assert!(work::polygon_distance(DVec3::new(0.1, 0.2, 0.3), &hex) - 0.3 < 1e-12);
+}

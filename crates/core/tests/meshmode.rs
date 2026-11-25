@@ -154,6 +154,76 @@ fn replacing_a_body_with_mesh_edits_is_refused_until_discarded() {
     newtopo_core::Scene::load(Arc::new(MockKernel::new()), &p).unwrap();
 }
 
+/// A rule can name patches of two bodies (the document allows it):
+/// replacing one of them must not rewrite that rule while the other has
+/// mesh edits, because that changes the other's (locked) CAD stage.
+#[test]
+fn replacing_a_body_never_rewrites_a_rule_of_a_mesh_edited_body() {
+    let attrs = |name: &str| newtopo_kernel::BodyAttributes {
+        name: name.into(),
+        transform: glam::DMat4::IDENTITY,
+        ..Default::default()
+    };
+    let cyl = || MockBody::cylinder(2.0, 5.0);
+    let mut s = newtopo_core::Scene::new(Arc::new(MockKernel::new()));
+    let a = s
+        .add_body(&cyl().to_brep_bytes(), attrs("a"), Default::default())
+        .unwrap();
+    let moved = glam::DAffine3::from_translation(glam::DVec3::new(10.0, 0.0, 0.0));
+    let b = s
+        .add_body(
+            &cyl().transformed(moved).to_brep_bytes(),
+            attrs("b"),
+            Default::default(),
+        )
+        .unwrap();
+    s.apply(Op::Connect {
+        patches: PatchSel {
+            body: Some(a),
+            faces: vec![0],
+            ..Default::default()
+        },
+        a: 6,
+        b: 0,
+        start_on_seam: false,
+    })
+    .unwrap();
+    // Let the Connect span both bodies: add b's copy of the patch.
+    let dir = tempfile::tempdir().unwrap();
+    let (p, q) = (dir.path().join("one.ntopo"), dir.path().join("two.ntopo"));
+    s.save(&p).unwrap();
+    rewrite(&p, &q, |name, bytes| {
+        if name != "scene.json" {
+            return Some(bytes);
+        }
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let rule = v["rules"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|r| r["rule"].get("Connect").is_some())
+            .unwrap();
+        let list = rule["rule"]["Connect"]["patches"].as_array_mut().unwrap();
+        let mut other = list[0].clone();
+        other["body"] = serde_json::json!(b.0);
+        list.push(other);
+        Some(serde_json::to_vec(&v).unwrap())
+    });
+    let mut s = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &q).unwrap();
+    let m = s.editable_mesh(b).unwrap();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    let before = s.doc().clone();
+    let e = s
+        .replace_body_with_report(a, &cyl().to_brep_bytes(), attrs("a v2"), Default::default())
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("\"b\" has mesh edits"), "{e:#}");
+    assert_eq!(*s.doc(), before, "nothing changed");
+    // Without b's mesh edits the replacement goes through.
+    s.discard_mesh_edits(&[b]).unwrap();
+    s.replace_body_with_report(a, &cyl().to_brep_bytes(), attrs("a v2"), Default::default())
+        .unwrap();
+}
+
 #[test]
 fn amend_replaces_the_last_edit_only_while_nothing_else_changed() {
     let (mut s, b) = gridded_box();
