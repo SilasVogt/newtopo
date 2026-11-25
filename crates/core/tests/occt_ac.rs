@@ -598,3 +598,51 @@ fn occt_torus_slices_are_stable() {
     ];
     assert_eq!(got, expected);
 }
+
+fn unnamed_parts(b: &mut newtopo_testmodels::Builder) -> anyhow::Result<newtopo_testmodels::Nodes> {
+    use glam::{DMat4, DVec3};
+    use newtopo_testmodels::node;
+    let single = b.boxed(DVec3::ZERO, DVec3::splat(10.0))? as i32;
+    let a = b.boxed(DVec3::new(30.0, 0.0, 0.0), DVec3::splat(10.0))?;
+    let c = b.boxed(DVec3::new(60.0, 0.0, 0.0), DVec3::splat(10.0))?;
+    let pair = b.fuse(a, &[c])? as i32;
+    Ok(vec![
+        node("Rig", -1, -1, "", None, DMat4::IDENTITY),
+        // What XCAF leaves on an instance the file does not name.
+        node("=>[0:1:1:2]", 0, single, "", None, DMat4::IDENTITY),
+        // Two separate solids in one unnamed shape.
+        node(
+            "",
+            0,
+            pair,
+            "",
+            None,
+            DMat4::from_translation(DVec3::Y * 30.0),
+        ),
+    ])
+}
+
+#[test]
+fn unnamed_instances_get_plain_body_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unnamed.step");
+    let model = newtopo_testmodels::RefModel {
+        name: "unnamed",
+        build: unnamed_parts,
+    };
+    newtopo_testmodels::write_model(&model, &path).unwrap();
+    let k = OcctKernel::new();
+    let file = k.import_file(&path, CadFormat::Step, 0.001).unwrap();
+    let names: Vec<String> = file.bodies.iter().map(|b| b.attrs.name.clone()).collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert_eq!(names[0], "Body 1", "the placeholder is not a name");
+    for n in &names {
+        // Split parts of a shape without a usable name must not show up
+        // as a bare ".1" / ".2", and the placeholder never leaks.
+        assert!(!n.starts_with('.') && !n.contains("=>["), "{names:?}");
+    }
+    let mut unique = names.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 3, "{names:?}");
+}

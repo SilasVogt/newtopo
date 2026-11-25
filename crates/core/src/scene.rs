@@ -1054,13 +1054,17 @@ mod poison_tests {
     #[test]
     fn a_panicked_evaluation_does_not_break_the_caches() {
         let scene = Scene::new(Arc::new(newtopo_kernel::mock::MockKernel::default()));
+        // A result that may be half written when the evaluation dies.
+        scene.caches.lock().unwrap().entry(BodyId(1)).or_default();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _g = scene.caches.lock().unwrap();
             panic!("evaluation failed");
         }));
         assert!(r.is_err());
         assert!(scene.caches.is_poisoned());
-        assert!(scene.caches_lock().is_empty());
+        assert!(scene.caches_lock().is_empty(), "the cache is dropped");
         assert!(!scene.caches.is_poisoned());
+        scene.caches_lock().entry(BodyId(1)).or_default();
+        assert_eq!(scene.caches_lock().len(), 1, "and usable again");
     }
 }
