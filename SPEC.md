@@ -665,7 +665,9 @@ feature.
 - **Log**: `logs/newtopo.log` in the data directory (Linux
   `~/.local/share/newtopo/`, Windows `%APPDATA%\newtopo\data\`, macOS
   `~/Library/Application Support/newtopo/`), moved to `newtopo.log.1` at
-  1 MiB (one old file kept), plus the last 2,000 lines in memory. It
+  1 MiB (one old file kept), plus the last 2,000 lines in memory. If the
+  file cannot be rotated, nothing more is written to it (the lines in
+  memory carry on), so it never grows past that bound. It
   records app start (version, commit, platform, graphics adapter), imports,
   every applied, refused or failed op (name and outcome, no geometry),
   undo/redo, preview apply/discard, open, save, autosave, export and

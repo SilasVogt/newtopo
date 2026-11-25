@@ -65,6 +65,9 @@ struct LogFile {
     path: PathBuf,
     file: std::fs::File,
     size: u64,
+    /// A rotation failed: nothing more is written, so the file stays
+    /// bounded. The in-memory ring carries on.
+    stopped: bool,
 }
 
 impl LogFile {
@@ -72,8 +75,8 @@ impl LogFile {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).ok()?;
         }
-        if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE) {
-            rotate(&path);
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE) && !rotate(&path) {
+            return None;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -81,12 +84,23 @@ impl LogFile {
             .open(&path)
             .ok()?;
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Some(LogFile { path, file, size })
+        Some(LogFile {
+            path,
+            file,
+            size,
+            stopped: false,
+        })
     }
 
     fn write_line(&mut self, line: &str) {
+        if self.stopped {
+            return;
+        }
         if self.size > MAX_FILE {
-            rotate(&self.path);
+            if !rotate(&self.path) {
+                self.stopped = true;
+                return;
+            }
             match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -105,10 +119,13 @@ impl LogFile {
     }
 }
 
-fn rotate(path: &Path) {
+/// Moves the log aside. `false` when the full file is still in place
+/// (the folder refuses the rename, or something else sits at the old
+/// log's name): writing on would grow it without limit.
+fn rotate(path: &Path) -> bool {
     let old = path.with_extension("log.1");
     let _ = std::fs::remove_file(&old);
-    let _ = std::fs::rename(path, &old);
+    std::fs::rename(path, &old).is_ok()
 }
 
 /// One log line: `2026-11-25 10:04:05Z INFO  newtopo::jobs: message`,
@@ -242,6 +259,25 @@ mod tests {
         assert!(!wanted(log::Level::Info, "wgpu_core::instance"));
         assert!(wanted(log::Level::Warn, "wgpu_core::instance"));
         assert!(!wanted(log::Level::Debug, "newtopo::app"));
+    }
+
+    #[test]
+    fn a_failed_rotation_stops_the_file_instead_of_growing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = log_file(dir.path());
+        // Something that cannot be replaced sits where the old log goes.
+        let old = path.with_extension("log.1");
+        std::fs::create_dir_all(old.join("keep")).unwrap();
+        let mut f = LogFile::open(path.clone()).unwrap();
+        let line = "x".repeat(1000);
+        for _ in 0..5000 {
+            f.write_line(&line);
+        }
+        let cur = std::fs::metadata(&path).unwrap().len();
+        assert!(cur <= MAX_FILE + 2000, "current file {cur}");
+        assert!(f.stopped);
+        // An oversized file that cannot be rotated is not opened at all.
+        assert!(LogFile::open(path).is_none());
     }
 
     #[test]
