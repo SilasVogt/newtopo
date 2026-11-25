@@ -213,7 +213,9 @@ impl Scene {
         }
         let mut d = (*self.doc).clone();
         d.camera = camera;
-        self.doc = Arc::new(d);
+        let old = std::mem::replace(&mut self.doc, Arc::new(d));
+        // The camera is not an edit: the last mesh edit stays adjustable.
+        self.carry_amend_mark(&old);
     }
 
     /// Faces congruent to `face` in the same body (its link set, including

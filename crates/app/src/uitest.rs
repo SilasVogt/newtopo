@@ -1330,3 +1330,173 @@ fn merge_by_distance_redo_follows_selected_only() {
     h.app.st.mesh_params_changed();
     assert_eq!(used(&h), n0 - 2);
 }
+
+fn mesh_of(h: &Harness, b: BodyId) -> Option<std::sync::Arc<newtopo_core::meshedit::EditMesh>> {
+    h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b)
+}
+
+/// Save and autosave store the camera; that is not an edit, so a value
+/// change afterwards still redoes the last edit as the same single step.
+#[test]
+fn saving_keeps_the_last_mesh_edit_adjustable() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    let edited = mesh_of(&h, b).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    h.app.st.doc.path = Some(dir.path().join("cam.ntopo"));
+    h.app.st.doc.set_camera(newtopo_core::doc::Camera {
+        yaw: 2.5,
+        distance: 7.0,
+        ..Default::default()
+    });
+    h.app.st.save(false);
+    assert!(!h.app.st.doc.is_dirty(), "saved");
+    h.app.st.mm.params.relax_iterations = 25;
+    h.app.st.mesh_params_changed();
+    let more = mesh_of(&h, b).unwrap();
+    assert_ne!(*more, *edited, "the new value took effect");
+    h.app.st.run(Cmd::Undo);
+    assert!(!has_edits(&h, b), "still one undo step");
+}
+
+/// Edge Slide at factor 0 changes nothing; raising the factor then makes
+/// the slide's own step instead of rewriting the edit before it.
+#[test]
+fn a_value_change_after_an_unchanged_edit_makes_its_own_step() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    let relaxed = mesh_of(&h, b).unwrap();
+    h.app.st.mm.params.eslide_factor = 0.0;
+    h.app.st.mm.tool = crate::meshmode::MeshTool::EdgeSlide;
+    h.app.st.mesh_params_changed();
+    assert_eq!(
+        *mesh_of(&h, b).unwrap(),
+        *relaxed,
+        "factor 0 changes nothing"
+    );
+    h.app.st.mm.params.eslide_factor = 0.3;
+    h.app.st.mesh_params_changed();
+    let slid = mesh_of(&h, b).unwrap();
+    assert_ne!(*slid, *relaxed, "the slide took effect");
+    h.app.st.run(Cmd::Undo);
+    assert_eq!(
+        *mesh_of(&h, b).unwrap(),
+        *relaxed,
+        "one undo: the relax is back"
+    );
+    h.app.st.run(Cmd::Undo);
+    assert!(!has_edits(&h, b));
+}
+
+/// Merge by Distance with nothing in range, then a larger distance: its
+/// own step, after the edit before it.
+#[test]
+fn merge_by_distance_with_nothing_to_merge_keeps_the_edit_before_it() {
+    use crate::selection::VertSel;
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    let m = (*h.app.st.mm.meshes[&b]).clone();
+    let flagged: std::collections::BTreeSet<u32> =
+        m.flagged.iter().flat_map(|e| [e.a, e.b]).collect();
+    let free = |v: u32| !m.pinned[v as usize] && !flagged.contains(&v);
+    let (a, c) = m
+        .edges()
+        .into_iter()
+        .find(|&(a, c)| free(a) && free(c))
+        .unwrap();
+    let mut squeezed = m.clone();
+    let (pa, pc) = (m.positions[a as usize], m.positions[c as usize]);
+    squeezed.positions[a as usize] = pc + (pa - pc) * 0.001;
+    h.app
+        .st
+        .doc
+        .set_meshes(vec![(b, Some(squeezed))], false)
+        .unwrap();
+    h.app.st.invalidate_view();
+    h.frames(1);
+    let first = mesh_of(&h, b).unwrap();
+    h.app.st.mode = Mode::Vertex;
+    h.app.st.sel = Default::default();
+    h.app.st.sel.verts.insert(VertSel::Index(b, a));
+    h.app.st.mm.params.merge_selected = false;
+    h.app.st.mm.params.merge_pct = 0.0001;
+    h.app.st.run(Cmd::MeshMergeByDistance);
+    assert_eq!(*mesh_of(&h, b).unwrap(), *first, "nothing merged");
+    h.app.st.mm.params.merge_pct = 0.05;
+    h.app.st.mesh_params_changed();
+    let merged = mesh_of(&h, b).unwrap();
+    assert!(merged.positions.len() < first.positions.len(), "merged now");
+    h.app.st.run(Cmd::Undo);
+    assert_eq!(*mesh_of(&h, b).unwrap(), *first, "one undo: the first edit");
+    h.app.st.run(Cmd::Undo);
+    assert!(!has_edits(&h, b));
+}
+
+/// A tool that changes nothing on a body without mesh edits stores
+/// nothing: no lock, no undo step.
+#[test]
+fn an_unchanged_first_edit_stores_nothing() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    let before = h.app.st.doc.scene.as_ref().unwrap().doc().clone();
+    let rev = h.app.st.doc.revision;
+    h.app.st.mm.params.merge_pct = 0.0001;
+    h.app.st.mm.params.merge_selected = false;
+    select_loop(&mut h);
+    h.app.st.run(Cmd::MeshMergeByDistance);
+    assert!(!has_edits(&h, b), "nothing merged, nothing stored");
+    assert_eq!(*h.app.st.doc.scene.as_ref().unwrap().doc(), before);
+    assert_eq!(h.app.st.doc.revision, rev, "no change, no undo step");
+    assert!(!h.app.st.doc.is_dirty());
+}
+
+/// Undo during a slide drag: the drag ends; moving on doesn't edit from
+/// the stale starting meshes (which would bring back what was undone and
+/// drop the redo history).
+#[test]
+fn undo_during_a_slide_drag_cancels_it() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    let relaxed = mesh_of(&h, b).unwrap();
+    h.app
+        .st
+        .mesh_pick_tool(crate::meshmode::MeshTool::EdgeSlide);
+    let from = h.app.st.view.rect.center();
+    h.frame(vec![Event::PointerMoved(from)]);
+    h.frame(vec![Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    }]);
+    for k in 1..=6 {
+        h.frame(vec![Event::PointerMoved(from + vec2(0.0, 8.0 * k as f32))]);
+    }
+    assert!(h.app.st.mm.slide.is_some(), "dragging");
+    let slid = mesh_of(&h, b).unwrap();
+    assert_ne!(*slid, *relaxed, "the drag slid the loop");
+    // Undo twice while the button is held: the slide, then the relax.
+    h.app.st.run(Cmd::Undo);
+    h.app.st.run(Cmd::Undo);
+    assert!(!has_edits(&h, b));
+    for k in 1..=4 {
+        h.frame(vec![Event::PointerMoved(
+            from + vec2(0.0, 48.0 + 10.0 * k as f32),
+        )]);
+    }
+    assert!(h.app.st.mm.slide.is_none(), "the drag ended");
+    assert!(!has_edits(&h, b), "nothing was brought back");
+    assert!(h.app.st.doc.can_redo(), "the redo history is kept");
+    h.app.st.run(Cmd::Redo);
+    h.app.st.run(Cmd::Redo);
+    assert_eq!(*mesh_of(&h, b).unwrap(), *slid);
+}

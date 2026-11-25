@@ -1099,6 +1099,8 @@ never back to rules; while a body has mesh edits its rules are locked.
   body's rules change. Entering changes nothing in the document: a body
   whose output is never edited stays a normal CAD-stage body.
 - **The first mesh edit** of a body stores its edited mesh in the document.
+  An edit whose result is the unchanged mesh (nothing to merge, already
+  evenly spaced, factor 0) stores nothing: no lock and no undo step.
   From then on the body **has mesh edits**: its CAD stage is locked, and
   every op that would change its rules, split lines, edits or phase
   overrides is refused with *"‹name› has mesh edits, so its CAD lines are
@@ -1127,11 +1129,15 @@ never back to rules; while a body has mesh edits its rules are locked.
   gate (§4.6 step 8) should make the second case unreachable.
 - **Storage**: the edited mesh is saved in the `.ntopo`: `scene.json` lists
   the edited bodies (`meshes`), each mesh is its own entry
-  `mesh/<body>.json`. This is **format 2**; format 1 scenes load unchanged
-  (they have no mesh edits) and builds that read only format 1 refuse
-  format 2 files instead of silently dropping their mesh edits. A missing
-  or invalid mesh entry (structural problems of §9.5.2, a polygon on a CAD
-  face the body doesn't have) refuses the whole file.
+  `mesh/<body>.json`. This is **format 2**, written only when the scene has
+  mesh edits; a scene without them is saved as format 1, so builds that
+  read only format 1 (v0.1.0) still open it. Format 1 scenes load
+  unchanged (they have no mesh edits) and builds that read only format 1
+  refuse format 2 files instead of silently dropping their mesh edits. A
+  missing or invalid mesh entry (structural problems of §9.5.2, a polygon
+  on a CAD face the body doesn't have, a body the scene doesn't have)
+  refuses the whole file, and mesh edits are only ever stored for bodies
+  of the document.
 - **Output**: statistics, export (§8.3), the Blender bridge (§9.3),
   validation (`Check output mesh`, `newtopo-cli validate`) and headless
   render use the edited mesh for bodies that have one, the evaluated mesh
@@ -1512,12 +1518,17 @@ polygons use the second, which stays where it is. Vertices that share a
 polygon merge under the §9.5.2 rules (feature-curve vertices only along
 their curve into a curve neighbour, corners and pinned vertices never; the
 result must stay valid). Vertices that share no polygon are welded
-(Merge by Distance's weld rules, §9.5.7), for example to zip up a slit; a
-weld that would make a non-manifold vertex is refused. **AC**: a free
+(Merge by Distance's weld rules, §9.5.7), for example to zip up a slit:
+the first vertex moves onto the second, which survives whatever the role
+order of §9.5.7 would pick. Moving it reshapes its polygons, so they are
+checked against the input like any move (§9.5.2 and the Vertex Slide
+validity rules); a weld that would fold, flip, flatten or make concave
+one of them, or make a non-manifold vertex, is refused. **AC**: a free
 vertex merges into an edge neighbour (one vertex fewer, the target
 unmoved); the flat-grid diagonal merge, a border vertex into the interior
 and a pinned corner are refused with their reasons; a slit zips one
-segment.
+segment, keeping the picked target; a weld whose moved vertex would make
+its quads concave is refused.
 
 #### 9.5.14 Mesh mode in the app
 - **Switch**: a `CAD | Mesh` segmented control in the top bar (`M`). Mesh
@@ -1543,8 +1554,12 @@ segment.
   and Edge Slide follow a drag in the viewport; Target Merge takes two
   clicks. **Live values**: changing a value in the tool panel redoes the
   last edit from the mesh it started on, while that edit is still the
-  latest change (the undo step is replaced, so it stays one step). "Apply
-  … again" runs the tool once more as a new step.
+  latest change (the undo step is replaced, so it stays one step). Storing
+  the camera (save, autosave) is not a change. An edit that changed
+  nothing has no step of its own, so its redo with a new value makes one
+  (it never rewrites the step before it). "Apply … again" runs the tool
+  once more as a new step. A slide drag ends when undo or redo changes
+  the document while it runs; moving on does nothing until a new drag.
 - **Tool panel** (sections as the mockup): Select (Loop, Shortest Path),
   Move (Vertex Slide, Edge Slide, Relax, Space), Merge and clean (Target
   Merge, Merge by Distance, Loop Cleanup, Resample, Decimate), then the
@@ -1580,7 +1595,7 @@ normals: height fields, cubes, cylinders with UVs, UV spheres, tori):
   distance changes nothing; Target Merge: exactly one vertex fewer; Relax
   and Edge Slide: the same polygons).
 - **Scene and UI**: the edited mesh round-trips through save/load, a
-  format 1 scene loads, a missing or broken mesh entry is refused; the CAD
+  format 1 scene loads, a scene without mesh edits is written as format 1, a missing or broken mesh entry is refused; the CAD
   lock refuses CAD ops until Discard; undo and redo work across mode
   switches; the entry warning and its tick box; Alt-click loops, Ctrl-click
   shortest paths; export writes the edited positions.

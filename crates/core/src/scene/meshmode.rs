@@ -66,22 +66,36 @@ impl Scene {
 
     /// Store edited meshes (`Some`) or drop mesh edits (`None`) as one undo
     /// step. Every new mesh must be valid ([`EditMesh::issues`]) and belong
-    /// to its body. Afterwards [`Scene::amend_meshes`] may replace this
-    /// step while nothing else has changed (live tool parameters).
-    pub fn set_meshes(&mut self, changes: Vec<(BodyId, Option<EditMesh>)>) -> Result<(), Refusal> {
-        let doc = self.doc_with_meshes(changes)?;
+    /// to a body of the document. Afterwards [`Scene::amend_meshes`] may
+    /// replace this step while nothing else has changed (live tool
+    /// parameters).
+    ///
+    /// Returns whether a step was made. When nothing changes (a tool that
+    /// found nothing to do, or a body without mesh edits getting its baked
+    /// mesh back) nothing is stored, the body is not locked and there is no
+    /// undo step; the previous step can then no longer be amended, because
+    /// the latest edit is not the one that made it.
+    pub fn set_meshes(
+        &mut self,
+        changes: Vec<(BodyId, Option<EditMesh>)>,
+    ) -> Result<bool, Refusal> {
+        let base = self.doc.clone();
+        let doc = self.doc_with_meshes(changes, &base)?;
         if doc == *self.doc {
-            return Ok(());
+            self.amend_mark = None;
+            return Ok(false);
         }
         self.coalesce = None;
         self.commit(doc);
         self.amend_mark = Some(self.doc.clone());
-        Ok(())
+        Ok(true)
     }
 
     /// Replace the last [`Scene::set_meshes`] step without a new undo step
     /// (a tool re-run with new parameters from the same starting mesh).
-    /// Refused once anything else changed the document since.
+    /// Refused once anything else changed the document since. A body that
+    /// had no mesh edits before the step and gets its baked mesh back is
+    /// left without mesh edits.
     pub fn amend_meshes(
         &mut self,
         changes: Vec<(BodyId, Option<EditMesh>)>,
@@ -91,7 +105,12 @@ impl Scene {
                 "The last mesh edit can't be adjusted any more: something changed since",
             ));
         }
-        let doc = self.doc_with_meshes(changes)?;
+        let before = self
+            .undo
+            .last()
+            .cloned()
+            .unwrap_or_else(|| self.doc.clone());
+        let doc = self.doc_with_meshes(changes, &before)?;
         self.doc = Arc::new(doc);
         self.redo.clear();
         self.amend_mark = Some(self.doc.clone());
@@ -99,7 +118,8 @@ impl Scene {
     }
 
     /// The document is still exactly what the last [`Scene::set_meshes`]
-    /// or [`Scene::amend_meshes`] left (so the step can be amended).
+    /// or [`Scene::amend_meshes`] left (so the step can be amended). The
+    /// camera is not an edit: [`Scene::set_camera`] keeps this.
     pub fn can_amend_meshes(&self) -> bool {
         self.preview.is_none()
             && !self.undo.is_empty()
@@ -107,6 +127,18 @@ impl Scene {
                 .amend_mark
                 .as_ref()
                 .is_some_and(|d| Arc::ptr_eq(d, &self.doc))
+    }
+
+    /// After the document was replaced by `set_camera` (not an edit): the
+    /// last mesh step stays amendable if it was before.
+    pub(crate) fn carry_amend_mark(&mut self, old: &Arc<Document>) {
+        if self
+            .amend_mark
+            .as_ref()
+            .is_some_and(|d| Arc::ptr_eq(d, old))
+        {
+            self.amend_mark = Some(self.doc.clone());
+        }
     }
 
     /// Drop the mesh edits of these bodies (one undo step): they return to
@@ -125,16 +157,24 @@ impl Scene {
         Ok(n)
     }
 
+    /// The current document with `changes` applied. `before` is the
+    /// document before the step (the current one for a new step, the one
+    /// before the amended step otherwise): a body without mesh edits there
+    /// whose new mesh equals its bake stores nothing.
     fn doc_with_meshes(
         &self,
         changes: Vec<(BodyId, Option<EditMesh>)>,
+        before: &Document,
     ) -> Result<Document, Refusal> {
         if self.preview.is_some() {
             return Err(Refusal::new("Apply or discard the preview first"));
         }
         let mut doc = (*self.doc).clone();
         for (body, mesh) in changes {
-            let Some(c) = self.bodies.get(&body) else {
+            // Only bodies of the document (the loader refuses mesh entries
+            // for any other body); the kernel cache may still hold a body
+            // whose import was undone.
+            let (Some(c), Some(_)) = (self.bodies.get(&body), self.doc.body(body)) else {
                 return Err(Refusal::new(format!("There is no object {}", body.0)));
             };
             match mesh {
@@ -143,6 +183,10 @@ impl Scene {
                 }
                 Some(mut m) => {
                     m.body = body;
+                    if !before.meshes.contains_key(&body) && self.is_bake(body, &m) {
+                        doc.meshes.remove(&body);
+                        continue;
+                    }
                     check_mesh(&m, c.ctx.topo.faces.len())
                         .map_err(|e| Refusal::new(format!("Can't keep that mesh: {e}")))?;
                     doc.meshes.insert(body, MeshRef::new(m));
@@ -150,6 +194,17 @@ impl Scene {
             }
         }
         Ok(doc)
+    }
+
+    /// `m` is exactly the body's current bake (nothing was edited).
+    fn is_bake(&self, body: BodyId, m: &EditMesh) -> bool {
+        self.baked.get(&body).is_some_and(|(f, b)| {
+            *f == self.fingerprint(body)
+                && b.positions == m.positions
+                && b.pinned == m.pinned
+                && b.polygons == m.polygons
+                && b.flagged == m.flagged
+        })
     }
 
     /// The CAD lock (SPEC §9.5): an op may not change the rules, split

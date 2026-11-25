@@ -826,7 +826,21 @@ impl Scene {
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         zip.start_file("scene.json", opts)?;
-        zip.write_all(serde_json::to_string_pretty(&*self.doc)?.as_bytes())?;
+        // Format 1 while there are no mesh edits, so such files stay
+        // readable by builds that read only format 1 (v0.1.0); format 2
+        // only when the file holds mesh edits.
+        let file_format = if self.doc.meshes.is_empty() {
+            1
+        } else {
+            crate::doc::FORMAT_VERSION
+        };
+        if self.doc.format_version == file_format {
+            zip.write_all(serde_json::to_string_pretty(&*self.doc)?.as_bytes())?;
+        } else {
+            let mut d = (*self.doc).clone();
+            d.format_version = file_format;
+            zip.write_all(serde_json::to_string_pretty(&d)?.as_bytes())?;
+        }
         let mut shas = String::new();
         for b in &self.doc.bodies {
             let c = self.bodies.get(&b.id).context("body without kernel data")?;
@@ -1070,7 +1084,8 @@ fn read_entry(
     Ok(out)
 }
 
-/// Older formats → current (SPEC §8.2). Format 2 is current.
+/// Older formats → current (SPEC §8.2). Format 2 is current; saving
+/// writes format 1 for scenes without mesh edits (see `write_zip`).
 ///
 /// - 1 → 2: format 2 adds mesh-mode edits (`meshes` in `scene.json`, one
 ///   `mesh/<body>.json` entry each). A format 1 scene has none, so it only

@@ -106,6 +106,18 @@ pub fn merge_by_distance(
     scope: &VertexScope,
     p: &MergeParams,
 ) -> Result<EditOutcome, Refusal> {
+    merge_preferring(mesh, scope, p, None)
+}
+
+/// [`merge_by_distance`] where `prefer`, if given, is visited first and so
+/// survives its cluster whatever its role (Target Merge's weld: the target
+/// stays).
+pub(crate) fn merge_preferring(
+    mesh: &EditMesh,
+    scope: &VertexScope,
+    p: &MergeParams,
+    prefer: Option<u32>,
+) -> Result<EditOutcome, Refusal> {
     check_input(mesh)?;
     if !(p.distance > 0.0 && p.distance.is_finite()) {
         return Err(Refusal::new("The merge distance must be above zero"));
@@ -139,7 +151,7 @@ pub fn merge_by_distance(
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped_total = 0;
     for _ in 0..MAX_ROUNDS {
-        let clusters = clusters(&w, &in_scope, with_unselected, p);
+        let clusters = clusters(&w, &in_scope, with_unselected, p, prefer);
         if clusters.is_empty() {
             break;
         }
@@ -268,7 +280,13 @@ fn may_join(w: &Work, u: u32, s: u32, mode: MergeMode) -> bool {
     }
 }
 
-fn clusters(w: &Work, in_scope: &[bool], with_unselected: bool, p: &MergeParams) -> Vec<Cluster> {
+fn clusters(
+    w: &Work,
+    in_scope: &[bool],
+    with_unselected: bool,
+    p: &MergeParams,
+    prefer: Option<u32>,
+) -> Vec<Cluster> {
     let d = p.distance;
     let nv = w.pos.len();
     let in_s = |x: u32| (x as usize) < in_scope.len() && in_scope[x as usize];
@@ -286,7 +304,7 @@ fn clusters(w: &Work, in_scope: &[bool], with_unselected: bool, p: &MergeParams)
         grid.entry(cell(w.pos[x as usize])).or_default().push(x);
     }
     let mut order = part.clone();
-    order.sort_by_key(|&x| (std::cmp::Reverse(rank(w, x)), x));
+    order.sort_by_key(|&x| (Some(x) != prefer, std::cmp::Reverse(rank(w, x)), x));
     let mut taken = vec![false; nv];
     let mut out = Vec::new();
     for s in order {

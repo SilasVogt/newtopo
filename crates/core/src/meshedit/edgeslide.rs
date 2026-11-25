@@ -16,7 +16,7 @@
 //! curve vertices only along their curve, corners never); vertices that
 //! share no polygon weld (open boundaries joined, Merge by Distance's rules).
 
-use super::merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_by_distance};
+use super::merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_preferring};
 use super::slide::{SlideEdge, SlidePlan};
 use super::smooth::check_limit;
 use super::work::{VClass, Work};
@@ -214,7 +214,7 @@ pub fn target_merge(
         .iter()
         .any(|&q| w.polys[q as usize].verts.contains(&to));
     if !shared {
-        return weld(mesh, from, to, p);
+        return weld(mesh, &w, from, to, p);
     }
     if !w.merge_allowed(from, to) {
         let why = match w.vclass(from) {
@@ -257,9 +257,12 @@ pub fn target_merge(
 }
 
 /// Target Merge of two vertices that share no polygon: put `from` on `to`
-/// and weld them (Merge by Distance, unconnected pairs only).
+/// and weld them (Merge by Distance, unconnected pairs only), with `to` as
+/// the survivor. Moving `from` reshapes its polygons, so they are checked
+/// against the input first, like any move (`w` is the input's work state).
 fn weld(
     mesh: &EditMesh,
+    w: &Work,
     from: u32,
     to: u32,
     p: &TargetMergeParams,
@@ -267,6 +270,11 @@ fn weld(
     if mesh.pinned[from as usize] {
         return Err(Refusal::new(format!(
             "Can't merge vertex {from}: it is pinned (a CAD corner) and stays"
+        )));
+    }
+    if !w.move_ok(from, mesh.positions[to as usize]) {
+        return Err(Refusal::new(format!(
+            "Can't weld them: a polygon around vertex {from} would fold, flip or flatten when it moves onto {to}"
         )));
     }
     let mut moved = mesh.clone();
@@ -279,9 +287,14 @@ fn weld(
         preserve: p.preserve,
         max_normal_change_deg: p.max_normal_change_deg,
     };
-    let mut out = merge_by_distance(&moved, &VertexScope::Vertices(vec![from, to]), &params)
-        .map_err(|r| Refusal::new(format!("Can't weld them: {}", r.reason)))?;
-    let merged = out.vertex_map[from as usize].is_none() || out.vertex_map[to as usize].is_none();
+    let mut out = merge_preferring(
+        &moved,
+        &VertexScope::Vertices(vec![from, to]),
+        &params,
+        Some(to),
+    )
+    .map_err(|r| Refusal::new(format!("Can't weld them: {}", r.reason)))?;
+    let merged = out.vertex_map[from as usize].is_none();
     if !merged {
         let why =
             out.report.skipped.first().cloned().unwrap_or_else(|| {
@@ -291,10 +304,6 @@ fn weld(
     }
     out.report.before = mesh.stats();
     out.report.message = format!("Welded vertex {from} onto {to}");
-    // Whichever of the two survived sits where `to` was.
-    out.selected_vertices = out.vertex_map[to as usize]
-        .or(out.vertex_map[from as usize])
-        .into_iter()
-        .collect();
+    out.selected_vertices = out.vertex_map[to as usize].into_iter().collect();
     Ok(out)
 }

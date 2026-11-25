@@ -173,6 +173,80 @@ fn amend_replaces_the_last_edit_only_while_nothing_else_changed() {
     assert!(s.amend_meshes(vec![(b, Some(twice))]).is_err());
 }
 
+/// The camera is not an edit: storing it (save, autosave) keeps the last
+/// mesh edit adjustable, and the amend stays one undo step.
+#[test]
+fn storing_the_camera_keeps_the_last_edit_amendable() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    let cam = newtopo_core::doc::Camera {
+        yaw: 1.2,
+        ..Default::default()
+    };
+    s.set_camera(cam);
+    assert!(s.can_amend_meshes());
+    let dir = tempfile::tempdir().unwrap();
+    s.save(&dir.path().join("c.ntopo")).unwrap();
+    assert!(s.can_amend_meshes(), "saving changes nothing either");
+    let twice = edited(&edited(&m));
+    s.amend_meshes(vec![(b, Some(twice.clone()))]).unwrap();
+    assert_eq!(*s.mesh_edit(b).unwrap(), twice);
+    assert_eq!(s.doc().camera, cam);
+    s.undo();
+    assert!(!s.has_mesh_edits(b), "still one step");
+}
+
+/// A mesh step that changes nothing makes no undo step, and the step
+/// before it can no longer be amended (the latest edit isn't its own).
+#[test]
+fn an_unchanged_result_is_no_step_and_ends_the_previous_amend() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    let e = edited(&m);
+    assert!(s.set_meshes(vec![(b, Some(e.clone()))]).unwrap());
+    assert!(s.can_amend_meshes());
+    assert!(!s.set_meshes(vec![(b, Some(e.clone()))]).unwrap());
+    assert!(!s.can_amend_meshes());
+    assert!(s.amend_meshes(vec![(b, Some(edited(&e)))]).is_err());
+    assert_eq!(*s.mesh_edit(b).unwrap(), e);
+}
+
+/// A body without mesh edits that gets its own bake back stores nothing:
+/// no lock, no undo step. Amending such a body back to its bake removes
+/// the stored mesh again.
+#[test]
+fn the_unchanged_bake_is_not_stored() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    let before = s.doc().clone();
+    assert!(!s.set_meshes(vec![(b, Some((*m).clone()))]).unwrap());
+    assert!(!s.has_mesh_edits(b), "not locked");
+    assert_eq!(*s.doc(), before);
+    assert!(s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap());
+    s.amend_meshes(vec![(b, Some((*m).clone()))]).unwrap();
+    assert!(!s.has_mesh_edits(b), "amended back to the bake: unlocked");
+    // A body that already has mesh edits keeps an equal mesh as an edit.
+    assert!(s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap());
+    s.set_meshes(vec![(b, Some((*m).clone()))]).unwrap();
+    assert!(s.has_mesh_edits(b));
+}
+
+/// Mesh edits only for bodies of the document: after undoing the import
+/// the kernel may still hold the body, but storing a mesh for it is
+/// refused (the loader would refuse the saved file).
+#[test]
+fn meshes_for_bodies_not_in_the_document_are_refused() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    while s.doc().body(b).is_some() {
+        assert!(s.undo());
+    }
+    let r = s.set_meshes(vec![(b, Some(edited(&m)))]);
+    assert!(r.unwrap_err().reason.contains("no object"));
+    assert!(s.mesh_edited_bodies().is_empty());
+}
+
 #[test]
 fn invalid_meshes_are_refused() {
     let (mut s, b) = gridded_box();
@@ -269,6 +343,22 @@ fn format_1_scenes_load_and_broken_mesh_entries_are_refused() {
         v["format_version"] = serde_json::json!(1);
         Some(serde_json::to_vec(&v).unwrap())
     });
+    // Without mesh edits the file is format 1 already, so v0.1.0 reads it.
+    let format_of = |p: &std::path::Path| -> serde_json::Value {
+        let mut z = zip::ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+        let mut json = String::new();
+        z.by_name("scene.json")
+            .unwrap()
+            .read_to_string(&mut json)
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("meshes").is_none());
+        v["format_version"].clone()
+    };
+    assert_eq!(format_of(&p), 1);
+    let s0 = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &p).unwrap();
+    assert_eq!(s0.doc().format_version, 2, "migrated in memory");
+    assert!(!s0.is_modified());
     let mut s1 = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &v1).unwrap();
     assert_eq!(s1.doc().format_version, 2, "migrated");
     assert!(s1.mesh_edited_bodies().is_empty());

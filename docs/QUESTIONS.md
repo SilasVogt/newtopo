@@ -25,8 +25,8 @@ live next to the code they shaped:
 
 ## Mesh mode (SPEC §9.5)
 
-Decisions taken while building the engine side of the mesh tools
-(`core/src/meshedit/`). The UI integration is still to do.
+Decisions taken while building the mesh tools (`core/src/meshedit/`) and
+their integration into the scene and the app (mesh mode, SPEC §9.5.14).
 
 | # | Question | Decision |
 | --- | --- | --- |
@@ -41,8 +41,8 @@ Decisions taken while building the engine side of the mesh tools
 | 20 | Resample with a count on several runs. | The count applies to each run separately. An open run counts both ends; a closed run counts its vertices. |
 | 21 | Resample of curved runs. | New positions lie on the old polyline (the true CAD curve is gone after bake), so repeated resampling of a curve slowly cuts its corners, like resampling any polyline. Straight runs are exactly idempotent. |
 | 22 | What does "all" select? | All feature runs (open boundaries, CAD/hard edges that are preserved, UV seams); not every edge loop of the mesh. On a mesh without features it is refused with a reason. |
-| 23 | Rules after Finish. | Locked, kept read-only in the scene so "Back to rules" can re-evaluate them (discarding mesh edits after a confirmation). Suggested storage for the baked mesh: `mesh/<body>.json` in the `.ntopo` with a format bump. Left for the integration. |
-| 24 | Export of a baked body. | `EditMesh` has everything export needs (positions, polygons, per-corner normals, hard flags, groups); the export path still takes `OutputMesh`. The integration needs a small adapter (or a `VertexKey` variant for baked vertices). |
+| 23 | Rules after the first mesh edit. | Locked (the CAD lock, §9.5.1) and kept untouched in the scene. "Discard mesh edits" returns the body to its CAD-driven mesh with no prompt; it is one undo step, so Undo brings the edits back. The edited mesh is stored as `mesh/<body>.json` in the `.ntopo` (format 2, written only when the scene has mesh edits; format 1 otherwise, so v0.1.0 still opens it). |
+| 24 | Export of an edited body. | `EditMesh::to_output` converts the edited mesh to an `OutputMesh`, so statistics, export, the bridge, validation and render take the edited mesh through the existing path (`Scene::effective_output_of`). |
 | 25 | Section numbers for the two added tools. | Vertex Slide §9.5.6 and Merge by Distance §9.5.7; Testing moved from §9.5.6 to §9.5.8. Nothing outside §9.5 was renumbered (keeps the `fix/user-testing` merge easy). |
 | 26 | Vertex Slide: what does factor 1 do? It would make a zero-length edge. | The vertex merges into the neighbour it reached (it "lands"), with the usual merge checks; refused if that merge isn't allowed. Factors just short of 1 are plain moves. |
 | 27 | Vertex Slide: refuse or clamp an invalid factor? | Clamp to the largest valid factor (bisection, reported, `reached_target` false), so a drag stops at the limit instead of failing; refuse only if no movement at all is possible. |

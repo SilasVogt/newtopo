@@ -205,6 +205,8 @@ impl DocState {
 
     /// Store mesh-mode edits (SPEC §9.5): one undo step, or with `amend`
     /// a replacement of the last mesh step (a tool redone with new values).
+    /// Returns whether the document changed (an amend always counts); a
+    /// new step that changes nothing makes no undo step and no revision.
     pub fn set_meshes(
         &mut self,
         changes: Vec<(
@@ -212,20 +214,22 @@ impl DocState {
             Option<newtopo_core::meshedit::EditMesh>,
         )>,
         amend: bool,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<bool, ApplyError> {
         let Some(scene) = self.scene.as_mut() else {
             return Err(ApplyError::NoScene);
         };
         match guard(|| {
             if amend {
-                scene.amend_meshes(changes)
+                scene.amend_meshes(changes).map(|()| true)
             } else {
                 scene.set_meshes(changes)
             }
         }) {
-            Ok(Ok(())) => {
-                self.bump();
-                Ok(())
+            Ok(Ok(changed)) => {
+                if changed {
+                    self.bump();
+                }
+                Ok(changed)
             }
             Ok(Err(r)) => Err(ApplyError::Refused(r)),
             Err(e) => {

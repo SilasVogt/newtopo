@@ -499,6 +499,38 @@ fn target_merge_welds_across_a_slit() {
     );
 }
 
+/// The weld keeps the picked target, even where Merge by Distance's role
+/// order would keep the source (both on the border, the source lower).
+#[test]
+fn target_merge_weld_keeps_the_target() {
+    let (m, dup, orig) = slit();
+    assert!(orig < dup);
+    let r = target_merge(&m, orig, dup, &TargetMergeParams::default()).unwrap();
+    assert_sound(&m, &r.mesh, "slit weld onto the duplicate");
+    assert!(r.vertex_map[orig as usize].is_none(), "the source goes");
+    let kept = r.vertex_map[dup as usize].expect("the target stays");
+    assert_eq!(r.selected_vertices, vec![kept]);
+    assert_eq!(r.mesh.positions[kept as usize], m.positions[dup as usize]);
+}
+
+/// Moving the source onto the target reshapes the source's polygons; they
+/// are checked like any move. Here the target sits inside the cells above
+/// the slit, so moving vertex 7 there would make those quads concave.
+#[test]
+fn target_merge_weld_refuses_to_distort_the_source_polygons() {
+    let (mut m, dup, orig) = slit();
+    m.positions[dup as usize] = DVec3::new(0.25, 0.8, 0.0);
+    assert!(m.issues().is_empty(), "{:?}", m.issues());
+    assert!(m.polygon_problems(60.0).is_empty(), "the input is convex");
+    let r = target_merge(&m, orig, dup, &TargetMergeParams::default());
+    let e = r.expect_err("refused");
+    assert!(e.reason.contains("fold, flip or flatten"), "{}", e.reason);
+    // The other way round the duplicate's quads return to their squares.
+    let r = target_merge(&m, dup, orig, &TargetMergeParams::default()).unwrap();
+    assert_sound(&m, &r.mesh, "slit weld back");
+    assert!(r.mesh.polygon_problems(60.0).is_empty());
+}
+
 // ---------------------------------------------------------- stay on surface
 
 #[test]

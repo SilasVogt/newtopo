@@ -405,3 +405,5 @@ pub const TOAST_MESH_NO_SCENE: &str =
     "Open or import a model first: mesh editing works on its mesh.";
 pub const TOAST_MESH_CAD_ONLY: &str = "is a CAD tool. Switch to CAD editing (M) to use it.";
 pub const TOAST_MESH_MESH_ONLY: &str = "is a mesh tool. Switch to mesh editing (M) to use it.";
+pub const TOAST_MESH_SLIDE_CANCELLED: &str =
+    "Slide cancelled: the mesh changed (undo or redo) during the drag. Drag again to slide.";

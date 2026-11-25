@@ -243,8 +243,13 @@ pub struct LastOp {
     /// Merge by Distance: the vertices selected when it ran, per body, so a
     /// redo can switch between the whole mesh and these ("Selected only").
     pub selected_verts: BTreeMap<BodyId, Vec<u32>>,
-    /// Document revision right after the edit (or its last redo).
+    /// Document revision right after the edit (or its last redo); for a
+    /// slide drag that has not applied yet, the revision it started on.
     pub rev: u64,
+    /// The edit made an undo step that a redo amends. False while its
+    /// results changed nothing: a redo with new values then makes its own
+    /// step instead of rewriting the step before it.
+    pub stepped: bool,
 }
 
 /// An element clicked in mesh mode (for shortest paths).
@@ -1107,13 +1112,17 @@ impl AppState {
             bodies,
             selected_verts,
             rev: 0,
+            stepped: false,
         };
         self.mesh_apply(op, false);
     }
 
     /// Compute `op` from its starting meshes and store the results: a new
-    /// undo step, or (`amend`) a replacement of the last one.
+    /// undo step, or (`amend`) a replacement of the step `op` made. An op
+    /// whose results changed nothing has no step of its own, so its redo
+    /// makes a new one.
     fn mesh_apply(&mut self, mut op: LastOp, amend: bool) {
+        let amend = amend && op.stepped;
         // Merge by Distance: the scope follows "Selected only" as it is now.
         if op.tool == MeshTool::MergeByDistance {
             let selected = self.mm.params.merge_selected;
@@ -1150,12 +1159,15 @@ impl AppState {
             }
             return;
         }
-        if let Err(e) = self.doc.set_meshes(changes, amend) {
-            self.toast(ToastKind::Warn, e.message());
-            if amend {
-                self.mm.last = None;
+        match self.doc.set_meshes(changes, amend) {
+            Ok(made) => op.stepped = amend || made,
+            Err(e) => {
+                self.toast(ToastKind::Warn, e.message());
+                if amend {
+                    self.mm.last = None;
+                }
+                return;
             }
-            return;
         }
         self.ensure_meshes();
         // The selection follows the edit (whole-mesh tools clear it).
@@ -1189,13 +1201,14 @@ impl AppState {
     }
 
     /// A tool value changed in the panel: redo the last edit with it, if
-    /// the last edit was this tool and nothing has changed since.
+    /// the last edit was this tool and nothing has changed since (one undo
+    /// step: the edit's own, made now if its first result changed nothing).
     pub fn mesh_params_changed(&mut self) {
         let t = self.mm.tool;
         if let Some(op) = self.mm.last.clone()
             && op.tool == t
             && op.rev == self.doc.revision
-            && self.doc.can_amend_meshes()
+            && (!op.stepped || self.doc.can_amend_meshes())
         {
             self.mesh_apply(op, true);
         } else if t == MeshTool::EdgeSlide {
@@ -1209,6 +1222,9 @@ impl AppState {
         let Some(mut drag) = self.mm.slide.clone() else {
             return;
         };
+        if drag.started && self.slide_cancel_if_stale() {
+            return;
+        }
         let d = p - drag.start;
         if !drag.started {
             if d.length() < 4.0 {
@@ -1253,8 +1269,23 @@ impl AppState {
         let Some(op) = self.mm.last.clone() else {
             return;
         };
-        let amend = op.rev != 0 && op.rev == self.doc.revision && self.doc.can_amend_meshes();
-        self.mesh_apply(op, amend);
+        self.mesh_apply(op, true);
+    }
+
+    /// The document changed under a started slide drag (undo, redo): its
+    /// starting meshes are stale, so the drag ends instead of editing from
+    /// them. True if it was cancelled.
+    fn slide_cancel_if_stale(&mut self) -> bool {
+        let live = self.mm.last.as_ref().is_some_and(|op| {
+            op.rev == self.doc.revision && (!op.stepped || self.doc.can_amend_meshes())
+        });
+        if live {
+            return false;
+        }
+        self.mm.slide = None;
+        self.mm.last = None;
+        self.toast(ToastKind::Info, S::TOAST_MESH_SLIDE_CANCELLED);
+        true
     }
 
     /// Start a slide drag: the edges each vertex slides along, and the
@@ -1348,7 +1379,8 @@ impl AppState {
             tool: t,
             bodies,
             selected_verts: BTreeMap::new(),
-            rev: 0,
+            rev: self.doc.revision,
+            stepped: false,
         };
         Some((
             op,
