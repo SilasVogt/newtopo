@@ -240,6 +240,9 @@ pub struct LastOp {
     /// Per body: the mesh before, whether the body already had mesh edits,
     /// and what the tool ran on.
     pub bodies: Vec<(BodyId, Arc<EditMesh>, bool, Input)>,
+    /// Merge by Distance: the vertices selected when it ran, per body, so a
+    /// redo can switch between the whole mesh and these ("Selected only").
+    pub selected_verts: BTreeMap<BodyId, Vec<u32>>,
     /// Document revision right after the edit (or its last redo).
     pub rev: u64,
 }
@@ -1052,9 +1055,11 @@ impl AppState {
             && p.stay(t)
             && let Some(scene) = self.doc.scene.as_ref()
         {
+            // The move tools all run with the default normal limit.
             return Ok(me::stay_on_surface(
                 m,
                 out,
+                me::SlideParams::default().max_normal_change_deg,
                 &mut |f: FaceId, pts: &[DVec3]| scene.project_to_cad(b, f, pts),
             ));
         }
@@ -1092,9 +1097,15 @@ impl AppState {
             );
             return;
         }
+        let selected_verts = if t == MeshTool::MergeByDistance {
+            self.mesh_sel_verts()
+        } else {
+            BTreeMap::new()
+        };
         let op = LastOp {
             tool: t,
             bodies,
+            selected_verts,
             rev: 0,
         };
         self.mesh_apply(op, false);
@@ -1103,6 +1114,17 @@ impl AppState {
     /// Compute `op` from its starting meshes and store the results: a new
     /// undo step, or (`amend`) a replacement of the last one.
     fn mesh_apply(&mut self, mut op: LastOp, amend: bool) {
+        // Merge by Distance: the scope follows "Selected only" as it is now.
+        if op.tool == MeshTool::MergeByDistance {
+            let selected = self.mm.params.merge_selected;
+            for (b, _, _, input) in op.bodies.iter_mut() {
+                *input = if selected {
+                    Input::Vertices(op.selected_verts.get(b).cloned().unwrap_or_default())
+                } else {
+                    Input::Whole
+                };
+            }
+        }
         let mut changes = Vec::new();
         let mut results = Vec::new();
         let mut refusals = Vec::new();
@@ -1325,6 +1347,7 @@ impl AppState {
         let op = LastOp {
             tool: t,
             bodies,
+            selected_verts: BTreeMap::new(),
             rev: 0,
         };
         Some((

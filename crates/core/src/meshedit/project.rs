@@ -5,11 +5,13 @@
 //! The projection is a caller-supplied function (the scene asks the CAD
 //! kernel), so the tools stay pure. A vertex whose projection would break a
 //! polygon around it (a shape-valid polygon becoming concave or degenerate,
-//! or any polygon flipping) stays where the tool put it; the report says how
-//! many vertices were put back and how many could not be.
+//! any polygon flipping, or a polygon within the normal limit leaving it)
+//! stays where the tool put it; the report says how many vertices were put
+//! back and how many could not be.
 
 use super::EditOutcome;
 use super::mesh::EditMesh;
+use super::mesh::area_vec;
 use super::smooth::polygon_acceptable;
 use glam::DVec3;
 use newtopo_kernel::FaceId;
@@ -22,11 +24,15 @@ pub type Projector<'a> = dyn FnMut(FaceId, &[DVec3]) -> Vec<Option<DVec3>> + 'a;
 /// Project the vertices a tool moved (relative to `before`) onto the CAD
 /// faces of their polygons. `project(face, points)` returns the closest
 /// point on that face for each point (`None` if there is none).
+/// `max_normal_change_deg` is the tool's normal limit (§9.5.2): a polygon
+/// within it may not leave it by a projection.
 pub fn stay_on_surface(
     before: &EditMesh,
     mut out: EditOutcome,
+    max_normal_change_deg: f64,
     project: &mut Projector,
 ) -> EditOutcome {
+    let min_cos = max_normal_change_deg.to_radians().cos();
     let m = &mut out.mesh;
     let diag = m.diagonal().max(1e-300);
     let mut has_source = vec![false; m.positions.len()];
@@ -88,17 +94,25 @@ pub fn stay_on_surface(
         }
         let old = m.positions[v as usize];
         let ok = vpolys[v as usize].iter().all(|&p| {
-            let b: Vec<DVec3> = m.polygons[p]
+            let poly = &m.polygons[p];
+            let b: Vec<DVec3> = poly
                 .verts
                 .iter()
                 .map(|&x| m.positions[x as usize])
                 .collect();
-            let a: Vec<DVec3> = m.polygons[p]
+            let a: Vec<DVec3> = poly
                 .verts
                 .iter()
                 .map(|&x| if x == v { q } else { m.positions[x as usize] })
                 .collect();
-            polygon_acceptable(&b, &a, diag)
+            let reference = poly.normals.iter().copied().sum::<DVec3>();
+            let within = |pos: &[DVec3]| {
+                area_vec(pos)
+                    .normalize_or_zero()
+                    .dot(reference.normalize_or_zero())
+                    >= min_cos
+            };
+            polygon_acceptable(&b, &a, diag) && (!within(&b) || within(&a))
         });
         if ok {
             m.positions[v as usize] = q;
@@ -114,7 +128,7 @@ pub fn stay_on_surface(
             .push_str(&format!("; {put} vertices put back on the CAD surface"));
         if held > 0 {
             out.report.skipped.push(format!(
-                "{held} vertices stay off the CAD surface: projecting them would fold or flip a polygon"
+                "{held} vertices stay off the CAD surface: projecting them would fold or flip a polygon, or tilt it past the normal limit"
             ));
         }
     }

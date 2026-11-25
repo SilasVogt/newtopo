@@ -1226,3 +1226,107 @@ fn a_mesh_edit_survives_save_and_open() {
     assert_eq!(after.positions, before.positions);
     assert_eq!(after.polygons, before.polygons);
 }
+
+/// Export and the Blender bridge read `ViewData::outputs`; in mesh mode it
+/// must hold the edited mesh, for hidden objects too.
+#[test]
+fn export_in_mesh_mode_sends_the_edited_mesh() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(has_edits(&h, b));
+    let want = h
+        .app
+        .st
+        .doc
+        .scene
+        .as_mut()
+        .unwrap()
+        .effective_output_of(b)
+        .unwrap();
+    h.app.st.view.hidden.insert(b);
+    h.app.st.invalidate_view();
+    h.frames(1);
+    assert!(h.app.st.in_mesh_mode());
+    let items = h.app.st.export_items().unwrap();
+    assert_eq!(items.len(), 1, "the hidden, edited object is exported");
+    let got = &items[0].4;
+    assert_eq!(got.body, b);
+    let pos = |o: &newtopo_core::mesh::OutputMesh| -> Vec<glam::DVec3> {
+        o.vertices.iter().map(|v| v.position).collect()
+    };
+    assert_eq!(pos(got), pos(&want));
+    assert_eq!(got.polygons.len(), want.polygons.len());
+}
+
+/// Merge by Distance redone with "Selected only" switched: the scope
+/// follows the box, from the vertices selected when it ran.
+#[test]
+fn merge_by_distance_redo_follows_selected_only() {
+    use crate::selection::VertSel;
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    let m = (*h.app.st.mm.meshes[&b]).clone();
+    // Two far-apart edges between free vertices; squeeze each to a near
+    // duplicate pair.
+    let flagged: std::collections::BTreeSet<u32> =
+        m.flagged.iter().flat_map(|e| [e.a, e.b]).collect();
+    let free = |v: u32| !m.pinned[v as usize] && !flagged.contains(&v);
+    let ring = |v: u32| -> std::collections::BTreeSet<u32> {
+        m.polygons
+            .iter()
+            .filter(|p| p.verts.contains(&v))
+            .flat_map(|p| p.verts.iter().copied())
+            .collect()
+    };
+    let edges: Vec<(u32, u32)> = m
+        .edges()
+        .into_iter()
+        .filter(|&(a, c)| free(a) && free(c))
+        .collect();
+    let e1 = edges[0];
+    let near1: std::collections::BTreeSet<u32> = ring(e1.0).union(&ring(e1.1)).copied().collect();
+    let e2 = *edges
+        .iter()
+        .find(|&&(a, c)| !near1.contains(&a) && !near1.contains(&c))
+        .unwrap();
+    let mut squeezed = m.clone();
+    for (a, c) in [e1, e2] {
+        let (pa, pc) = (m.positions[a as usize], m.positions[c as usize]);
+        squeezed.positions[a as usize] = pc + (pa - pc) * 0.001;
+    }
+    h.app
+        .st
+        .doc
+        .set_meshes(vec![(b, Some(squeezed))], false)
+        .unwrap();
+    h.app.st.invalidate_view();
+    h.frames(1);
+    let used = |h: &Harness| {
+        let e = h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b).unwrap();
+        let mut u = std::collections::BTreeSet::new();
+        e.polygons
+            .iter()
+            .for_each(|p| u.extend(p.verts.iter().copied()));
+        u.len()
+    };
+    let n0 = used(&h);
+    // Only the first pair is selected.
+    h.app.st.mode = Mode::Vertex;
+    h.app.st.sel = Default::default();
+    h.app.st.sel.verts.insert(VertSel::Index(b, e1.0));
+    h.app.st.sel.verts.insert(VertSel::Index(b, e1.1));
+    h.app.st.mm.params.merge_selected = false;
+    h.app.st.mm.params.merge_pct = 0.05;
+    h.app.st.run(Cmd::MeshMergeByDistance);
+    assert_eq!(used(&h), n0 - 2, "whole mesh: both pairs merge");
+    // Tick "Selected only": the redo merges the selected pair only.
+    h.app.st.mm.params.merge_selected = true;
+    h.app.st.mesh_params_changed();
+    assert_eq!(used(&h), n0 - 1, "selected only: one pair");
+    // And back.
+    h.app.st.mm.params.merge_selected = false;
+    h.app.st.mesh_params_changed();
+    assert_eq!(used(&h), n0 - 2);
+}

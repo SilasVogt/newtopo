@@ -355,7 +355,9 @@ impl Scene {
             .unwrap_or(old))
     }
 
-    /// [`Scene::replace_body`] with a report of what matched.
+    /// [`Scene::replace_body`] with a report of what matched. Refused for a
+    /// body with mesh edits (SPEC §9.5.1): replacing changes its CAD stage,
+    /// and the edited mesh belongs to the old body.
     pub fn replace_body_with_report(
         &mut self,
         old: BodyId,
@@ -364,6 +366,9 @@ impl Scene {
         heal: HealReport,
     ) -> anyhow::Result<ReplaceReport> {
         let entry = self.doc.body(old).cloned().context("no such body")?;
+        if self.has_mesh_edits(old) {
+            anyhow::bail!("{}", self.mesh_lock_refusal(old).reason);
+        }
         anyhow::ensure!(self.bodies.contains_key(&old), "body without kernel data");
         let kbody = self
             .kernel

@@ -548,8 +548,10 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
 /// edited mesh, or its baked output). Faces are the meshes' polygons
 /// (`FaceId` = polygon index), edges are `EdgeSel::Index` into
 /// `EditMesh::edges()` and vertices `VertSel::Index` into its positions.
+/// `outputs` is the scene's effective output, every body (hidden ones
+/// too), as in [`from_scene`]: export and the Blender bridge read it.
 pub fn from_meshes(
-    scene: &Scene,
+    scene: &mut Scene,
     meshes: &std::collections::BTreeMap<BodyId, Arc<newtopo_core::meshedit::EditMesh>>,
     p: &DisplayParams,
 ) -> ViewData {
@@ -561,6 +563,10 @@ pub fn from_meshes(
             return vd.finish(RenderScene::default(), p, vec![], vec![], vec![]);
         }
     };
+    match guard(|| scene.output().to_vec()) {
+        Ok(o) => vd.outputs = o,
+        Err(e) => vd.error = Some(e),
+    }
     let c = &p.colors;
     let mut rs = RenderScene::default();
     let (mut ppos, mut ptris, mut pids) = (Vec::new(), Vec::new(), Vec::new());

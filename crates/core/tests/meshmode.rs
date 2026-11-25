@@ -115,6 +115,45 @@ fn mesh_edits_lock_cad_editing_until_discarded() {
     assert_eq!(s.discard_mesh_edits(&[]).unwrap(), 0);
 }
 
+/// Import "Replace" gives the body a new id; the edited mesh belongs to
+/// the old one. Refused while the body has mesh edits, so no mesh is left
+/// keyed by a body the scene no longer has (which would make the saved file
+/// unopenable).
+#[test]
+fn replacing_a_body_with_mesh_edits_is_refused_until_discarded() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    let before = s.doc().clone();
+    let brep = MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)).to_brep_bytes();
+    let attrs = || newtopo_kernel::BodyAttributes {
+        name: "Box v2".into(),
+        transform: glam::DMat4::IDENTITY,
+        ..Default::default()
+    };
+    let e = s
+        .replace_body_with_report(b, &brep, attrs(), Default::default())
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("Discard mesh edits"), "{e:#}");
+    assert_eq!(*s.doc(), before, "nothing changed");
+    // Saving and loading still work.
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("r.ntopo");
+    s.save(&p).unwrap();
+    newtopo_core::Scene::load(Arc::new(MockKernel::new()), &p).unwrap();
+    // After discarding, the replacement goes through and leaves no mesh.
+    s.discard_mesh_edits(&[b]).unwrap();
+    let nb = s
+        .replace_body_with_report(b, &brep, attrs(), Default::default())
+        .unwrap()
+        .new_body
+        .unwrap();
+    assert!(s.mesh_edited_bodies().is_empty());
+    assert!(s.doc().body(nb).is_some());
+    s.save(&p).unwrap();
+    newtopo_core::Scene::load(Arc::new(MockKernel::new()), &p).unwrap();
+}
+
 #[test]
 fn amend_replaces_the_last_edit_only_while_nothing_else_changed() {
     let (mut s, b) = gridded_box();

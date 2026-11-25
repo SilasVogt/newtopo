@@ -157,13 +157,19 @@ impl Scene {
     pub(crate) fn check_mesh_locks(&self, new: &Document) -> Result<(), Refusal> {
         for &b in self.doc.meshes.keys() {
             if self.cad_fingerprint(&self.doc, b) != self.cad_fingerprint(new, b) {
-                return Err(Refusal::new(format!(
-                    "\"{}\" has mesh edits, so its CAD lines are locked. Run \"Discard mesh edits\" to edit it in CAD mode again.",
-                    self.body_name(b)
-                )));
+                return Err(self.mesh_lock_refusal(b));
             }
         }
         Ok(())
+    }
+
+    /// The refusal for an op that would change the CAD stage of `body`,
+    /// which has mesh edits.
+    pub(crate) fn mesh_lock_refusal(&self, body: BodyId) -> Refusal {
+        Refusal::new(format!(
+            "\"{}\" has mesh edits, so its CAD lines are locked. Run \"Discard mesh edits\" to edit it in CAD mode again.",
+            self.body_name(body)
+        ))
     }
 
     /// Hash of the document parts that make up one body's CAD stage

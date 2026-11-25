@@ -532,7 +532,7 @@ fn stay_on_surface_projects_moved_vertices_only() {
         .filter(|&v| r.mesh.positions[v] != m.positions[v])
         .collect();
     assert!(!moved.is_empty());
-    let s = stay_on_surface(&m, r.clone(), &mut proj);
+    let s = stay_on_surface(&m, r.clone(), 60.0, &mut proj);
     assert!(calls > 0);
     assert_sound(&m, &s.mesh, "projected");
     for v in 0..m.positions.len() {
@@ -547,4 +547,68 @@ fn stay_on_surface_projects_moved_vertices_only() {
         }
     }
     assert!(s.report.message.contains("put back on the CAD surface"));
+}
+
+/// The projection may not tilt a polygon past the normal limit, even when
+/// the polygon keeps its shape and doesn't flip: one moved vertex whose
+/// "closest point" is far above a flat plate stays where the tool put it.
+#[test]
+fn stay_on_surface_keeps_the_normal_limit() {
+    let n = 10;
+    let mut m = plane(n, 1.0);
+    for i in 1..n {
+        m.positions[gid(n, i, 5) as usize].y += if i % 2 == 0 { 0.03 } else { -0.03 };
+    }
+    let r = relax(
+        &m,
+        &Selection::Edges(row(n, n, 5)),
+        &RelaxParams {
+            iterations: 10,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let v = (0..m.positions.len())
+        .find(|&v| r.mesh.positions[v] != m.positions[v])
+        .unwrap();
+    let at = r.mesh.positions[v];
+    // A CAD face far above this one vertex (spacing 0.1, lift 0.5: about
+    // 74° of tilt on the quads around it).
+    let lifted = at + DVec3::Z * 0.5;
+    let mut proj = |_: newtopo_kernel::FaceId, pts: &[DVec3]| {
+        pts.iter()
+            .map(|p| Some(if *p == at { lifted } else { *p }))
+            .collect()
+    };
+    // Shape and orientation alone would accept the lift, so only the
+    // normal limit holds the vertex back.
+    let diag = r.mesh.diagonal();
+    for (pi, p) in r.mesh.polygons.iter().enumerate() {
+        if p.verts.contains(&(v as u32)) {
+            let b = r.mesh.polygon_positions(pi);
+            let a: Vec<DVec3> = p
+                .verts
+                .iter()
+                .map(|&x| {
+                    if x as usize == v {
+                        lifted
+                    } else {
+                        r.mesh.positions[x as usize]
+                    }
+                })
+                .collect();
+            assert!(super::smooth::polygon_acceptable(&b, &a, diag));
+        }
+    }
+    let s = stay_on_surface(&m, r.clone(), 60.0, &mut proj);
+    assert_eq!(s.mesh.positions[v], at, "held where the tool put it");
+    assert!(s.mesh.polygon_problems(60.0).is_empty());
+    assert!(
+        s.report.skipped.iter().any(|x| x.contains("normal limit")),
+        "{:?}",
+        s.report.skipped
+    );
+    // A looser limit lets the same projection through.
+    let s = stay_on_surface(&m, r, 89.0, &mut proj);
+    assert_eq!(s.mesh.positions[v], lifted);
 }

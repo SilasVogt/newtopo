@@ -1102,7 +1102,9 @@ never back to rules; while a body has mesh edits its rules are locked.
   From then on the body **has mesh edits**: its CAD stage is locked, and
   every op that would change its rules, split lines, edits or phase
   overrides is refused with *"‹name› has mesh edits, so its CAD lines are
-  locked. Run "Discard mesh edits" to edit it in CAD mode again."* Scene
+  locked. Run "Discard mesh edits" to edit it in CAD mode again."* Import
+  "Replace" (§8.1) of such a body is refused the same way: the replacement
+  is a new body, and the edited mesh belongs to the old one. Scene
   settings (auto-fill, link, symmetry), names, layers, visibility and locks
   still change; bodies without mesh edits stay fully CAD-editable.
 - **Discard mesh edits** (mesh tool panel, command palette; no prompt) drops
@@ -1171,7 +1173,8 @@ never back to rules; while a body has mesh edits its rules are locked.
   Space; off by default): after the tool ran, every vertex it moved is put
   on the nearest point of the CAD faces of its polygons (asked from the CAD
   kernel). A vertex whose projection would make a shape-valid polygon
-  concave or degenerate, or flip any polygon, stays where the tool put it;
+  concave or degenerate, flip any polygon, or tilt a polygon that was
+  within the normal limit past it, stays where the tool put it;
   the report counts both.
 - **Keep CAD and hard edges** in the tool panel is the Preserve toggle pair
   (both together).
