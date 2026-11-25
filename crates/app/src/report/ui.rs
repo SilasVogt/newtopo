@@ -323,7 +323,12 @@ impl AppState {
         egui::Modal::new(egui::Id::new("report"))
             .frame(frame)
             .show(ctx, |ui| {
-                action = dialog(ui, &pal, d, time);
+                // Scroll instead of running off a short window.
+                let max_h = (ctx.content_rect().height() - 48.0).max(200.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .min_scrolled_height(max_h)
+                    .show(ui, |ui| action = dialog(ui, &pal, d, time));
             });
         match action {
             Some(Action::Close) => self.ui.report = None,
