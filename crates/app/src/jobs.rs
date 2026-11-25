@@ -699,7 +699,7 @@ impl AppState {
         crate::report::scrub::know_file(&path);
         match self.doc.open(&path) {
             Ok(()) => {
-                self.session.file_event("open", &path);
+                self.session.open(&path);
                 self.end_compare();
                 self.drop_held_import();
                 self.demo = None;

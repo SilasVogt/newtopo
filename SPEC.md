@@ -690,9 +690,12 @@ feature.
   a clean exit; a panic on the UI thread also writes `<id>.crash.json`,
   which the app removes when it catches the panic (a panic that repeats,
   e.g. every frame, keeps the file until it stops for a second instead of
-  rewriting it each time). At the next start, the crash file of a session
+  rewriting it each time; a write that fails is tried again by the next
+  panic). At the next start, the crash file of a session
   whose process has ended, next to its leftover marker, offers the report
-  for that crash (the newest, after the autosave recovery); all files of
+  for that crash (the newest, once no dialog that goes first is open: the
+  autosave recovery, an unsaved-changes prompt, a confirmation or an import
+  dialog); all files of
   ended sessions are then removed, and sessions still running (another
   window) are left alone. A clean exit, a `--shot`/`--window-shot` run or
   an OS kill without a crash file offers nothing. Refusals ("can't do
@@ -709,14 +712,21 @@ feature.
     thread, time, version, commit, backtrace) and `log.txt` (the end of the
     log file, at most 256 KiB, earlier sessions included);
   - **Steps taken** (on by default): `steps.json`, an op script
-    (`version`, `input`, `ops`, §10) that `newtopo-cli run` replays (every
-    applied or failed op, including ones later undone or discarded with a
-    preview), plus a `session` timeline with refused ops, undo/redo,
-    preview apply/discard and imports (file names only). Names the user
-    typed (bodies, layers) are cleaned like the log;
+    (`version`, `input`, `ops`, §10) for the scene open when the report is
+    made, which `newtopo-cli run` replays (`input` is the first CAD file
+    imported into that scene, or the scene file opened; `ops` every op
+    applied to it or failed, including ones later undone or discarded with
+    a preview), plus a `session` timeline of the whole session (earlier
+    scenes before *File > New* or *Open*, refused ops, undo/redo, preview
+    apply/discard and imports, file names only). Names the user typed
+    (bodies, layers) are cleaned like the log;
   - **The model** (off by default): the CAD files imported this session
     that are still readable and a copy of the open scene, under `model/`,
-    as they are on disk;
+    as they are on disk. Their names in the zip extract on Windows, macOS
+    and Linux: the scrubbed user name reads `[user]` (text keeps
+    `<user>`), other characters Windows forbids become `_`, trailing dots
+    and spaces go, device names (`CON`, `nul.step`) get a leading `_`, and
+    names that differ only in case are numbered;
   - **PC details** (on by default): `system.txt` with OS and version,
     kernel, architecture, CPU and thread count, memory, graphics adapter,
     backend and driver, display and UI scale. Never the host name, user
@@ -726,7 +736,9 @@ feature.
   (`…/part.step`); source-code locations (`*.rs`) are kept.
 - **Save report…** asks where to save (default name
   `newtopo-report-<date>.zip`), writes exactly the listed files and shows
-  the file in the file manager.
+  the file in the file manager. A listed file that can no longer be read
+  is left out, noted in `missing.txt`, and named in a warning; the rest is
+  saved.
 - **Open GitHub issue** saves the zip first if the current choices are not
   saved yet, then opens `https://github.com/SilasVogt/newtopo/issues/new`
   with a title and body: error line and location, version, platform
@@ -734,8 +746,9 @@ feature.
   zip. The link stays under 6,000 characters (the comment, then the error
   line, are shortened); the log is never in it. Only that page is opened.
 - **Copy prompt** puts instructions for an AI coding agent on the
-  clipboard: fork the repository, check out the commit (or version tag) the
-  report names, reproduce from the report (naming the zip and its files,
+  clipboard: fork the repository, check out the commit (or version tag) of
+  the build that failed (the running build when no error is attached),
+  reproduce from the report (naming the zip and its files,
   and saying that `newtopo-cli run` replays undone and discarded ops too),
   fix the cause, add a regression test, run `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings` and

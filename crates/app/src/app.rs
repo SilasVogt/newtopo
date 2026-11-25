@@ -385,7 +385,9 @@ impl App {
             ui_scale: st.prefs.ui_scale,
         };
         st.poll_jobs(&ctx);
-        st.poll_failures();
+        if let Some(wake) = st.poll_failures() {
+            ctx.request_repaint_after(wake);
+        }
         st.poll_update(&ctx);
         st.view.shown = false;
         st.view.chip_rect = None;
@@ -1449,7 +1451,7 @@ impl AppState {
     pub fn do_pending(&mut self, what: PendingAfterPrompt) {
         match what {
             PendingAfterPrompt::New => {
-                self.session.event("new_scene");
+                self.session.new_scene();
                 self.end_compare();
                 self.drop_held_import();
                 self.doc.close();

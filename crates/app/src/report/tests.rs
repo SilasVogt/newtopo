@@ -235,10 +235,187 @@ fn missing_model_files_are_noted_not_fatal() {
         },
     ];
     let path = dir.path().join("r.zip");
-    write_zip(&path, &ps).unwrap();
+    let not_saved = write_zip(&path, &ps).unwrap();
+    assert_eq!(not_saved, ["model/gone.step"], "the caller is told");
     let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
     assert!(z.by_name("missing.txt").is_ok());
     assert!(z.by_name("model/gone.step").is_err());
+    assert!(z.by_name("error.txt").is_ok(), "the rest is saved");
+    // Nothing missing: nothing reported.
+    let ok = write_zip(&path, &ps[..1]).unwrap();
+    assert!(ok.is_empty());
+}
+
+#[test]
+fn steps_json_describes_the_open_scene() {
+    let connect = |a: u32| Op::Connect {
+        patches: newtopo_core::ops::PatchSel {
+            faces: vec![1],
+            ..Default::default()
+        },
+        a,
+        b: 0,
+        start_on_seam: false,
+    };
+    let mut s = Session::default();
+    s.import(Path::new("/w/a.step"));
+    s.op(&connect(4), Outcome::Applied);
+    s.new_scene();
+    s.import(Path::new("/w/b.step"));
+    s.op(&connect(8), Outcome::Applied);
+    let json = s.steps_json();
+    let script: newtopo_core::Script = serde_json::from_str(&json).unwrap();
+    assert_eq!(script.input.as_deref(), Some("b.step"));
+    assert_eq!(script.ops, [connect(8)], "only B's ops");
+    assert_eq!(s.op_count(), 1);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let steps: Vec<&str> = v["session"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["step"].as_str().unwrap())
+        .collect();
+    assert_eq!(steps, ["import", "op", "new_scene", "import", "op"]);
+    assert_eq!(
+        v["session"][1]["op"]["a"], 4,
+        "A's op stays in the timeline"
+    );
+    assert_eq!(v["inputs"], serde_json::json!(["a.step", "b.step"]));
+    // A second import into the same scene does not change its input.
+    s.import(Path::new("/w/c.step"));
+    let script: newtopo_core::Script = serde_json::from_str(&s.steps_json()).unwrap();
+    assert_eq!(script.input.as_deref(), Some("b.step"));
+    // Opening a scene file: that file is the input, ops start over.
+    s.open(Path::new("/w/saved.ntopo"));
+    s.op(&connect(2), Outcome::Applied);
+    let script: newtopo_core::Script = serde_json::from_str(&s.steps_json()).unwrap();
+    assert_eq!(script.input.as_deref(), Some("saved.ntopo"));
+    assert_eq!(script.ops, [connect(2)]);
+    // File > New before any import: no input until one is imported.
+    s.new_scene();
+    let v: serde_json::Value = serde_json::from_str(&s.steps_json()).unwrap();
+    assert!(v["input"].is_null() && v["ops"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_full_replay_list_keeps_the_timeline_going() {
+    let mut s = Session::default();
+    for _ in 0..MAX_OPS {
+        s.op(&Op::PurgeDormant, Outcome::Applied);
+    }
+    let rename = Op::RenameBody {
+        body: newtopo_kernel::BodyId(0),
+        name: "after the cap".into(),
+    };
+    s.op(&rename, Outcome::Applied);
+    s.event("undo");
+    assert_eq!(s.op_count(), MAX_OPS, "the replay list stops");
+    let v: serde_json::Value = serde_json::from_str(&s.steps_json()).unwrap();
+    let session = v["session"].as_array().unwrap();
+    assert_eq!(session.len(), MAX_OPS + 2);
+    assert_eq!(session[MAX_OPS]["op"]["name"], "after the cap");
+    assert_eq!(session[MAX_OPS + 1]["step"], "undo");
+    assert_eq!(v["truncated"], true);
+}
+
+#[test]
+fn archive_names_extract_on_every_os() {
+    // Names Windows (the strictest) refuses, and what they become.
+    for (name, safe) in [
+        ("tube.step", "tube.step"),
+        ("<user>_tube.step", "[user]_tube.step"),
+        ("a:b|c?d*e\"f.step", "a_b_c_d_e_f.step"),
+        ("tab\there.step", "tab_here.step"),
+        ("part. ", "part"),
+        ("CON", "_CON"),
+        ("nul.step", "_nul.step"),
+        ("com1.ntopo", "_com1.ntopo"),
+        ("console.step", "console.step"),
+        ("", "file"),
+    ] {
+        assert_eq!(safe_file_name(name), safe, "{name:?}");
+    }
+    let windows_ok = |n: &str| {
+        !n.chars()
+            .any(|c| "<>:\"\\|?*".contains(c) || c.is_control())
+            && !n.ends_with(['.', ' '])
+    };
+    // A user name that is in a model file's name.
+    let (_, user) = home_and_user();
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join(format!("{user}_tube.step"));
+    let b = dir
+        .path()
+        .join(format!("{}_TUBE.step", user.to_uppercase()));
+    std::fs::write(&a, "STEP;").unwrap();
+    std::fs::write(&b, "STEP;").unwrap();
+    let mut model = ui::source_files(&[a, b]);
+    model.push(ModelFile {
+        name: ui::model_entry(&model, &format!("{}.ntopo", scrub(&user))),
+        size: 1,
+        data: Data::Bytes(b"x".to_vec().into()),
+    });
+    let names: Vec<&str> = model.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "model/[user]_tube.step",
+            "model/2-[user]_TUBE.step",
+            "model/[user].ntopo"
+        ],
+        "safe, readable, and unique ignoring case"
+    );
+    let c = Contents {
+        model,
+        ..contents(false)
+    };
+    let ch = Choices {
+        model: true,
+        ..Default::default()
+    };
+    let path = dir.path().join(zip_name(now_secs()));
+    write_zip(&path, &parts(&c, &ch)).unwrap();
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    for i in 0..z.len() {
+        let e = z.by_index(i).unwrap();
+        let name = e.name().unwrap().to_string();
+        for seg in name.split('/') {
+            assert!(windows_ok(seg), "{name:?}");
+        }
+        no_private_data(&name);
+    }
+    assert!(windows_ok(&zip_name(now_secs())), "the zip's own name");
+    // Text keeps the readable placeholder.
+    assert!(error_text(c.failure.as_ref()).contains("<user>_tube.step"));
+}
+
+#[test]
+fn prompt_checks_out_the_build_that_failed() {
+    // A crash of an older build that did not record its commit, reported
+    // from a newer one.
+    let mut c = contents(false);
+    let f = c.failure.as_mut().unwrap();
+    f.version = "0.0.9".into();
+    f.commit = None;
+    let p = agent_prompt(&c, &Choices::default(), "r.zip");
+    assert!(p.contains("the tag `v0.0.9` (newtopo 0.0.9"), "{p}");
+    if version() != "0.0.9" {
+        assert!(!p.contains(&format!("v{}", version())), "{p}");
+    }
+    if let Some(sha) = commit() {
+        assert!(!p.contains(sha), "not this build's commit: {p}");
+    }
+    // With its commit: that commit, and its version.
+    c.failure.as_mut().unwrap().commit = Some("abc123def".into());
+    let p = agent_prompt(&c, &Choices::default(), "r.zip");
+    assert!(p.contains("commit `abc123def` (newtopo 0.0.9)"), "{p}");
+    // No failure attached: the running build.
+    c.failure = None;
+    let p = agent_prompt(&c, &Choices::default(), "r.zip");
+    match commit() {
+        Some(sha) => assert!(p.contains(&format!("commit `{sha}` (newtopo {})", version()))),
+        None => assert!(p.contains(&format!("the tag `v{}`", version()))),
+    }
 }
 
 #[test]

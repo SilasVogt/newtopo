@@ -222,10 +222,14 @@ enum Event {
 /// outcome, plus undo/redo, preview apply/discard and imports, in order.
 #[derive(Clone, Debug, Default)]
 pub struct Session {
-    /// Applied and failed ops, in order (script-compatible).
+    /// Applied and failed ops of the open scene, in order
+    /// (script-compatible). File > New and Open start a new list.
     ops: Vec<Op>,
+    /// The file the open scene started from (the first CAD import into
+    /// it, or the scene file opened), scrubbed, no folders.
+    input: Option<String>,
     events: Vec<Event>,
-    /// File names of imported CAD files (no folders).
+    /// File names of every CAD file imported this session (no folders).
     inputs: Vec<String>,
     /// Full paths of imported CAD files, for "The model".
     pub sources: Vec<PathBuf>,
@@ -265,13 +269,29 @@ impl Session {
         let name = op_name(op);
         ::log::info!("op {name}: {}", outcome.as_str());
         if outcome != Outcome::Refused {
+            // A full replay list stops growing; the timeline goes on.
             if self.ops.len() >= MAX_OPS {
                 self.truncated = true;
-                return;
+            } else {
+                self.ops.push(op.clone());
             }
-            self.ops.push(op.clone());
         }
         self.push_event(Event::Op(op.clone(), outcome));
+    }
+
+    /// File > New: the replay script starts over (the timeline keeps the
+    /// earlier scene).
+    pub fn new_scene(&mut self) {
+        self.event("new_scene");
+        self.ops.clear();
+        self.input = None;
+    }
+
+    /// A scene file was opened: it is the replay script's input from now on.
+    pub fn open(&mut self, path: &Path) {
+        self.file_event("open", path);
+        self.ops.clear();
+        self.input = Some(file_name(path));
     }
 
     /// A step without an op: "undo", "redo", "apply_preview", …
@@ -292,6 +312,9 @@ impl Session {
     pub fn import(&mut self, path: &Path) {
         self.file_event("import", path);
         let name = file_name(path);
+        if self.input.is_none() {
+            self.input = Some(name.clone());
+        }
         if !self.inputs.contains(&name) {
             self.inputs.push(name);
         }
@@ -300,8 +323,9 @@ impl Session {
         }
     }
 
-    /// `steps.json`: an op script (`newtopo-cli run` reads `version`,
-    /// `input` and `ops`) plus the full `session` timeline.
+    /// `steps.json`: an op script for the open scene (`newtopo-cli run`
+    /// reads `version`, `input` and `ops`) plus the full `session` timeline,
+    /// earlier scenes included.
     pub fn steps_json(&self) -> String {
         self.steps_json_with(scrub::Scrubber::current())
     }
@@ -326,17 +350,19 @@ impl Session {
             .collect();
         let v = serde_json::json!({
             "version": 1,
-            "input": self.inputs.first(),
+            "input": self.input,
             "ops": ops,
             "session": events,
             "inputs": self.inputs,
             "truncated": self.truncated,
-            "note": "`ops` lists every op that was applied (or failed) in order, \
-                     ready for `newtopo-cli run steps.json --input <model>`, \
-                     including ops that were later undone or discarded with a \
-                     preview: `run` replays them all. `session` is the full \
-                     timeline, including refused ops, undo, redo and discarded \
-                     previews, and shows which ops really stayed.",
+            "note": "`input` and `ops` describe the scene that was open: every \
+                     op applied to it (or failed) in order, ready for \
+                     `newtopo-cli run steps.json --input <model>`, including ops \
+                     that were later undone or discarded with a preview: `run` \
+                     replays them all. `session` is the full timeline, including \
+                     earlier scenes (before `new_scene` or `open`), refused ops, \
+                     undo, redo and discarded previews, and shows which ops \
+                     really stayed. `inputs` lists every CAD file imported.",
         });
         serde_json::to_string_pretty(&v).unwrap_or_default()
     }
@@ -350,6 +376,43 @@ pub fn file_name(path: &Path) -> String {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default(),
     )
+}
+
+/// `name` (already scrubbed) as a file name Windows, macOS and Linux all
+/// accept, for files inside the zip, which the recipient extracts. The
+/// scrubber's `<user>` reads `[user]`; the other characters Windows
+/// forbids, and control characters, become `_`; trailing dots and spaces
+/// go; a Windows device name (`CON`, `nul.step`) gets a leading `_`.
+/// Ordinary names stay as they are.
+pub fn safe_file_name(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .map(|c| match c {
+            '<' => '[',
+            '>' => ']',
+            ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    s.truncate(s.trim_end_matches(['.', ' ']).len());
+    if s.is_empty() {
+        return "file".into();
+    }
+    let stem = s
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    if device {
+        s.insert(0, '_');
+    }
+    s
 }
 
 // ------------------------------------------------------------ report files
@@ -530,10 +593,11 @@ pub fn rows(c: &Contents, ch: &Choices) -> Vec<Row> {
 }
 
 /// Write the report zip. Files that can no longer be read are noted in
-/// `missing.txt` instead. The zip is written to a fresh temporary file
+/// `missing.txt` instead, and their names returned (the rest is saved
+/// anyway, so the user can still send it). The zip is written to a fresh temporary file
 /// created exclusively next to `path` (a planted file or link there is
 /// never opened), then renamed over `path`.
-pub fn write_zip(path: &Path, parts: &[Part]) -> Result<(), String> {
+pub fn write_zip(path: &Path, parts: &[Part]) -> Result<Vec<String>, String> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
@@ -548,6 +612,7 @@ pub fn write_zip(path: &Path, parts: &[Part]) -> Result<(), String> {
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     let mut missing = Vec::new();
+    let mut not_saved = Vec::new();
     for p in parts {
         let read;
         let bytes: &[u8] = match &p.data {
@@ -559,6 +624,7 @@ pub fn write_zip(path: &Path, parts: &[Part]) -> Result<(), String> {
                 }
                 Err(e) => {
                     missing.push(format!("{}: {e}", p.name));
+                    not_saved.push(p.name.clone());
                     continue;
                 }
             },
@@ -579,7 +645,7 @@ pub fn write_zip(path: &Path, parts: &[Part]) -> Result<(), String> {
     zip.finish().map_err(|e| e.to_string())?;
     // Dropping `tmp` on an error above removes the temporary file.
     tmp.persist(path).map_err(|e| e.error.to_string())?;
-    Ok(())
+    Ok(not_saved)
 }
 
 /// A fresh temporary folder only this user can read (0700 on Unix), for
@@ -755,16 +821,16 @@ pub fn issue_url(c: &Contents, ch: &Choices, zip: &str) -> String {
 /// Contains only what the user switched on, all scrubbed.
 pub fn agent_prompt(c: &Contents, ch: &Choices, zip: &str) -> String {
     let names: Vec<String> = parts(c, ch).into_iter().map(|p| p.name).collect();
-    let checkout = match c
-        .failure
-        .as_ref()
-        .and_then(|f| f.commit.clone())
-        .or(commit().map(str::to_string))
-    {
-        Some(sha) => format!("commit `{sha}` (newtopo {})", version()),
+    // The build that failed: an attached failure may come from an older
+    // build than this one (a crash in the last session, before an update).
+    let (sha, v) = match &c.failure {
+        Some(f) => (f.commit.clone(), f.version.clone()),
+        None => (commit().map(str::to_string), version().to_string()),
+    };
+    let checkout = match sha {
+        Some(sha) => format!("commit `{sha}` (newtopo {v})"),
         None => format!(
-            "the tag `v{v}` (newtopo {v}; the build did not record its commit, so use `main` if the tag does not exist)",
-            v = version()
+            "the tag `v{v}` (newtopo {v}; the build did not record its commit, so use `main` if the tag does not exist)"
         ),
     };
     let mut s = String::new();

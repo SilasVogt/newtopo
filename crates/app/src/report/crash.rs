@@ -207,9 +207,17 @@ fn survived() {
 }
 
 /// Once a frame (UI thread): withdraw the crash file of a repeating caught
-/// panic once it has stopped.
-pub fn tick() {
-    with_active(|c| c.tick(Instant::now()));
+/// panic once it has stopped. Returns how long until a withdrawal still
+/// waiting is due, so the caller can wake up for it (an idle window draws
+/// no frames).
+pub fn tick() -> Option<Duration> {
+    let mut due = None;
+    with_active(|c| {
+        let now = Instant::now();
+        c.tick(now);
+        due = c.withdraw_in(now);
+    });
+    due
 }
 
 fn current_action() -> Option<String> {
@@ -313,11 +321,13 @@ impl SessionFiles {
         self.dir.join(format!("{}{CRASH_EXT}", self.owner.id()))
     }
 
-    pub fn write_crash(&self, f: &Failure) {
-        if let Ok(s) = serde_json::to_string_pretty(f) {
-            let _ = std::fs::create_dir_all(&self.dir);
-            let _ = std::fs::write(self.crash_file(), s);
-        }
+    /// Write the crash file; `false` when it could not be written.
+    pub fn write_crash(&self, f: &Failure) -> bool {
+        let Ok(s) = serde_json::to_string_pretty(f) else {
+            return false;
+        };
+        let _ = std::fs::create_dir_all(&self.dir);
+        std::fs::write(self.crash_file(), s).is_ok()
     }
 
     fn remove_crash(&self) {
@@ -371,8 +381,9 @@ impl CrashFile {
         if seen > REPEATS && self.on_disk.as_ref() == Some(&f.key()) {
             return;
         }
-        self.files.write_crash(f);
-        self.on_disk = Some(f.key());
+        // Only a file that was written may be skipped next time: a failed
+        // write (disk full) is tried again by the next panic.
+        self.on_disk = self.files.write_crash(f).then(|| f.key());
         self.writes += 1;
     }
 
@@ -392,6 +403,13 @@ impl CrashFile {
         if !self.pending && self.withdraw_at.is_some_and(|t| now >= t) {
             self.withdraw();
         }
+    }
+
+    /// How long until [`CrashFile::tick`] withdraws the file, if it will.
+    fn withdraw_in(&self, now: Instant) -> Option<Duration> {
+        self.withdraw_at
+            .filter(|_| !self.pending)
+            .map(|t| t.saturating_duration_since(now))
     }
 
     fn withdraw(&mut self) {
@@ -740,6 +758,62 @@ mod tests {
         // Not caught: the exit is not clean, the file stays for next time.
         c.end();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn a_failed_crash_file_write_is_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (files, _) = begin(dir.path(), A, &[]);
+        let path = files.crash_file();
+        let mut c = CrashFile::new(files);
+        let f = Failure::from_message("every frame");
+        for seen in 1..=REPEATS {
+            c.record(&f, seen);
+            c.survived(Instant::now());
+        }
+        // The disk refuses the next write (a folder stands in the way,
+        // which even root cannot write over).
+        std::fs::create_dir(&path).unwrap();
+        c.record(&f, REPEATS + 1);
+        assert!(path.is_dir(), "not written");
+        // Space again: the next occurrence writes it after all.
+        std::fs::remove_dir(&path).unwrap();
+        c.record(&f, REPEATS + 2);
+        let s = std::fs::read_to_string(&path).expect("written on retry");
+        assert_eq!(
+            serde_json::from_str::<Failure>(&s).unwrap().message,
+            "every frame"
+        );
+        // Once written, repeats skip the write again.
+        let writes = c.writes;
+        c.record(&f, REPEATS + 3);
+        assert_eq!(c.writes, writes);
+    }
+
+    #[test]
+    fn a_waiting_withdrawal_reports_when_it_is_due() {
+        let dir = tempfile::tempdir().unwrap();
+        let (files, _) = begin(dir.path(), A, &[]);
+        let path = files.crash_file();
+        let mut c = CrashFile::new(files);
+        let f = Failure::from_message("repeats");
+        let t0 = Instant::now();
+        assert_eq!(c.withdraw_in(t0), None, "nothing waiting");
+        for seen in 1..=REPEATS + 1 {
+            c.record(&f, seen);
+            assert_eq!(c.withdraw_in(t0), None, "not caught yet");
+            c.survived(t0);
+        }
+        assert_eq!(c.withdraw_in(t0), Some(WITHDRAW_AFTER));
+        let half = t0 + WITHDRAW_AFTER / 2;
+        c.tick(half);
+        assert_eq!(c.withdraw_in(half), Some(WITHDRAW_AFTER / 2));
+        assert!(path.exists());
+        // Due: the frame asked for then withdraws it.
+        let due = t0 + WITHDRAW_AFTER;
+        c.tick(due);
+        assert!(!path.exists());
+        assert_eq!(c.withdraw_in(due), None);
     }
 
     #[test]

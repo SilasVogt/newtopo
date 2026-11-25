@@ -76,8 +76,27 @@ impl ReportDialog {
     }
 }
 
+/// `model/<base>` for a file named `base` (scrubbed), safe to extract on
+/// any OS (see [`super::safe_file_name`]) and unique among `taken`
+/// ignoring case (Windows and macOS do not tell `A.step` from `a.step`).
+pub(crate) fn model_entry(taken: &[ModelFile], base: &str) -> String {
+    let base = super::safe_file_name(base);
+    let free = |n: &str| {
+        !taken
+            .iter()
+            .any(|m| m.name.to_lowercase() == n.to_lowercase())
+    };
+    let mut name = format!("model/{base}");
+    let mut i = 2;
+    while !free(&name) {
+        name = format!("model/{i}-{base}");
+        i += 1;
+    }
+    name
+}
+
 /// Model files of this session: imported CAD files that still exist.
-fn source_files(sources: &[PathBuf]) -> Vec<ModelFile> {
+pub(crate) fn source_files(sources: &[PathBuf]) -> Vec<ModelFile> {
     let mut out: Vec<ModelFile> = Vec::new();
     for p in sources {
         let Ok(meta) = std::fs::metadata(p) else {
@@ -86,13 +105,7 @@ fn source_files(sources: &[PathBuf]) -> Vec<ModelFile> {
         if !meta.is_file() {
             continue;
         }
-        let base = super::file_name(p);
-        let mut name = format!("model/{base}");
-        let mut i = 2;
-        while out.iter().any(|m| m.name == name) {
-            name = format!("model/{i}-{base}");
-            i += 1;
-        }
+        let name = model_entry(&out, &super::file_name(p));
         out.push(ModelFile {
             name,
             data: Data::File(p.clone()),
@@ -148,13 +161,18 @@ impl AppState {
     /// Failures caught since the last frame: log them, and open the dialog
     /// for the first one not reported yet (once per failure). The previous
     /// session's crash is offered once the autosave recovery is done, so the
-    /// report sees the recovered scene and the graphics adapter.
-    pub fn poll_failures(&mut self) {
-        crash::tick();
-        if self.ui.recovery.is_empty()
-            && self.ui.report.is_none()
-            && let Some(p) = self.previous_crash.take()
-        {
+    /// report sees the recovered scene and the graphics adapter, and only
+    /// when no dialog that goes first is open (its files go once offered,
+    /// so it must be shown right away: Discard in a Quit prompt would
+    /// otherwise lose it). Returns when to draw a frame again for a crash
+    /// file waiting to be withdrawn (see [`crash::tick`]).
+    pub fn poll_failures(&mut self) -> Option<std::time::Duration> {
+        let wake = crash::tick();
+        let first = matches!(
+            self.active_modal(),
+            None | Some(crate::jobs::Modal::Export | crate::jobs::Modal::About)
+        );
+        if first && let Some(p) = self.previous_crash.take() {
             self.open_report(Some(p.failure.clone()), Origin::PreviousCrash);
             // Only now: a start-up that fails before this leaves it on disk.
             p.offered();
@@ -172,6 +190,7 @@ impl AppState {
             }
             self.open_report(Some(f), Origin::Caught);
         }
+        wake
     }
 
     /// Copy the open scene into the report the first time "The model" is on.
@@ -201,7 +220,7 @@ impl AppState {
         match r {
             Ok(bytes) => {
                 d.contents.model.push(ModelFile {
-                    name: format!("model/{title}.ntopo"),
+                    name: model_entry(&d.contents.model, &format!("{title}.ntopo")),
                     size: bytes.len() as u64,
                     data: Data::Bytes(bytes.into()),
                 });
@@ -239,13 +258,24 @@ impl AppState {
         let name = super::file_name(&path);
         let parts = d.parts();
         match super::write_zip(&path, &parts) {
-            Ok(()) => {
+            Ok(not_saved) => {
                 d.saved = Some((path.clone(), d.choices.clone()));
                 self.toast_log(
                     ToastKind::Info,
                     format!("{} {}", S::REPORT_SAVED, crate::jobs::short_path(&path)),
-                    &format!("report saved: {name} ({} files)", parts.len()),
+                    &format!(
+                        "report saved: {name} ({} files)",
+                        parts.len() - not_saved.len()
+                    ),
                 );
+                if !not_saved.is_empty() {
+                    let list = not_saved.join(", ");
+                    self.toast_log(
+                        ToastKind::Warn,
+                        format!("{} {list}", S::REPORT_NOT_SAVED),
+                        &format!("report saved without unreadable files: {list}"),
+                    );
+                }
                 if !self.screenshot_mode
                     && let Err(e) = reveal(&path)
                 {

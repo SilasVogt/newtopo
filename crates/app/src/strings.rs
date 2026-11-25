@@ -384,8 +384,8 @@ pub const REPORT_COMMENT_HINT: &str = "What were you doing? (optional)";
 pub const REPORT_CONTAINS: &str = "What the report contains";
 pub const REPORT_NOT_INCLUDED: &str = "not included";
 pub const REPORT_NO_ERROR: &str = "No error attached";
-pub const REPORT_PRIVACY: &str =
-    "Nothing is sent by the app. No user name or file paths are included.";
+pub const REPORT_PRIVACY: &str = "Nothing is sent by the app. Your user name and the folders \
+     of full file paths are removed; file names are kept.";
 pub const REPORT_PRIVACY_MODEL: &str =
     "Nothing is sent by the app. Model files are included as they are.";
 pub const REPORT_SAVE: &str = "Save report…";
@@ -397,6 +397,10 @@ pub const REPORT_COPY_PROMPT: &str = "Copy prompt";
 pub const REPORT_COPIED: &str = "Copied";
 pub const REPORT_SAVED: &str = "Report saved:";
 pub const REPORT_SAVE_FAILED: &str = "Couldn't save the report";
+/// Followed by the files left out of a saved report (they could not be
+/// read any more).
+pub const REPORT_NOT_SAVED: &str =
+    "Saved without these files (they could no longer be read; see missing.txt):";
 pub const REPORT_ISSUE_OPENED: &str =
     "GitHub opened in your browser. Drag the report file into the issue.";
 pub const REPORT_ISSUE_FAILED: &str = "Couldn't open the browser";

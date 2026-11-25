@@ -978,6 +978,34 @@ fn previous_crash_is_offered_after_recovery_with_the_recovered_scene() {
 }
 
 #[test]
+fn previous_crash_waits_behind_the_quit_prompt() {
+    use crate::report::crash;
+    use crate::report::ui::Origin;
+    let dir = tempfile::tempdir().unwrap();
+    // A crash of a session that has ended (another process).
+    let gone = crash::Owner {
+        pid: u32::MAX - 5,
+        start: 1,
+    };
+    let (old, _) = crash::begin_session_as(dir.path(), gone, &|_: &crash::Owner| false);
+    old.write_crash(&crash::Failure::from_message("crash before quit"));
+    let prev = crash::begin_session(dir.path()).1.expect("crash found");
+    let mut h = Harness::new(false);
+    h.app.st.offer_previous_crash(prev);
+    // The user asked to quit with unsaved changes: that prompt goes first.
+    h.app.st.ui.unsaved_prompt = Some(crate::app::PendingAfterPrompt::Quit);
+    h.frames(3);
+    assert!(h.app.st.ui.report.is_none(), "not taken behind the prompt");
+    assert!(old.crash_file().exists(), "kept on disk while it waits");
+    // Cancel: now it is offered, and only then consumed.
+    h.app.st.ui.unsaved_prompt = None;
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().expect("offered");
+    assert_eq!(d.origin, Origin::PreviousCrash);
+    assert!(!old.crash_file().exists(), "consumed once offered");
+}
+
+#[test]
 fn a_cancelled_or_failed_save_does_not_open_the_issue() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = Harness::new(false);
