@@ -76,3 +76,24 @@ Where each non-trivial algorithm came from (SPEC §0 rule 4): public papers, ope
 | Before/after compare (one camera, one render target per viewport slot) | Own design |
 | Fuzzy command matching (subsequence with word-start and run bonuses) | Own design |
 | Themes, icons, logo, colours, wording | Own design (no third-party art); fonts: Noto Sans (SIL OFL 1.1) |
+
+
+## Mesh mode (`core/src/meshedit/`, SPEC §9.5)
+
+Behaviour was designed from the SPEC and the papers below. No add-on, plug-in or other implementation of similar tools was read, downloaded or run.
+
+| Area | Source |
+| --- | --- |
+| Decimate cost (`quadric.rs`, `decimate.rs`) | Garland & Heckbert, "Surface Simplification Using Quadric Error Metrics", SIGGRAPH 1997: area-weighted plane quadrics, constraint planes along feature edges (their §6.1), subset placement (their §4). Own code. |
+| Quad-preserving merges (opposite-corner merge in a quad) | Diagonal collapse as described by Daniels, Silva, Shepherd, Cohen, "Quadrilateral mesh simplification", SIGGRAPH Asia 2008, and Tarini, Pietroni, Cignoni, Panozzo, Puppo, "Practical quad mesh simplification", Eurographics 2010. The quad/shape penalty in the cost is own design. |
+| Merge validity (`work.rs`) | Own design: Euler characteristic unchanged plus local manifold checks (edge use counts, single fan per vertex, no duplicate faces), in the spirit of the link condition (Dey, Edelsbrunner, Guha, Nekhayev 1999). |
+| Deviation bound (witness vertices per polygon) | Own design after the error-tracking idea of Klein, Liebich, Straßer, "Mesh Reduction with Error Control", IEEE Visualization 1996 (removed vertices stay attached to the nearest new face). |
+| Point–triangle distance | Ericson, *Real-Time Collision Detection*, §5.1.5. |
+| Planar mode (normal-cone region growing, straight-vertex dissolve) | Own design; refill uses the auto-fill decomposition (SPEC §7, `fill/`). |
+| Triangle pairing into quads | Own design (greedy best-quality pairing, as in the §7 large-polygon path). |
+| Cleanup (merge close vertices, short edges, slide along cross edges, dissolve straight vertices) | Own design from SPEC §9.5.4. Closest point between two lines: standard vector algebra. |
+| Resample (arc-length respacing, corner detection, count distribution, old→new matching) | Own design; count distribution by largest remainder (Hamilton's method); old→new matching by a monotone-assignment dynamic program (standard sequence alignment). |
+| Attribute carry-over (exact for kept corners, interpolated along edges, seam side chosen by nearest UV) | Own design. |
+| Vertex Slide (`slide.rs`): edge choice by direction, Even, Clamp, landing merge, largest valid factor by bisection | Behaviour: the generic "slide vertices along an adjacent edge" tool of DCC apps, as described in the Blender user manual's *Slide Vertices* page (factor, Even, Clamp; read for behaviour only, no source code). Feature constraints, validity rules, the "not worse" rule for already-bad polygons and the plan/apply split for dragging are own design. Bisection: standard numerics. |
+| Merge by Distance (`merge.rs`): role-ordered greedy clustering on a uniform spatial hash, batch weld with pocket cancellation, per-cluster rollback, centroid placement, rounds to a fixed point | Behaviour: the generic "merge by distance" / weld cleanup of DCC apps, as described in the Blender user manual's *Merge by Distance* entries (merge distance, centroid on/off, include unselected; behaviour only, no source code). Spatial hash with the query radius as cell size: standard technique (e.g. Teschner et al., "Optimized Spatial Hashing for Collision Detection of Deformable Objects", VMV 2003). Clustering order, the weld/manifold checks, the rollback and the modes are own design. |
+| Synthetic test meshes and Hausdorff sampling (`synth.rs`) | Textbook parameterisations; own code. |
