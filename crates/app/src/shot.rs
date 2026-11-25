@@ -233,9 +233,68 @@ fn pointer_frames(n: usize, at: Pos2) -> Vec<Vec<Event>> {
 /// Every scenario: (file name, setup, frames).
 type Setup = Box<dyn Fn(&mut App)>;
 
+/// The headless adapter as "PC details" would show it.
+fn shot_gpu(s: &Shooter) -> crate::report::system::GpuInfo {
+    let info = &s._headless.adapter_info;
+    let (name, backend) = info
+        .rsplit_once(" (")
+        .map(|(n, b)| (n.to_string(), b.trim_end_matches(')').to_string()))
+        .unwrap_or_else(|| (info.clone(), String::new()));
+    crate::report::system::GpuInfo {
+        name,
+        backend,
+        device_type: "headless".into(),
+        driver: String::new(),
+    }
+}
+
+/// A report dialog as it looks after an engine panic during Connect, with
+/// an imported model file and a few recorded steps.
+fn report_after_error(a: &mut App, gpu: &crate::report::system::GpuInfo, model: &Path) {
+    use newtopo_core::ops::{Op, PatchSel};
+    a.st.load_sample();
+    a.st.gpu_info = Some(gpu.clone());
+    a.st.display = crate::report::system::Display {
+        pixels_per_point: PPP,
+        native: Some(PPP),
+        ui_scale: 1.0,
+    };
+    a.st.session.import(model);
+    for i in 0..14 {
+        a.st.session.op(
+            &Op::Connect {
+                patches: PatchSel {
+                    faces: vec![i],
+                    ..Default::default()
+                },
+                a: 8,
+                b: 0,
+                start_on_seam: false,
+            },
+            crate::report::Outcome::Applied,
+        );
+    }
+    let mut f = crate::report::crash::Failure::from_message(
+        "index out of bounds: the len is 117 but the index is 201",
+    );
+    f.location = Some("crates/core/src/eval/assemble.rs:368:21".into());
+    f.context = Some("Connect".into());
+    f.backtrace =
+        "0: newtopo_core::eval::assemble::assemble_face\n1: newtopo_core::scene::Scene::apply"
+            .into();
+    a.st.open_report(Some(f), crate::report::ui::Origin::Caught);
+}
+
 pub fn run(dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut s = Shooter::new()?;
+    let gpu = shot_gpu(&s);
+    // A stand-in for an imported CAD file, outside the screenshot folder.
+    let fixtures = std::env::temp_dir().join("newtopo-shot-fixtures");
+    std::fs::create_dir_all(&fixtures)?;
+    let model = fixtures.join("tube_v3.step");
+    std::fs::write(&model, vec![b'x'; 1_250_000])?;
+    let (gpu2, gpu3, model2) = (gpu.clone(), gpu.clone(), model.clone());
     let scenarios: Vec<(&str, Setup, Vec<Vec<Event>>)> = vec![
         ("01-empty.png", Box::new(|_a: &mut App| {}), frames(6)),
         (
@@ -340,6 +399,34 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
                     crate::update::Version(0, 2, 0),
                 ));
                 a.st.updates.dialog_open = true;
+            }),
+            frames(6),
+        ),
+        (
+            "21-report-error.png",
+            Box::new(move |a: &mut App| report_after_error(a, &gpu, &model)),
+            frames(6),
+        ),
+        (
+            "22-report-help.png",
+            Box::new(move |a: &mut App| {
+                a.st.load_sample();
+                a.st.gpu_info = Some(gpu2.clone());
+                a.st.run(crate::commands::Cmd::ReportProblem);
+            }),
+            frames(6),
+        ),
+        (
+            "23-report-light-model.png",
+            Box::new(move |a: &mut App| {
+                a.st.set_theme("Paper (light)");
+                report_after_error(a, &gpu3, &model2);
+                if let Some(d) = a.st.ui.report.as_mut() {
+                    d.choices.model = true;
+                    d.choices.pc = false;
+                    d.choices.comment =
+                        "Clicked Connect on the inner faces of the tube, then it stopped.".into();
+                }
             }),
             frames(6),
         ),
