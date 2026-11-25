@@ -817,7 +817,7 @@ impl AppState {
         self.locked.contains(&body)
     }
 
-    fn compute_locked(&self) -> BTreeSet<BodyId> {
+    pub(crate) fn compute_locked(&self) -> BTreeSet<BodyId> {
         let locked_layers: BTreeSet<LayerId> = self
             .layer_rows()
             .into_iter()
@@ -1642,8 +1642,8 @@ impl AppState {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {
             self.drag = None;
-        } else if self.in_mesh_mode() {
-            self.mesh_cancel();
+        } else if self.in_mesh_mode() && self.mesh_cancel() {
+            // Nothing pending in mesh mode falls through to isolate.
         } else if self.tool.cancel_pending() {
         } else if self.doc.in_preview() {
             self.discard_preview();

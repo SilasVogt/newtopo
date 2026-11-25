@@ -384,13 +384,7 @@ impl AppState {
                         self.local.body_locked.remove(&id);
                     }
                 }
-                OutlinerAction::Select(id, how) => {
-                    if self.mode != Mode::Object {
-                        self.set_mode(Mode::Object);
-                    }
-                    combine(&mut self.sel.objects, [id], how);
-                    self.on_selection_changed();
-                }
+                OutlinerAction::Select(id, how) => self.outliner_select(id, how),
                 OutlinerAction::RenameBody(id, name) => self.rename_body(id, name),
                 OutlinerAction::RenameLayer(id, name) => self.rename_layer(id, name),
                 OutlinerAction::DeleteLayer(id) => self.delete_layer(id),
@@ -402,6 +396,21 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// A click on an outliner row: select the object (object mode).
+    pub(crate) fn outliner_select(&mut self, id: BodyId, how: Combine) {
+        if self.in_mesh_mode() {
+            // Mesh mode has no object selection (SPEC §9.5.9): a row that
+            // looked selected would not be what the mesh tools edit.
+            self.toast(ToastKind::Info, S::TOAST_MESH_OUTLINER_SELECT);
+            return;
+        }
+        if self.mode != Mode::Object {
+            self.set_mode(Mode::Object);
+        }
+        combine(&mut self.sel.objects, [id], how);
+        self.on_selection_changed();
     }
 
     fn paint_toggle(

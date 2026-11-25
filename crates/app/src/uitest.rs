@@ -1501,6 +1501,142 @@ fn undo_during_a_slide_drag_cancels_it() {
     assert_eq!(*mesh_of(&h, b).unwrap(), *slid);
 }
 
+#[test]
+fn esc_in_mesh_mode_falls_through_to_isolate() {
+    let (mut h, b) = mesh_harness(false);
+    h.app.st.sel.objects.insert(b);
+    h.key(Key::Slash, Modifiers::NONE);
+    assert!(h.app.st.view.isolate.is_some());
+    enter_mesh(&mut h);
+    h.app
+        .st
+        .mesh_pick_tool(crate::meshmode::MeshTool::TargetMerge);
+    h.key(Key::Escape, Modifiers::NONE);
+    assert_eq!(
+        h.app.st.mm.tool,
+        crate::meshmode::MeshTool::Select,
+        "first Esc leaves the tool"
+    );
+    assert!(h.app.st.view.isolate.is_some());
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(
+        h.app.st.view.isolate.is_none(),
+        "with nothing pending, Esc exits isolate"
+    );
+    assert!(h.app.st.in_mesh_mode());
+}
+
+#[test]
+fn locked_objects_are_not_edited_in_mesh_mode() {
+    use newtopo_core::Op;
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(has_edits(&h, b));
+    let before = mesh_of(&h, b).unwrap();
+    // Lock the object while its loop is still selected.
+    select_loop(&mut h);
+    h.app.st.apply(Op::SetBodyLocked {
+        body: b,
+        locked: true,
+    });
+    h.frames(1);
+    assert!(
+        !h.app.st.sel.edges.is_empty(),
+        "the selection predates the lock"
+    );
+    for cmd in [Cmd::MeshRelax, Cmd::MeshSpace, Cmd::MeshDecimate] {
+        h.app.st.run(cmd);
+        assert_eq!(*mesh_of(&h, b).unwrap(), *before, "{cmd:?} left it alone");
+        assert_eq!(
+            h.app.st.toasts.items.last().unwrap().text,
+            crate::strings::TOAST_LOCKED_SKIPPED
+        );
+    }
+    // Live values of the edit made before the lock don't redo it either.
+    h.app.st.mm.params.decimate_pct = 20.0;
+    h.app.st.mesh_params_changed();
+    assert_eq!(*mesh_of(&h, b).unwrap(), *before);
+    // Discard skips it too (the only edited object, nothing selected).
+    h.app.st.sel = Default::default();
+    h.app.st.run(Cmd::MeshDiscard);
+    assert!(has_edits(&h, b), "a locked object keeps its mesh edits");
+}
+
+#[test]
+fn outliner_rows_do_not_select_in_mesh_mode() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    let edges = h.app.st.sel.edges.clone();
+    h.app
+        .st
+        .outliner_select(b, crate::selection::Combine::Replace);
+    assert!(h.app.st.sel.objects.is_empty(), "no row looks selected");
+    assert_eq!(h.app.st.sel.edges, edges, "the mesh selection stays");
+    assert_ne!(h.app.st.mode, Mode::Object);
+    // CAD mode selects as before.
+    h.key(Key::M, Modifiers::NONE);
+    h.app
+        .st
+        .outliner_select(b, crate::selection::Combine::Replace);
+    assert!(h.app.st.sel.objects.contains(&b));
+}
+
+#[test]
+fn alt_click_off_an_edge_keeps_the_selection() {
+    let (mut h, _) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    let edges = h.app.st.sel.edges.clone();
+    h.frames(10);
+    let empty = h.app.st.view.rect.min + vec2(6.0, 6.0);
+    assert!(
+        h.app.st.pick_at(empty, Mode::Edge).is_none(),
+        "nothing there"
+    );
+    h.click(empty, Modifiers::ALT);
+    assert_eq!(h.app.st.sel.edges, edges);
+}
+
+#[test]
+fn mesh_edits_are_in_the_report_steps() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(has_edits(&h, b));
+    // A live value change amends the same edit: still one step.
+    h.app.st.mm.params.relax_iterations = 10;
+    h.app.st.mesh_params_changed();
+    let v: serde_json::Value = serde_json::from_str(&h.app.st.session.steps_json()).unwrap();
+    let mesh: Vec<&serde_json::Value> = v["session"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["step"] == "mesh_edit")
+        .collect();
+    assert_eq!(mesh.len(), 1, "{:#}", v["session"]);
+    assert_eq!(mesh[0]["tool"], "Relax");
+    assert_eq!(mesh[0]["outcome"], "applied");
+    assert_eq!(v["mesh_edits"], 1);
+    assert!(
+        v["note"].as_str().unwrap().contains("does not replay them"),
+        "steps.json says its ops don't reproduce the scene"
+    );
+    h.app.st.sel = Default::default();
+    h.app.st.run(Cmd::MeshDiscard);
+    let v: serde_json::Value = serde_json::from_str(&h.app.st.session.steps_json()).unwrap();
+    assert_eq!(v["mesh_edits"], 2);
+    assert_eq!(
+        v["session"].as_array().unwrap().last().unwrap()["step"],
+        "discard_mesh_edits"
+    );
+}
+
 // ------------------------------------------------------------ problem reports (SPEC §5.11)
 
 fn report_origin(h: &Harness) -> Option<crate::report::ui::Origin> {

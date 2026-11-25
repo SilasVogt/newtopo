@@ -599,7 +599,9 @@ impl AppState {
         }
     }
 
-    /// Alt-click: the edge loop through the edge under the pointer.
+    /// Alt-click: the edge loop through the edge under the pointer. With
+    /// `Replace` the selection is cleared only once a loop is found, so a
+    /// click that finds none keeps it.
     pub fn mesh_loop_at(&mut self, at: Pos2, how: Combine) {
         if self.mode == Mode::Face {
             self.toast(
@@ -619,7 +621,10 @@ impl AppState {
         };
         match me::edge_loop(&m, e[0], e[1]) {
             Ok(l) => {
-                self.combine_elements(b, &l, &[], how);
+                if how == Combine::Replace {
+                    self.sel.clear_mode(self.mode);
+                }
+                self.combine_elements(b, &l, &[], Combine::Add);
                 self.push_pick(Pick::Edge(b, e));
                 self.on_selection_changed();
             }
@@ -680,11 +685,7 @@ impl AppState {
                 .map(|p| p.windows(2).map(|w| [w[0], w[1]]).collect::<Vec<_>>()),
             (Pick::Edge(_, a), Pick::Edge(_, c)) => me::shortest_edge_path(&m, a, c),
             (Pick::Vert(_, a), Pick::Edge(_, c)) | (Pick::Edge(_, c), Pick::Vert(_, a)) => {
-                me::shortest_edge_path(&m, c, c).and_then(|mut e| {
-                    let p = me::shortest_path(&m, a, c[0])?;
-                    e.extend(p.windows(2).map(|w| [w[0], w[1]]));
-                    Ok(e)
-                })
+                vert_edge_path(&m, a, c)
             }
         };
         match r {
@@ -804,10 +805,7 @@ impl AppState {
                 } else {
                     Combine::Replace
                 };
-                if how == Combine::Replace && self.mode != Mode::Face {
-                    self.sel.clear_mode(self.mode);
-                }
-                self.mesh_loop_at(p, Combine::Add);
+                self.mesh_loop_at(p, how);
             }
             return true;
         }
@@ -905,6 +903,25 @@ impl AppState {
             }
             MeshTool::TargetMerge | MeshTool::Select => Ok(vec![]),
         }
+    }
+
+    /// `inputs` without locked objects, which mesh tools never edit (their
+    /// mesh-mode selection may predate the lock). Says so when it drops
+    /// any; `None` when nothing is left.
+    fn unlocked_inputs(&mut self, inputs: Vec<(BodyId, Input)>) -> Option<Vec<(BodyId, Input)>> {
+        let locked = self.compute_locked();
+        let n = inputs.len();
+        let out: Vec<(BodyId, Input)> = inputs
+            .into_iter()
+            .filter(|(b, _)| !locked.contains(b))
+            .collect();
+        if out.len() < n {
+            self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
+            if out.is_empty() {
+                return None;
+            }
+        }
+        Some(out)
     }
 
     /// Run `t` once on one body's mesh (pure, plus the projection back to
@@ -1087,6 +1104,9 @@ impl AppState {
                 }
             },
         };
+        let Some(inputs) = self.unlocked_inputs(inputs) else {
+            return;
+        };
         let mut bodies = Vec::new();
         for (b, input) in inputs {
             let Some(m) = self.mm.meshes.get(&b).cloned() else {
@@ -1122,7 +1142,18 @@ impl AppState {
     /// whose results changed nothing has no step of its own, so its redo
     /// makes a new one.
     fn mesh_apply(&mut self, mut op: LastOp, amend: bool) {
+        // A redo with new values (live values, a slide drag) must not edit
+        // an object that was locked since the edit started: it ends there.
+        let locked = self.compute_locked();
+        if op.bodies.iter().any(|(b, ..)| locked.contains(b)) {
+            self.mm.last = None;
+            self.mm.slide = None;
+            self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
+            return;
+        }
         let amend = amend && op.stepped;
+        // What a crash report says the user was doing.
+        let _action = crate::report::crash::action(format!("Mesh edit: {}", op.tool.title()));
         // Merge by Distance: the scope follows "Selected only" as it is now.
         if op.tool == MeshTool::MergeByDistance {
             let selected = self.mm.params.merge_selected;
@@ -1137,6 +1168,7 @@ impl AppState {
         let mut changes = Vec::new();
         let mut results = Vec::new();
         let mut refusals = Vec::new();
+        let mut failed = false;
         for (b, m, had, input) in &op.bodies {
             match guard(|| self.mesh_compute(op.tool, *b, m, input)) {
                 Ok(Ok(out)) => {
@@ -1150,18 +1182,41 @@ impl AppState {
                         changes.push((*b, had.then(|| (**m).clone())));
                     }
                 }
-                Err(e) => refusals.push(e),
+                Err(e) => {
+                    failed = true;
+                    refusals.push(e);
+                }
             }
         }
+        use crate::report::Outcome;
         if results.is_empty() && !amend {
             if let Some(r) = refusals.first() {
                 self.toast(ToastKind::Warn, r.clone());
+                let o = if failed {
+                    Outcome::Failed
+                } else {
+                    Outcome::Refused
+                };
+                self.session.mesh_edit(op.tool.title(), o);
             }
             return;
         }
         match self.doc.set_meshes(changes, amend) {
-            Ok(made) => op.stepped = amend || made,
+            Ok(made) => {
+                // The problem report logs each mesh edit once, when it
+                // makes its undo step (live value changes amend that step).
+                if made && !op.stepped {
+                    self.session.mesh_edit(op.tool.title(), Outcome::Applied);
+                }
+                op.stepped = amend || made;
+            }
             Err(e) => {
+                let o = if matches!(e, crate::docstate::ApplyError::Engine(_)) {
+                    Outcome::Failed
+                } else {
+                    Outcome::Refused
+                };
+                self.session.mesh_edit(op.tool.title(), o);
                 self.toast(ToastKind::Warn, e.message());
                 if amend {
                     self.mm.last = None;
@@ -1299,6 +1354,7 @@ impl AppState {
                 return None;
             }
         };
+        let inputs = self.unlocked_inputs(inputs)?;
         let cam = self.camera_matrices();
         let preserve = self.mm.params.preserve();
         let doc = self.doc.scene.as_ref()?.doc().clone();
@@ -1419,6 +1475,17 @@ impl AppState {
         } else {
             bodies.into_iter().filter(|b| edited.contains(b)).collect()
         };
+        let locked = self.compute_locked();
+        if targets.iter().any(|b| locked.contains(b)) {
+            self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
+        }
+        let targets: Vec<BodyId> = targets
+            .into_iter()
+            .filter(|b| !locked.contains(b))
+            .collect();
+        if targets.is_empty() && edited.iter().any(|b| locked.contains(b)) {
+            return;
+        }
         if targets.is_empty() {
             self.toast(
                 ToastKind::Info,
@@ -1432,6 +1499,9 @@ impl AppState {
         }
         match self.doc.discard_meshes(&targets) {
             Ok(n) => {
+                if n > 0 {
+                    self.session.mesh_discard();
+                }
                 self.mm.last = None;
                 self.ensure_meshes();
                 self.invalidate_view();
@@ -1982,6 +2052,24 @@ impl AppState {
     }
 }
 
+/// Ctrl-click between a vertex and an edge: the shortest path from `a` to
+/// the nearer end of `c` (by path length; ties to `c[0]`), plus `c`.
+fn vert_edge_path(m: &EditMesh, a: u32, c: [u32; 2]) -> Result<Vec<[u32; 2]>, Refusal> {
+    let mut out = me::shortest_edge_path(m, c, c)?;
+    let len = |p: &[u32]| -> f64 {
+        p.windows(2)
+            .map(|w| m.positions[w[0] as usize].distance(m.positions[w[1] as usize]))
+            .sum()
+    };
+    let p = match (me::shortest_path(m, a, c[0]), me::shortest_path(m, a, c[1])) {
+        (Ok(p), Ok(q)) if len(&q) < len(&p) => q,
+        (Ok(p), _) | (Err(_), Ok(p)) => p,
+        (Err(r), Err(_)) => return Err(r),
+    };
+    out.extend(p.windows(2).map(|w| [w[0], w[1]]));
+    Ok(out)
+}
+
 /// Remove the selection of some bodies (every component kind).
 fn clear_bodies(sel: &mut Selection, bodies: &BTreeSet<BodyId>) {
     sel.verts.retain(|v| !bodies.contains(&v.body()));
@@ -2018,4 +2106,31 @@ fn tool_grid(
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_vertex_to_edge_path_runs_to_the_nearer_end() {
+        // 4 × 4 plate, vertex (i, j) is i * 5 + j. From (0, 0) to the edge
+        // (3, 1)–(3, 0): (3, 0) is three edges away, (3, 1) four.
+        let m = me::synth::plane(4, 1.0);
+        let v = |i: u32, j: u32| i * 5 + j;
+        let path = vert_edge_path(&m, v(0, 0), [v(3, 1), v(3, 0)]).unwrap();
+        assert_eq!(
+            path.len(),
+            4,
+            "three edges to (3, 0), then the edge: {path:?}"
+        );
+        let ends: BTreeSet<u32> = path.iter().flatten().copied().collect();
+        assert!(
+            ends.contains(&v(2, 0)) && !ends.contains(&v(0, 1)),
+            "{path:?}"
+        );
+        // Either order of the edge gives the same path.
+        let back = vert_edge_path(&m, v(0, 0), [v(3, 0), v(3, 1)]).unwrap();
+        assert_eq!(back.len(), 4, "{back:?}");
+    }
 }
