@@ -936,9 +936,10 @@ fn previous_crash_is_offered_after_recovery_with_the_recovered_scene() {
     let dir = tempfile::tempdir().unwrap();
     // A session that crashed: marker left, crash file written. `main`
     // finds it before the app starts.
-    assert!(crash::begin_session(dir.path()).is_none());
-    crash::write_crash_file(dir.path(), &crash::Failure::from_message("hard crash"));
-    let prev = crash::begin_session(dir.path()).expect("crash found");
+    let (session, none) = crash::begin_session(dir.path());
+    assert!(none.is_none());
+    session.write_crash(&crash::Failure::from_message("hard crash"));
+    let prev = crash::begin_session(dir.path()).1.expect("crash found");
     let mut h = Harness::new(false);
     h.app.st.ui.recovery = vec![dir.path().join("scene.ntopo.autosave")];
     h.app.st.offer_previous_crash(prev);
@@ -990,4 +991,100 @@ fn a_cancelled_or_failed_save_does_not_open_the_issue() {
         "no page asking for a missing file"
     );
     assert!(h.app.st.ui.report.as_ref().unwrap().saved.is_none());
+}
+
+#[test]
+fn folder_names_never_reach_the_report() {
+    use crate::jobs::ExportDialog;
+    use crate::report::ui::Origin;
+    use crate::report::{Data, agent_prompt, issue_url, parts};
+    use newtopo_core::Op;
+    use newtopo_kernel::mock::{MockBody, MockKernel};
+    // The app logger feeds the in-memory log the report reads here.
+    crate::report::log::init(None);
+    let tmp = tempfile::tempdir().unwrap();
+    let secret = tmp.path().join("Secret Client (NDA)");
+    std::fs::create_dir_all(&secret).unwrap();
+    let mut h = Harness::new(false);
+    let mut scene = newtopo_core::scene::Scene::new(std::sync::Arc::new(MockKernel::new()));
+    let body = scene
+        .add_body(
+            &MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)).to_brep_bytes(),
+            newtopo_kernel::BodyAttributes {
+                name: "box".into(),
+                transform: glam::DMat4::IDENTITY,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    h.app.st.doc.set_scene(scene, None);
+    h.frames(1);
+    // A body renamed to a path-like name.
+    let path_name = format!("{}/part.step", secret.display());
+    h.app.st.apply(Op::RenameBody {
+        body,
+        name: path_name,
+    });
+    // Save and export into the client's folder, and fail to open from it.
+    h.app.st.doc.path = Some(secret.join("part.ntopo"));
+    h.app.st.save(false);
+    assert!(secret.join("part.ntopo").exists(), "saved");
+    let d = ExportDialog {
+        format: newtopo_core::export::Format::Obj,
+        opts: h.app.st.prefs.export.clone(),
+        units: h.app.st.prefs.units.clone(),
+    };
+    h.app.st.export_to(secret.join("part.obj"), d);
+    for _ in 0..400 {
+        if !h.app.st.busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.frames(1);
+    }
+    assert!(secret.join("part.obj").exists(), "exported");
+    h.app.st.open_scene(Some(secret.join("missing.ntopo")));
+    // An error whose message names the folder.
+    let f = crate::report::crash::Failure::from_message(&format!(
+        "Couldn't read {}/part.ntopo",
+        secret.display()
+    ));
+    h.app.st.open_report(Some(f), Origin::Caught);
+    let d = h.app.st.ui.report.as_ref().expect("open");
+    let log = &d.contents.log;
+    for line in [
+        "saved: part.ntopo",
+        "export finished: part.obj",
+        "open failed: missing.ntopo",
+    ] {
+        assert!(log.contains(line), "{line:?} not logged:\n{log}");
+    }
+    let mut ch = d.choices.clone();
+    ch.comment = "it broke".into();
+    let mut texts: Vec<(String, String)> = parts(&d.contents, &ch)
+        .into_iter()
+        .filter_map(|p| match p.data {
+            Data::Bytes(b) => Some((p.name, String::from_utf8_lossy(&b).into_owned())),
+            Data::File(_) => None,
+        })
+        .collect();
+    for n in ["error.txt", "log.txt", "steps.json"] {
+        assert!(texts.iter().any(|(name, _)| name == n), "{n} in the report");
+    }
+    texts.push(("issue".into(), issue_url(&d.contents, &ch, "r.zip")));
+    texts.push(("prompt".into(), agent_prompt(&d.contents, &ch, "r.zip")));
+    let tmp_name = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    for (name, text) in &texts {
+        for bad in ["Secret", "NDA", tmp_name.as_str()] {
+            assert!(!text.contains(bad), "{bad:?} in {name}:\n{text}");
+        }
+    }
+    let steps = &texts.iter().find(|(n, _)| n == "steps.json").unwrap().1;
+    assert!(steps.contains("…/part.step"), "{steps}");
 }

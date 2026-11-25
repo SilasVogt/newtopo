@@ -288,24 +288,29 @@ impl AppState {
 
     /// A document passed on the command line (file association).
     pub fn open_from_launch(&mut self, p: PathBuf) {
+        crate::report::scrub::know_file(&p);
+        let name = crate::report::file_name(&p);
         if !p.is_file() {
-            self.toast(
+            self.toast_log(
                 ToastKind::Error,
                 format!("Can't open {}: file not found", p.display()),
+                &format!("open failed: {name}: file not found"),
             );
         } else if is_scene(&p) {
             self.open_scene(Some(p));
         } else if is_cad(&p) {
             self.start_import(p);
         } else {
-            self.toast(
+            self.toast_log(
                 ToastKind::Warn,
                 format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+                &format!("can't open {name}: not STEP, IGES, BREP or .ntopo"),
             );
         }
     }
 
     pub fn start_import(&mut self, path: PathBuf) {
+        crate::report::scrub::know_file(&path);
         if !newtopo_kernel::HAS_CAD_IMPORT {
             self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
             return;
@@ -473,14 +478,19 @@ impl AppState {
                     let job = self.jobs.export.take().expect("job");
                     queue_panic(&job.panic);
                     match r.and_then(|files| write_export(&job.path, files)) {
-                        Ok(()) => {
-                            log::info!("export finished: {}", crate::report::file_name(&job.path));
-                            self.toast(
-                                ToastKind::Info,
-                                format!("{} {}", S::TOAST_EXPORTED, short_path(&job.path)),
-                            )
-                        }
-                        Err(e) => self.toast(ToastKind::Error, e),
+                        Ok(()) => self.toast_log(
+                            ToastKind::Info,
+                            format!("{} {}", S::TOAST_EXPORTED, short_path(&job.path)),
+                            &format!("export finished: {}", crate::report::file_name(&job.path)),
+                        ),
+                        Err(e) => self.toast_log(
+                            ToastKind::Error,
+                            &e,
+                            &format!(
+                                "export failed: {}: {e}",
+                                crate::report::file_name(&job.path)
+                            ),
+                        ),
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
@@ -624,9 +634,14 @@ impl AppState {
             } else if is_scene(&p) {
                 self.request(PendingAfterPrompt::Open(Some(p)));
             } else {
-                self.toast(
+                crate::report::scrub::know_file(&p);
+                self.toast_log(
                     ToastKind::Warn,
                     format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+                    &format!(
+                        "can't open {}: not STEP, IGES, BREP or .ntopo",
+                        crate::report::file_name(&p)
+                    ),
                 );
             }
         }
@@ -681,6 +696,7 @@ impl AppState {
             },
         };
         let _action = crate::report::crash::action("Open");
+        crate::report::scrub::know_file(&path);
         match self.doc.open(&path) {
             Ok(()) => {
                 self.session.file_event("open", &path);
@@ -704,9 +720,10 @@ impl AppState {
                     self.view.needs_frame = false;
                 }
             }
-            Err(e) => self.toast(
+            Err(e) => self.toast_log(
                 ToastKind::Error,
                 format!("Couldn't open {}: {e}", path.display()),
+                &format!("open failed: {}: {e}", crate::report::file_name(&path)),
             ),
         }
     }
@@ -736,6 +753,8 @@ impl AppState {
         };
         let old_autosave = autosave_path(&self.paths, self.doc.path.as_deref());
         self.doc.set_camera(self.view.camera.to_doc());
+        crate::report::scrub::know_file(&path);
+        let name = crate::report::file_name(&path);
         match self.doc.save(&path) {
             Ok(()) => {
                 if let Some(a) = old_autosave
@@ -747,12 +766,17 @@ impl AppState {
                 }
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
-                self.toast(
+                self.toast_log(
                     ToastKind::Info,
                     format!("{} {}", S::TOAST_SAVED, short_path(&path)),
+                    &format!("saved: {name}"),
                 );
             }
-            Err(e) => self.toast(ToastKind::Error, format!("Couldn't save: {e}")),
+            Err(e) => self.toast_log(
+                ToastKind::Error,
+                format!("Couldn't save: {e}"),
+                &format!("save failed: {name}: {e}"),
+            ),
         }
     }
 
@@ -789,12 +813,14 @@ impl AppState {
             let _ = std::fs::create_dir_all(dir);
         }
         self.doc.set_camera(self.view.camera.to_doc());
+        crate::report::scrub::know_file(&p);
+        let name = crate::report::file_name(&p);
         match self.doc.save_copy(&p) {
             Ok(()) => {
-                log::info!("autosaved to {}", p.display());
+                log::info!("autosaved: {name}");
                 self.owned_autosaves.insert(p);
             }
-            Err(e) => log::warn!("autosave failed: {e}"),
+            Err(e) => log::warn!("autosave failed: {name}: {e}"),
         }
     }
 
@@ -804,6 +830,7 @@ impl AppState {
             .and_then(|s| s.strip_suffix(".autosave"))
             .map(PathBuf::from)
             .filter(|p| is_scene(p) && self.paths.untitled_autosave().as_deref() != Some(autosave));
+        crate::report::scrub::know_file(autosave);
         match self.doc.open(autosave) {
             Ok(()) => {
                 // The user chose this autosave: it is ours to clean up now.
@@ -816,7 +843,14 @@ impl AppState {
                 self.view.needs_frame = true;
                 self.toast(ToastKind::Info, "Recovered. Save to keep it.");
             }
-            Err(e) => self.toast(ToastKind::Error, format!("Couldn't recover: {e}")),
+            Err(e) => self.toast_log(
+                ToastKind::Error,
+                format!("Couldn't recover: {e}"),
+                &format!(
+                    "recover failed: {}: {e}",
+                    crate::report::file_name(autosave)
+                ),
+            ),
         }
     }
 
@@ -891,6 +925,7 @@ impl AppState {
         if self.blocked_by_preview() {
             return;
         }
+        crate::report::scrub::know_file(&path);
         let Some(objects) = self.export_items() else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;

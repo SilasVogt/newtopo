@@ -107,12 +107,17 @@ fn main() -> eframe::Result {
     let paths = prefs::Paths::user();
     let report::Startup {
         data,
+        session,
         previous_crash,
     } = report::start(&launch, paths.data.as_deref());
+    // The app's own folders never reach a log line or a report.
+    for d in [&paths.data, &paths.config].into_iter().flatten() {
+        report::scrub::know_dir(d);
+    }
     report::log::init(data.as_deref());
     report::crash::install_hook();
-    if let Some(d) = &data {
-        report::crash::set_crash_dir(d);
+    if let Some(s) = session {
+        report::crash::activate(s);
     }
     if let Some(dir) = &launch.shot {
         let r = match &launch.models {
@@ -171,7 +176,6 @@ fn main() -> eframe::Result {
             );
             let mut app = app::App::new(&cc.egui_ctx, paths, gpu_ok, false);
             app.st.gpu_info = gpu;
-            app.st.crash_session = data;
             if let Some(f) = previous_crash {
                 app.st.offer_previous_crash(f);
             }

@@ -252,10 +252,6 @@ pub struct AppState {
     pub display: crate::report::system::Display,
     /// Report links opened (screenshot and test runs only record them).
     pub opened_urls: Vec<String>,
-    /// The data folder of the crash-report session `main` started
-    /// (`session.lock`); a clean exit ends it. `None` in capture and test
-    /// runs, which never touch the marker or the crash file.
-    pub crash_session: Option<PathBuf>,
     /// The previous session's crash, offered after the recovery dialog.
     pub previous_crash: Option<crate::report::crash::Failure>,
 }
@@ -352,7 +348,6 @@ impl App {
             gpu_info: None,
             display: Default::default(),
             opened_urls: Vec::new(),
-            crash_session: None,
             previous_crash: None,
         };
         st.ui.recovery = recovery;
@@ -523,9 +518,8 @@ impl App {
             crate::jobs::remove_autosaves(st);
         }
         log::info!("newtopo exiting");
-        if let Some(d) = &st.crash_session {
-            crate::report::crash::end_session(d);
-        }
+        // The session `main` activated (none in capture and test runs).
+        crate::report::crash::end_session();
     }
 }
 
@@ -738,6 +732,8 @@ impl AppState {
         !self.doc.has_scene() && self.demo.is_some()
     }
 
+    /// Show a toast; warnings and errors also go to the log (cleaned of
+    /// folders, see [`crate::report::clean`]).
     pub fn toast(&mut self, kind: ToastKind, msg: impl Into<String>) {
         let msg = msg.into();
         match kind {
@@ -746,6 +742,18 @@ impl AppState {
             ToastKind::Info => {}
         }
         self.toasts.push(kind, msg, self.time);
+    }
+
+    /// Show `shown` and log `logged` instead (at the toast's level), for
+    /// toasts that name a file's folder or full path: the log gets a line
+    /// with the file name only.
+    pub fn toast_log(&mut self, kind: ToastKind, shown: impl Into<String>, logged: &str) {
+        match kind {
+            ToastKind::Error => log::error!("{logged}"),
+            ToastKind::Warn => log::warn!("{logged}"),
+            ToastKind::Info => log::info!("{logged}"),
+        }
+        self.toasts.push(kind, shown, self.time);
     }
 
     /// Bodies hidden by the eye toggles, layers, or isolate.

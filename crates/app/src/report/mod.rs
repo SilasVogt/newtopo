@@ -20,10 +20,11 @@ use crash::Failure;
 use newtopo_core::ops::Op;
 use scrub::scrub;
 
-/// Text that goes into a report: home and user name removed (see
-/// [`scrub::Scrubber`]) and folders stripped from file paths.
+/// Text that goes into a log line or a report: known folders, home and
+/// user name removed and folders stripped from file paths (see
+/// [`scrub::Scrubber::clean`]).
 pub fn clean(text: &str) -> String {
-    scrub::redact_dirs(&scrub(text))
+    scrub::Scrubber::current().clean(text)
 }
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -49,7 +50,10 @@ const MAX_EVENTS: usize = 10000;
 pub struct Startup {
     /// Where this run logs and keeps its crash file; `None` for capture runs.
     pub data: Option<PathBuf>,
-    /// The previous session's crash, to offer once the app is up.
+    /// This session's marker and crash file (already marked as running),
+    /// for [`crash::activate`]; `None` for capture runs.
+    pub session: Option<crash::SessionFiles>,
+    /// An earlier session's crash, to offer once the app is up.
     pub previous_crash: Option<Failure>,
 }
 
@@ -61,9 +65,16 @@ pub fn start(launch: &crate::launch::LaunchArgs, data: Option<&Path>) -> Startup
     let data = data
         .filter(|_| launch.shot.is_none() && launch.window_shot.is_none())
         .map(Path::to_path_buf);
-    let previous_crash = data.as_deref().and_then(crash::begin_session);
+    let (session, previous_crash) = match data.as_deref() {
+        Some(d) => {
+            let (s, prev) = crash::begin_session(d);
+            (Some(s), prev)
+        }
+        None => (None, None),
+    };
     Startup {
         data,
+        session,
         previous_crash,
     }
 }
@@ -220,14 +231,15 @@ pub struct Session {
     truncated: bool,
 }
 
-/// `op` with the text the user typed scrubbed. Only free-text fields
-/// change: field names, op names and enum values stay as they are, so the
-/// script still reads back whatever the user name is.
+/// `op` with the text the user typed cleaned (home, user name and the
+/// folders of anything path-like). Only free-text fields change: field
+/// names, op names and enum values stay as they are, so the script still
+/// reads back whatever the user name is.
 fn scrub_op(op: &Op, s: &scrub::Scrubber) -> Op {
     let mut op = op.clone();
     match &mut op {
         Op::RenameBody { name, .. } | Op::CreateLayer { name } | Op::RenameLayer { name, .. } => {
-            *name = s.scrub(name)
+            *name = s.clean(name)
         }
         _ => {}
     }
@@ -269,6 +281,7 @@ impl Session {
 
     /// A step about a file (import, open): only its name is recorded.
     pub fn file_event(&mut self, step: &'static str, path: &Path) {
+        scrub::know_file(path);
         let name = file_name(path);
         ::log::info!("{step}: {name}");
         self.push_event(Event::File(step, name));
@@ -318,9 +331,11 @@ impl Session {
             "inputs": self.inputs,
             "truncated": self.truncated,
             "note": "`ops` lists every op that was applied (or failed) in order, \
-                     ready for `newtopo-cli run steps.json --input <model>`. \
-                     `session` is the full timeline, including refused ops, undo, \
-                     redo and discarded previews, which `run` does not replay.",
+                     ready for `newtopo-cli run steps.json --input <model>`, \
+                     including ops that were later undone or discarded with a \
+                     preview: `run` replays them all. `session` is the full \
+                     timeline, including refused ops, undo, redo and discarded \
+                     previews, and shows which ops really stayed.",
         });
         serde_json::to_string_pretty(&v).unwrap_or_default()
     }
@@ -408,6 +423,8 @@ pub struct ModelFile {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Contents {
     pub failure: Option<Failure>,
+    /// Cleaned once when collected (see [`clean`]): the dialog lists the
+    /// report's files every frame, and cleaning 256 KiB of log is not free.
     pub log: String,
     pub steps_json: String,
     pub op_count: usize,
@@ -459,7 +476,7 @@ pub fn error_text(f: Option<&Failure>) -> String {
 pub fn parts(c: &Contents, ch: &Choices) -> Vec<Part> {
     let mut out = vec![
         Part::text("error.txt", error_text(c.failure.as_ref())),
-        Part::text("log.txt", clean(&c.log)),
+        Part::text("log.txt", c.log.clone()),
     ];
     if ch.steps {
         out.push(Part::text("steps.json", c.steps_json.clone()));
@@ -773,7 +790,10 @@ pub fn agent_prompt(c: &Contents, ch: &Choices, zip: &str) -> String {
     if ch.steps {
         s.push_str(
             ": `steps.json` is an op script; `newtopo-cli run steps.json --input <model>` \
-             replays its `ops`, and its `session` list has the full timeline",
+             replays every op in its `ops` list in order, including ops the user later undid \
+             and changes they discarded from a preview, so the replayed result can differ \
+             from what the user saw; its `session` list is the full timeline (refused ops, \
+             undo, redo, preview apply and discard) and shows which ops really stayed",
         );
     }
     if ch.model && !c.model.is_empty() {

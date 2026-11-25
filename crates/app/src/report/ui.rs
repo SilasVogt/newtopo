@@ -112,7 +112,7 @@ impl AppState {
         let m = super::system::Machine::get();
         let gpu = self.gpu_info.as_ref();
         let contents = Contents {
-            log: super::log::report_log(self.paths.data.as_deref()),
+            log: super::clean(&super::log::report_log(self.paths.data.as_deref())),
             steps_json: self.session.steps_json(),
             op_count: self.session.op_count(),
             system: super::system::system_text(m, gpu, self.display),
@@ -150,6 +150,7 @@ impl AppState {
     /// session's crash is offered once the autosave recovery is done, so the
     /// report sees the recovered scene and the graphics adapter.
     pub fn poll_failures(&mut self) {
+        crash::tick();
         if self.ui.recovery.is_empty()
             && self.ui.report.is_none()
             && let Some(f) = self.previous_crash.take()
@@ -232,18 +233,16 @@ impl AppState {
                 }
             }
         };
+        super::scrub::know_file(&path);
+        let name = super::file_name(&path);
         let parts = d.parts();
         match super::write_zip(&path, &parts) {
             Ok(()) => {
                 d.saved = Some((path.clone(), d.choices.clone()));
-                log::info!(
-                    "report saved: {} ({} files)",
-                    super::file_name(&path),
-                    parts.len()
-                );
-                self.toast(
+                self.toast_log(
                     ToastKind::Info,
                     format!("{} {}", S::REPORT_SAVED, crate::jobs::short_path(&path)),
+                    &format!("report saved: {name} ({} files)", parts.len()),
                 );
                 if !self.screenshot_mode
                     && let Err(e) = reveal(&path)
@@ -253,8 +252,11 @@ impl AppState {
                 Some(path)
             }
             Err(e) => {
-                log::error!("couldn't save the report: {e}");
-                self.toast(ToastKind::Error, format!("{}: {e}", S::REPORT_SAVE_FAILED));
+                self.toast_log(
+                    ToastKind::Error,
+                    format!("{}: {e}", S::REPORT_SAVE_FAILED),
+                    &format!("couldn't save the report {name}: {e}"),
+                );
                 None
             }
         }

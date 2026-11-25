@@ -1,7 +1,8 @@
 //! The app log: stderr (as before, `RUST_LOG`, default `warn`), plus a
 //! bounded file in the data directory and an in-memory ring of recent
-//! lines for problem reports. Every line is scrubbed of the home directory
-//! and user name before it is stored anywhere.
+//! lines for problem reports. Every line is cleaned before it is stored
+//! anywhere: home directory and user name replaced, folders removed from
+//! paths (see [`super::clean`]).
 //!
 //! File: `<data dir>/logs/newtopo.log`, moved to `newtopo.log.1` once it
 //! passes [`MAX_FILE`], so at most about twice that is kept on disk.
@@ -111,14 +112,14 @@ fn rotate(path: &Path) {
 }
 
 /// One log line: `2026-11-25 10:04:05Z INFO  newtopo::jobs: message`,
-/// scrubbed.
+/// cleaned (see [`super::clean`]).
 pub fn format_line(secs: u64, level: log::Level, target: &str, msg: &str) -> String {
     let line = format!(
         "{} {:<5} {target}: {msg}",
         super::utc_stamp(secs),
         level.as_str()
     );
-    scrub(&line)
+    super::clean(&line)
 }
 
 /// Which records go to the file and the ring: warnings and errors from

@@ -37,7 +37,10 @@ impl Toasts {
             text,
             born: now,
         });
-        log::info!(
+        // Debug only: toasts can name folders ("x.ntopo in Clients"), and
+        // the app log keeps info and up. `AppState::toast` logs warnings and
+        // errors itself.
+        log::debug!(
             "toast: {}",
             self.items.last().map(|t| t.text.as_str()).unwrap_or("")
         );

@@ -42,7 +42,9 @@ fn contents(model: bool) -> Contents {
     s.event("undo");
     Contents {
         failure: Some(failure()),
-        log: format!("2026-11-25 10:00:00Z INFO  newtopo: opened {home}/a.step as {user}\n"),
+        log: clean(&format!(
+            "2026-11-25 10:00:00Z INFO  newtopo: opened {home}/a.step as {user}\n"
+        )),
         steps_json: s.steps_json(),
         op_count: s.op_count(),
         system: format!("OS: TestOS\nCPU: {SYSTEM_MARK}\n"),
@@ -319,9 +321,14 @@ fn capture_runs_never_touch_the_session_files() {
     use crate::launch::parse_args;
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    // A crash waiting from the last session.
-    assert!(crash::begin_session(d).is_none());
-    crash::write_crash_file(d, &Failure::from_message("waiting crash"));
+    // A crash waiting from the last session (a process that has ended).
+    let gone = crash::Owner {
+        pid: u32::MAX - 3,
+        start: 1,
+    };
+    let (prev, none) = crash::begin_session_as(d, gone, &|_: &crash::Owner| false);
+    assert!(none.is_none());
+    prev.write_crash(&Failure::from_message("waiting crash"));
     for args in [
         vec!["--window-shot", "/tmp/x.png"],
         vec!["--shot", "/tmp/shots"],
@@ -329,20 +336,21 @@ fn capture_runs_never_touch_the_session_files() {
         let args: Vec<String> = args.into_iter().map(String::from).collect();
         let st = start(&parse_args(&args), Some(d));
         assert!(st.data.is_none(), "{args:?}: no log or crash file");
+        assert!(st.session.is_none(), "{args:?}: no session marker");
         assert!(st.previous_crash.is_none(), "{args:?}");
-        assert!(
-            d.join("crash.json").exists(),
-            "{args:?} consumed the report"
-        );
+        assert!(prev.crash_file().exists(), "{args:?} consumed the report");
     }
     // The next interactive start offers it, and the session is marked as
     // running right away, before any window or graphics start-up.
     let st = start(&parse_args(&[]), Some(d));
     assert_eq!(st.data.as_deref(), Some(d));
     assert_eq!(st.previous_crash.unwrap().message, "waiting crash");
-    assert!(d.join("session.lock").exists());
-    // So a panic during start-up (before the app exists) is offered next time.
-    crash::write_crash_file(d, &Failure::from_message("startup panic"));
+    let session = st.session.expect("marked");
+    assert!(session.marker().exists());
+    assert!(!prev.crash_file().exists(), "consumed");
+    // So a panic during start-up (before the app exists) is offered next
+    // time (this test's process stands in for the one that crashed).
+    session.write_crash(&Failure::from_message("startup panic"));
     let st = start(&parse_args(&[]), Some(d));
     assert_eq!(st.previous_crash.unwrap().message, "startup panic");
 }
