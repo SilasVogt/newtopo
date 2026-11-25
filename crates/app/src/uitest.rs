@@ -814,3 +814,415 @@ fn refused_op_leaves_no_preview_open() {
     assert!(r.is_none(), "refused");
     assert!(!h.app.st.doc.in_preview(), "no empty preview blocks saving");
 }
+
+// ------------------------------------------------------------- mesh mode
+
+/// A real scene (mock kernel): a box with a 4 × 4 grid on every face.
+fn mesh_harness(warning: bool) -> (Harness, BodyId) {
+    use newtopo_core::Op;
+    use newtopo_core::ops::PatchSel;
+    let mut h = Harness::new(false);
+    h.app.st.prefs.mesh_warning = warning;
+    let k = std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new());
+    let mut s = newtopo_core::scene::Scene::new(k);
+    let body = newtopo_kernel::mock::MockBody::make_box(glam::DVec3::new(40.0, 30.0, 20.0));
+    let b = s
+        .add_body(
+            &body.to_brep_bytes(),
+            newtopo_kernel::BodyAttributes {
+                name: "Box".into(),
+                transform: glam::DMat4::IDENTITY,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    s.apply(Op::SetAutofill { on: true }).unwrap();
+    for f in 0..6 {
+        s.apply(Op::Grid {
+            patches: PatchSel {
+                faces: vec![f],
+                ..Default::default()
+            },
+            u: 4,
+            v: 4,
+            start_on_seam: false,
+            spacing: newtopo_core::doc::Spacing::ArcLength,
+        })
+        .unwrap();
+    }
+    h.app.st.doc.set_scene(s, None);
+    h.frames(3);
+    (h, b)
+}
+
+fn enter_mesh(h: &mut Harness) {
+    h.app.st.prefs.mesh_warning = false;
+    h.key(Key::M, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.app.st.in_mesh_mode());
+}
+
+fn has_edits(h: &Harness, b: BodyId) -> bool {
+    h.app.st.doc.scene.as_ref().unwrap().has_mesh_edits(b)
+}
+
+/// A visible interior (non-CAD) edge of the editable mesh: the one nearest
+/// the camera.
+fn near_edge(h: &Harness) -> usize {
+    let eye = h.app.st.view.camera.eye().as_vec3();
+    let vd = &h.app.st.vd;
+    (0..vd.edges.len())
+        .filter(|&i| vd.edges[i].kind != crate::viewdata::EdgeKind::Cad)
+        .min_by(|&a, &b| {
+            let m = |i: usize| {
+                vd.edges[i].path[0]
+                    .lerp(vd.edges[i].path[1], 0.5)
+                    .distance(eye)
+            };
+            m(a).total_cmp(&m(b))
+        })
+        .unwrap()
+}
+
+fn edge_mid(h: &Harness, i: usize) -> Pos2 {
+    let e = &h.app.st.vd.edges[i];
+    h.screen_of(e.path[0].lerp(e.path[1], 0.5))
+}
+
+fn edge_pair(h: &Harness, i: usize) -> [u32; 2] {
+    let crate::selection::EdgeSel::Index(b, k) = h.app.st.vd.edges[i].sel.clone().unwrap() else {
+        panic!("mesh edges are indexed");
+    };
+    let (x, y) = h.app.st.mm.edges[&b][k as usize];
+    [x, y]
+}
+
+#[test]
+fn mesh_mode_warns_once_and_the_tick_box_turns_it_off() {
+    let (mut h, _) = mesh_harness(true);
+    let cad_accent = h.app.st.pal.accent;
+    h.key(Key::M, Modifiers::NONE);
+    assert!(h.app.st.mm.dialog, "the first switch asks");
+    assert!(
+        !h.app.st.in_mesh_mode(),
+        "nothing switches before the answer"
+    );
+    // Cancel (Esc) stays in CAD mode.
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(!h.app.st.mm.dialog);
+    assert!(!h.app.st.in_mesh_mode());
+    // Asked again; confirm without the tick: no more questions this session.
+    h.key(Key::M, Modifiers::NONE);
+    assert!(h.app.st.mm.dialog);
+    h.app.st.confirm_mesh_warning();
+    h.frames(2);
+    assert!(h.app.st.in_mesh_mode());
+    assert!(
+        h.app.st.prefs.mesh_warning,
+        "no tick: still on for next time"
+    );
+    assert_eq!(
+        h.app.st.pal.accent, h.app.st.pal.mesh_accent,
+        "amber accent"
+    );
+    assert_ne!(h.app.st.pal.accent, cad_accent);
+    h.key(Key::M, Modifiers::NONE);
+    assert!(!h.app.st.in_mesh_mode());
+    assert_eq!(h.app.st.pal.accent, cad_accent, "the CAD accent is back");
+    h.key(Key::M, Modifiers::NONE);
+    assert!(!h.app.st.mm.dialog, "once per session");
+    assert!(h.app.st.in_mesh_mode());
+
+    // A new session asks again; the tick box turns the warning off.
+    let (mut h, _) = mesh_harness(true);
+    h.key(Key::M, Modifiers::NONE);
+    assert!(h.app.st.mm.dialog);
+    h.app.st.mm.dont_show = true;
+    h.app.st.confirm_mesh_warning();
+    assert!(h.app.st.in_mesh_mode());
+    assert!(!h.app.st.prefs.mesh_warning, "stored in preferences");
+    assert!(h.app.st.dirty_settings);
+    // The Preferences row turns it back on.
+    h.app.st.prefs.mesh_warning = true;
+    let (mut h2, _) = mesh_harness(true);
+    h2.key(Key::M, Modifiers::NONE);
+    assert!(h2.app.st.mm.dialog);
+}
+
+#[test]
+fn mesh_and_cad_tools_stay_in_their_mode() {
+    let (mut h, _) = mesh_harness(false);
+    // A mesh tool in CAD mode: refused with a toast.
+    let n = h.app.st.toasts.items.len();
+    h.key(Key::R, Modifiers::SHIFT);
+    assert_eq!(h.app.st.mm.tool, crate::meshmode::MeshTool::Select);
+    assert!(h.app.st.toasts.items.len() > n);
+    enter_mesh(&mut h);
+    assert_eq!(h.app.st.mode, Mode::Edge, "mesh mode starts in edge mode");
+    // CAD tools are not available in mesh mode.
+    h.key(Key::C, Modifiers::NONE);
+    assert_eq!(h.app.st.tool.active, Tool::Select);
+    assert!(
+        h.app
+            .st
+            .toasts
+            .items
+            .last()
+            .unwrap()
+            .text
+            .contains("CAD tool"),
+        "{:?}",
+        h.app.st.toasts.items.last()
+    );
+    // Object mode belongs to CAD editing.
+    h.key(Key::Num4, Modifiers::NONE);
+    assert_ne!(h.app.st.mode, Mode::Object);
+    // The CAD selection comes back on return, the mesh one stays apart.
+    h.key(Key::Num1, Modifiers::NONE);
+    let first = h.app.st.vd.verts[0].sel.clone();
+    h.app.st.sel.verts.insert(first);
+    h.key(Key::M, Modifiers::NONE);
+    assert!(!h.app.st.in_mesh_mode());
+    assert_eq!(h.app.st.mode, Mode::Object);
+    assert!(h.app.st.sel.verts.is_empty());
+    h.key(Key::M, Modifiers::NONE);
+    assert_eq!(h.app.st.mode, Mode::Vertex);
+    assert_eq!(h.app.st.sel.verts.len(), 1);
+}
+
+#[test]
+fn alt_click_selects_an_edge_loop_and_shift_alt_adds() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    let i = near_edge(&h);
+    let at = edge_mid(&h, i);
+    let e = edge_pair(&h, i);
+    let m = h.app.st.mm.meshes[&b].clone();
+    let expect = newtopo_core::meshedit::edge_loop(&m, e[0], e[1]).unwrap();
+    assert!(expect.len() > 1);
+    h.click(at, Modifiers::ALT);
+    assert_eq!(
+        h.app.st.sel.edges.len(),
+        expect.len(),
+        "{:?}",
+        h.app.st.sel.edges
+    );
+    for x in &expect {
+        let k = h.app.st.mm.edges[&b].binary_search(&(x[0], x[1])).unwrap();
+        assert!(
+            h.app
+                .st
+                .sel
+                .edges
+                .contains(&crate::selection::EdgeSel::Index(b, k as u32))
+        );
+    }
+    // A plain click replaces it with one edge (wait out the double-click
+    // time: a double-click selects the loop too).
+    h.frames(10);
+    h.click(at, Modifiers::NONE);
+    assert_eq!(h.app.st.sel.edges.len(), 1);
+    // Shift+Alt on a crossing edge adds its loop.
+    let cross = (0..h.app.st.vd.edges.len())
+        .filter(|&j| {
+            let p = edge_pair(&h, j);
+            j != i
+                && (p.contains(&e[0]) || p.contains(&e[1]))
+                && !expect.contains(&p)
+                && h.app.st.vd.edges[j].kind != crate::viewdata::EdgeKind::Cad
+        })
+        .min_by(|&a, &c| {
+            let eye = h.app.st.view.camera.eye().as_vec3();
+            let d = |j: usize| {
+                h.app.st.vd.edges[j].path[0]
+                    .lerp(h.app.st.vd.edges[j].path[1], 0.5)
+                    .distance(eye)
+            };
+            d(a).total_cmp(&d(c))
+        })
+        .unwrap();
+    h.frames(10);
+    h.click(at, Modifiers::ALT);
+    let one = h.app.st.sel.edges.len();
+    h.frames(10);
+    let mid = edge_mid(&h, cross);
+    h.click(mid, Modifiers::ALT | Modifiers::SHIFT);
+    assert!(
+        h.app.st.sel.edges.len() > one,
+        "Shift+Alt adds the second loop"
+    );
+}
+
+#[test]
+fn ctrl_click_selects_the_shortest_path() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    h.key(Key::Num1, Modifiers::NONE);
+    assert_eq!(h.app.st.mode, Mode::Vertex);
+    let eye = h.app.st.view.camera.eye().as_vec3();
+    let cam = h.app.st.camera_matrices();
+    let m = h.app.st.mm.meshes[&b].clone();
+    // Two visible vertices a few edges apart.
+    let mut order: Vec<usize> = (0..h.app.st.vd.verts.len()).collect();
+    order.sort_by(|&a, &c| {
+        let d = |i: usize| h.app.st.vd.verts[i].pos.distance(eye);
+        d(a).total_cmp(&d(c))
+    });
+    let vid = |i: usize| match h.app.st.vd.verts[i].sel {
+        crate::selection::VertSel::Index(_, v) => v,
+        _ => unreachable!(),
+    };
+    let a = order[0];
+    let far = order
+        .iter()
+        .take(40)
+        .copied()
+        .filter(|&i| {
+            h.app
+                .st
+                .vd
+                .pick
+                .is_visible(&cam, h.app.st.vd.verts[i].pos.as_dvec3(), 0.1)
+        })
+        .max_by_key(|&i| {
+            newtopo_core::meshedit::shortest_path(&m, vid(a), vid(i))
+                .unwrap()
+                .len()
+        })
+        .unwrap();
+    let path = newtopo_core::meshedit::shortest_path(&m, vid(a), vid(far)).unwrap();
+    assert!(path.len() >= 3, "{path:?}");
+    h.click(h.screen_of(h.app.st.vd.verts[a].pos), Modifiers::NONE);
+    assert_eq!(h.app.st.sel.verts.len(), 1);
+    h.click(h.screen_of(h.app.st.vd.verts[far].pos), Modifiers::COMMAND);
+    let got: std::collections::BTreeSet<u32> = h
+        .app
+        .st
+        .sel
+        .verts
+        .iter()
+        .map(|v| match v {
+            crate::selection::VertSel::Index(_, i) => *i,
+            _ => unreachable!(),
+        })
+        .collect();
+    let want: std::collections::BTreeSet<u32> = path.iter().copied().collect();
+    assert_eq!(got, want);
+}
+
+/// Select the edge loop through the nearest interior edge.
+fn select_loop(h: &mut Harness) {
+    let i = near_edge(h);
+    let at = edge_mid(h, i);
+    h.click(at, Modifiers::ALT);
+    assert!(h.app.st.sel.edges.len() > 1);
+}
+
+#[test]
+fn mesh_edits_lock_cad_editing_until_discarded() {
+    use newtopo_core::Op;
+    use newtopo_core::ops::PatchSel;
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    assert!(!has_edits(&h, b), "entering bakes but writes nothing");
+    h.app.st.run(Cmd::MeshSpace);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    h.frames(1);
+    assert!(has_edits(&h, b), "{:?}", h.app.st.toasts.items.last());
+    assert!(!h.app.st.doc.in_preview(), "no preview in mesh mode");
+    h.key(Key::M, Modifiers::NONE);
+    let grid = Op::Grid {
+        patches: PatchSel {
+            faces: vec![0],
+            ..Default::default()
+        },
+        u: 7,
+        v: 7,
+        start_on_seam: false,
+        spacing: newtopo_core::doc::Spacing::ArcLength,
+    };
+    assert!(h.app.st.apply(grid.clone()).is_none(), "refused");
+    assert!(
+        h.app
+            .st
+            .toasts
+            .items
+            .last()
+            .unwrap()
+            .text
+            .contains("locked"),
+        "{:?}",
+        h.app.st.toasts.items.last()
+    );
+    assert!(!h.app.st.doc.in_preview());
+    // Discard (no prompt, undoable) unlocks it.
+    h.app.st.sel.objects.insert(b);
+    h.app.st.run(Cmd::MeshDiscard);
+    assert!(!has_edits(&h, b));
+    assert!(h.app.st.apply(grid).is_some(), "CAD-editable again");
+    h.app.st.discard_preview();
+    h.app.st.run(Cmd::Undo);
+    assert!(has_edits(&h, b), "discard is one undo step");
+}
+
+#[test]
+fn undo_and_redo_work_across_modes() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(has_edits(&h, b));
+    let edited = h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b).unwrap();
+    // Live values: redo the edit with more iterations, still one step.
+    h.app.st.mm.params.relax_iterations = 25;
+    h.app.st.mesh_params_changed();
+    let more = h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b).unwrap();
+    assert_ne!(*more, *edited, "the new value took effect");
+    // Back to CAD, undo there: the mesh edit (one step) is gone.
+    h.key(Key::M, Modifiers::NONE);
+    h.key(Key::Z, Modifiers::COMMAND);
+    assert!(!has_edits(&h, b));
+    h.key(Key::Y, Modifiers::COMMAND);
+    assert!(has_edits(&h, b));
+    // In mesh mode the view shows the redone mesh; undo there too.
+    h.key(Key::M, Modifiers::NONE);
+    h.frames(1);
+    assert!(std::sync::Arc::ptr_eq(
+        &h.app.st.mm.meshes[&b],
+        &h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b).unwrap()
+    ));
+    h.key(Key::Z, Modifiers::COMMAND);
+    h.frames(1);
+    assert!(!has_edits(&h, b));
+    assert!(h.app.st.sel.edges.is_empty(), "stale selection is dropped");
+}
+
+#[test]
+fn a_mesh_edit_survives_save_and_open() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(has_edits(&h, b));
+    let before = h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("edited.ntopo");
+    h.app.st.doc.save(&p).unwrap();
+    let mut h2 = Harness::new(false);
+    let k = std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new());
+    h2.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::load(k, &p).unwrap(),
+        Some(p.clone()),
+    );
+    h2.frames(2);
+    let s2 = h2.app.st.doc.scene.as_ref().unwrap();
+    let b2 = s2.body_ids()[0];
+    assert!(s2.has_mesh_edits(b2));
+    let after = s2.mesh_edit(b2).unwrap();
+    assert_eq!(after.positions, before.positions);
+    assert_eq!(after.polygons, before.polygons);
+}

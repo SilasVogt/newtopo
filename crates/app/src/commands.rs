@@ -11,6 +11,7 @@ pub enum Category {
     Select,
     View,
     Tools,
+    Mesh,
     Toggles,
     Panels,
     Help,
@@ -24,6 +25,7 @@ impl Category {
             Category::Select => "Select",
             Category::View => "View",
             Category::Tools => "Tools",
+            Category::Mesh => "Mesh editing",
             Category::Toggles => "Toggles",
             Category::Panels => "Panels",
             Category::Help => "Help",
@@ -123,6 +125,19 @@ commands! {
     PurgeDormant => "edit.purge_dormant", "Purge dormant edits", Edit, Some(Icon::Trash), [];
     CheckMesh => "edit.check_mesh", "Check output mesh", Edit, Some(Icon::Warning), [];
 
+    EditModeToggle => "mode.edit_toggle", "Switch CAD / mesh editing", Select, Some(Icon::Face), ["M"];
+    MeshVertexSlide => "mesh.vertex_slide", "Vertex Slide", Mesh, None, ["Shift+S"];
+    MeshEdgeSlide => "mesh.edge_slide", "Edge Slide", Mesh, None, ["Shift+E"];
+    MeshRelax => "mesh.relax", "Relax", Mesh, None, ["Shift+R"];
+    MeshSpace => "mesh.space", "Space", Mesh, None, ["Alt+S"];
+    MeshTargetMerge => "mesh.target_merge", "Target Merge", Mesh, None, ["Shift+W"];
+    MeshMergeByDistance => "mesh.merge_by_distance", "Merge by Distance", Mesh, None, ["Alt+M"];
+    MeshLoopCleanup => "mesh.loop_cleanup", "Loop Cleanup", Mesh, None, ["Shift+C"];
+    MeshResample => "mesh.resample", "Resample", Mesh, None, ["Alt+R"];
+    MeshDecimate => "mesh.decimate", "Decimate", Mesh, None, ["Shift+D"];
+    MeshShortestPath => "mesh.shortest_path", "Select shortest path", Mesh, None, [];
+    MeshDiscard => "mesh.discard", "Discard mesh edits", Mesh, Some(Icon::Trash), [];
+
     RenamePanel => "panel.rename", "Batch rename panel", Panels, Some(Icon::Rename), ["F1"];
     BridgePanel => "panel.bridge", "Bridge panel", Panels, Some(Icon::Bridge), ["F2"];
     UvPanel => "panel.uv", "UV panel", Panels, Some(Icon::Uv), ["F3"];
@@ -144,6 +159,30 @@ impl Cmd {
     pub fn from_id(id: &str) -> Option<Cmd> {
         ALL.iter().copied().find(|c| c.id() == id)
     }
+
+    /// Whether the command works in CAD editing, mesh editing or both
+    /// (SPEC §9.5: the two modes have separate tool sets).
+    pub fn scope(self) -> Scope {
+        use Cmd::*;
+        match self {
+            Connect | Grid | Slice | Iso | Cut | Weld | Collapse | Remove | Snap | Ring
+            | RingAlternate | LoopAlternate | CopyRules | PasteRules | PurgeDormant | AutoFill
+            | Link | Symmetry | MirrorX | MirrorY | MirrorZ | SymmetryPlanes | Preview
+            | Wireframe | FlatShading | ModeObject => Scope::Cad,
+            MeshVertexSlide | MeshEdgeSlide | MeshRelax | MeshSpace | MeshTargetMerge
+            | MeshMergeByDistance | MeshLoopCleanup | MeshResample | MeshDecimate
+            | MeshShortestPath => Scope::Mesh,
+            _ => Scope::Both,
+        }
+    }
+}
+
+/// Which editing mode a command belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Cad,
+    Mesh,
+    Both,
 }
 
 #[cfg(test)]

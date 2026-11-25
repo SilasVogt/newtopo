@@ -86,6 +86,8 @@ pub struct DisplayParams {
     pub up: newtopo_render::UpAxis,
     pub hidden: BTreeSet<BodyId>,
     pub colors: OverlayColors,
+    /// Mesh mode: show the editable meshes (see [`from_meshes`]).
+    pub mesh: bool,
 }
 
 #[derive(Default)]
@@ -107,6 +109,9 @@ pub struct ViewData {
     pub patches: HashMap<BodyId, Vec<newtopo_core::scene::PatchInfo>>,
     /// Non-fatal problems building the view (shown once as a toast).
     pub error: Option<String>,
+    /// Selection → index in `edges` / `verts` (built in `finish`).
+    edge_lookup: HashMap<EdgeSel, usize>,
+    vert_lookup: HashMap<VertSel, usize>,
 }
 
 impl ViewData {
@@ -115,11 +120,11 @@ impl ViewData {
     }
 
     pub fn edge_index(&self, sel: &EdgeSel) -> Option<usize> {
-        self.edges.iter().position(|e| e.sel.as_ref() == Some(sel))
+        self.edge_lookup.get(sel).copied()
     }
 
     pub fn vert_index(&self, sel: &VertSel) -> Option<usize> {
-        self.verts.iter().position(|v| &v.sel == sel)
+        self.vert_lookup.get(sel).copied()
     }
 
     /// Bounds of a set of bodies (or everything when empty).
@@ -161,6 +166,14 @@ impl ViewData {
         }
         self.pick = PickMesh::new(pick_pos, pick_tris, pick_ids);
         self.bounds = self.bounds_of(&BTreeSet::new());
+        for (i, e) in self.edges.iter().enumerate() {
+            if let Some(s) = &e.sel {
+                self.edge_lookup.entry(s.clone()).or_insert(i);
+            }
+        }
+        for (i, v) in self.verts.iter().enumerate() {
+            self.vert_lookup.entry(v.sel.clone()).or_insert(i);
+        }
         if p.show_grid
             && let Some((min, max)) = self.bounds
         {
@@ -531,6 +544,121 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
     vd.finish(rs, p, ppos, ptris, pids)
 }
 
+/// Mesh mode (SPEC §9.5): build from the editable meshes (each body's
+/// edited mesh, or its baked output). Faces are the meshes' polygons
+/// (`FaceId` = polygon index), edges are `EdgeSel::Index` into
+/// `EditMesh::edges()` and vertices `VertSel::Index` into its positions.
+pub fn from_meshes(
+    scene: &Scene,
+    meshes: &std::collections::BTreeMap<BodyId, Arc<newtopo_core::meshedit::EditMesh>>,
+    p: &DisplayParams,
+) -> ViewData {
+    let mut vd = ViewData::default();
+    let entries = match guard(|| newtopo_render::core_scene::visible_bodies(scene.doc())) {
+        Ok(b) => b,
+        Err(e) => {
+            vd.error = Some(e);
+            return vd.finish(RenderScene::default(), p, vec![], vec![], vec![]);
+        }
+    };
+    let c = &p.colors;
+    let mut rs = RenderScene::default();
+    let (mut ppos, mut ptris, mut pids) = (Vec::new(), Vec::new(), Vec::new());
+    for entry in entries.iter().filter(|e| !p.hidden.contains(&e.id)) {
+        let Some(mesh) = meshes.get(&entry.id) else {
+            continue;
+        };
+        let m = entry.transform;
+        let wpos: Vec<Vec3> = mesh.positions.iter().map(|q| xf(&m, *q)).collect();
+        let mut bmin = Vec3::splat(f32::INFINITY);
+        let mut bmax = Vec3::splat(f32::NEG_INFINITY);
+        for (pi, poly) in mesh.polygons.iter().enumerate() {
+            let pts: Vec<Vec3> = poly.verts.iter().map(|&i| wpos[i as usize]).collect();
+            let nrm: Vec<Vec3> = poly.normals.iter().map(|n| xn(&m, *n)).collect();
+            for t in triangulate(&pts) {
+                let base = rs.mesh.vertices.len() as u32;
+                for k in t {
+                    rs.mesh.vertices.push(MeshVertex {
+                        pos: pts[k].to_array(),
+                        normal: nrm.get(k).copied().unwrap_or(Vec3::Z).to_array(),
+                        color: c.preview_surface,
+                    });
+                }
+                rs.mesh.indices.extend([base, base + 1, base + 2]);
+                let pb = ppos.len() as u32;
+                ppos.extend(t.map(|k| pts[k]));
+                ptris.push([pb, pb + 1, pb + 2]);
+                pids.push(FaceRef {
+                    body: entry.id.0,
+                    face: pi as u32,
+                });
+            }
+            for q in &pts {
+                bmin = bmin.min(*q);
+                bmax = bmax.max(*q);
+            }
+        }
+        let polys: Vec<Vec<u32>> = mesh.polygons.iter().map(|q| q.verts.clone()).collect();
+        let mut bt = BodyTopo {
+            mesh: TopoMesh::new(polys),
+            poly_face: (0..mesh.polygons.len() as u32).map(FaceId).collect(),
+            ..Default::default()
+        };
+        let flags = mesh.flag_map();
+        let boundary: BTreeSet<(u32, u32)> = mesh.boundary_edges().into_iter().collect();
+        for (i, (a, b)) in mesh.edges().into_iter().enumerate() {
+            let path = vec![wpos[a as usize], wpos[b as usize]];
+            let f = flags.get(&(a, b)).copied().unwrap_or_default();
+            if f.cad || f.hard || boundary.contains(&(a, b)) {
+                rs.add_segment(path[0], path[1], c.cad_edge, 1.8);
+            } else {
+                rs.add_segment(path[0], path[1], c.preview_wire, 1.0);
+            }
+            if let Some(t) = bt.mesh.edge(a, b) {
+                bt.edge_item.insert(t, vd.edges.len());
+            }
+            vd.edges.push(EdgeItem {
+                body: entry.id,
+                sel: Some(EdgeSel::Index(entry.id, i as u32)),
+                kind: if f.cad { EdgeKind::Cad } else { EdgeKind::Line },
+                path,
+                topo: bt.mesh.edge(a, b),
+                cad_edge: None,
+                out: None,
+            });
+        }
+        let mut used = vec![false; mesh.positions.len()];
+        for q in &mesh.polygons {
+            for &v in &q.verts {
+                used[v as usize] = true;
+            }
+        }
+        for (i, pos) in wpos.iter().enumerate() {
+            if !used[i] {
+                continue;
+            }
+            if p.show_verts {
+                rs.add_point(*pos, c.vertex, 5.0);
+            }
+            vd.verts.push(VertItem {
+                body: entry.id,
+                sel: VertSel::Index(entry.id, i as u32),
+                pos: *pos,
+            });
+        }
+        vd.topo.insert(entry.id, bt);
+        if bmin.x <= bmax.x {
+            vd.bodies.push(BodyInfo {
+                id: entry.id,
+                name: entry.name.clone(),
+                min: bmin,
+                max: bmax,
+            });
+        }
+    }
+    vd.finish(rs, p, ppos, ptris, pids)
+}
+
 /// Build from the synthetic sample model (no engine needed).
 pub fn from_demo(bodies: &[SynthBody], p: &DisplayParams) -> ViewData {
     let mut vd = ViewData::default();
@@ -684,6 +812,7 @@ mod tests {
             up: newtopo_render::UpAxis::Z,
             hidden: BTreeSet::new(),
             colors: OverlayColors::default(),
+            mesh: false,
         }
     }
 

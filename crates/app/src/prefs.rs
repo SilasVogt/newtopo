@@ -155,6 +155,9 @@ pub struct Prefs {
     pub update_last_check: u64,
     /// A version the user chose to skip ("Skip this version").
     pub update_skipped: Option<String>,
+    /// Show the warning before the first switch to mesh editing in a
+    /// session (SPEC §9.5); its "Don't show this again" turns it off.
+    pub mesh_warning: bool,
 }
 
 impl Default for Prefs {
@@ -185,6 +188,7 @@ impl Default for Prefs {
             update_check: None,
             update_last_check: 0,
             update_skipped: None,
+            mesh_warning: true,
         }
     }
 }

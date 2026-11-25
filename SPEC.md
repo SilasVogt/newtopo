@@ -151,7 +151,7 @@ newtopo/
       anchor/    # anchors, evaluation, projection, surface paths
       eval/      # rule evaluation -> arrangement -> output mesh (incremental)
       fill/      # auto-fill
-      meshedit/  # mesh mode after Finish: baked mesh, decimate, cleanup, resample
+      meshedit/  # mesh mode: baked mesh and the mesh tools
       select/    # loop, ring, every-other, strips, link/symmetry expansion
       export/    # obj, gltf, fbx, normals, hard edges, uv, rename
       bridge/    # wire protocol, client side
@@ -529,9 +529,10 @@ of a 2,000-face body (auto-fill on).
 ## 5. UI and interaction
 
 ### 5.1 Layout
-- **Top bar**: File/Edit/View/Tools/Help menus, component mode buttons
-  (vertex, edge, face, object), toggles for preview, auto-fill, link and
-  symmetry, scene title with an unsaved-changes marker.
+- **Top bar**: File/Edit/View/Tools/Help menus, the `CAD | Mesh` editing
+  switch (§9.5.14), component mode buttons (vertex, edge, face, object),
+  toggles for preview, auto-fill, link and symmetry (CAD editing only),
+  scene title with an unsaved-changes marker.
 - **Left: outliner** with layers and objects (§5.5).
 - **Centre: viewport** with a clickable view cube.
 - **Right: panels**: the active tool's panel, statistics, history (rules,
@@ -623,6 +624,7 @@ of a 2,000-face body (auto-fill on).
 | Copy / paste rules | Ctrl+C / Ctrl+V | Undo / redo | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y |
 | Rename panel | F1 | Bridge panel | F2 |
 | UV panel | F3 | Snap on/off (Iso, Cut) | N |
+| CAD / mesh editing | M | Mesh tools | see §9.5.14 |
 
 Inside tools: `A` toggles **through** mode (continue past holes/boundaries),
 `Tab` toggles a tool's direction, `X` toggles Iso's split mode, `Enter`
@@ -639,7 +641,8 @@ tool, then exit isolate.
 
 ### 5.10 Preview, then Apply
 The app never changes the mesh on its own, and nothing is written until the
-user applies it.
+user applies it. This is CAD editing; mesh editing (§9.5) is destructive by
+design and has no preview: its edits apply at once, each one undo step.
 - Every op that changes the output mesh (tools, edge edits, rule changes,
   auto-fill / link / symmetry toggles, paste) opens a **preview**: the
   viewport shows the result, and an Apply bar over the viewport says
@@ -1082,34 +1085,55 @@ installs or runs anything; it only links to the release page.
   *Open release page*, *Later* and *Skip this version*; a skipped version
   is not announced again by automatic checks.
 
-### 9.5 Mesh mode (after Finish)
+### 9.5 Mesh mode
 
-The rule stage (§4–§7) is procedural and stays editable. When the artist is
-happy with it, **Finish** bakes a body into a plain polygon mesh and the body
-enters **mesh mode**, where a small set of mesh tools edit that mesh
-directly. Design decision: **bake, then edit**. Mesh edits apply to the baked
-mesh, never back to rules; the rules are locked once the body is baked.
+The rule stage (§4–§7) is procedural and stays editable. Mesh mode is a
+separate, **destructive** editing mode that works directly on the finished
+mesh: vertices may leave the CAD surface, and every edit applies at once.
+Design decision: **bake, then edit**. Mesh edits apply to the baked mesh,
+never back to rules; while a body has mesh edits its rules are locked.
 
-#### 9.5.1 Finish (bake)
-- Per body, from the evaluated output mesh (§4.6, after auto-fill). Finish is
-  one undo step; undoing it returns to the rule stage and drops every mesh
-  edit made after it. There is no way back into the rule stage that keeps
-  mesh edits: "Back to rules" (with a confirmation that names how many mesh
-  edits will be lost) re-evaluates the locked rules and discards the mesh.
-- **Kept**: vertex positions; polygons with their winding; the CAD face of
-  each polygon (its *group*: normals, materials, export grouping); the exact
-  per-corner CAD normals; per-corner UVs if §9.2 ran; edge flags **CAD**
-  (lies on a CAD edge) and **hard** (§8.3, including `SetHard` overrides);
-  **pinned** vertices (CAD vertices and poles).
+#### 9.5.1 Bake, mesh edits and the CAD lock
+- **Entering** mesh mode bakes every body's evaluated output mesh (§4.6,
+  after auto-fill) into a plain polygon mesh, on demand and cached until the
+  body's rules change. Entering changes nothing in the document: a body
+  whose output is never edited stays a normal CAD-stage body.
+- **The first mesh edit** of a body stores its edited mesh in the document.
+  From then on the body **has mesh edits**: its CAD stage is locked, and
+  every op that would change its rules, split lines, edits or phase
+  overrides is refused with *"‹name› has mesh edits, so its CAD lines are
+  locked. Run "Discard mesh edits" to edit it in CAD mode again."* Scene
+  settings (auto-fill, link, symmetry), names, layers, visibility and locks
+  still change; bodies without mesh edits stay fully CAD-editable.
+- **Discard mesh edits** (mesh tool panel, command palette; no prompt) drops
+  the mesh edits of the selected objects, returning them to their
+  CAD-driven mesh. It is one undo step, like every mesh edit, so undo brings
+  the edits back. With nothing selected and exactly one edited body, that
+  body is used.
+- **Undo** works across modes: mesh edits are document snapshots like every
+  other op (§4.7). Undoing the first edit of a body unlocks it again.
+- **Kept** by the bake: vertex positions; polygons with their winding; the
+  CAD face of each polygon (its *group*: normals, materials, export
+  grouping); the exact per-corner CAD normals; per-corner UVs if §9.2 ran;
+  edge flags **CAD** (lies on a CAD edge) and **hard** (§8.3, including
+  `SetHard` overrides); **pinned** vertices (CAD vertices and poles).
 - **Dropped**: anchors, keys, surface paths, the line/fill/split distinction
   and dormant edits. Rules, split lines and edits stay in the scene file,
-  read-only, so "Back to rules" works after a reload.
-- Refused (with the validation messages) if the evaluated mesh is not a
-  valid manifold polygon mesh. The evaluator's validation gate (§4.6 step 8)
-  should make this unreachable.
-- The baked mesh is saved in the `.ntopo` (`mesh/<body>.json`, format
-  version bump with a migration test) and exported with the §8.3 rules;
-  untouched polygons keep their exact CAD normals.
+  untouched, so discarding mesh edits works after a reload.
+- A body whose output is empty or not a valid manifold polygon mesh can't
+  be baked; mesh mode leaves it out and says why. The evaluator's validation
+  gate (§4.6 step 8) should make the second case unreachable.
+- **Storage**: the edited mesh is saved in the `.ntopo`: `scene.json` lists
+  the edited bodies (`meshes`), each mesh is its own entry
+  `mesh/<body>.json`. This is **format 2**; format 1 scenes load unchanged
+  (they have no mesh edits) and builds that read only format 1 refuse
+  format 2 files instead of silently dropping their mesh edits. A missing
+  or invalid mesh entry (structural problems of §9.5.2, a polygon on a CAD
+  face the body doesn't have) refuses the whole file.
+- **Output**: statistics, export (§8.3), the Blender bridge (§9.3),
+  validation (`Check output mesh`, `newtopo-cli validate`) and headless
+  render use the edited mesh for bodies that have one, the evaluated mesh
+  for the others. Untouched polygons keep their exact CAD normals.
 
 #### 9.5.2 Rules shared by all mesh tools
 - Every tool is a pure function: mesh + selection + parameters → new mesh,
@@ -1126,8 +1150,9 @@ mesh, never back to rules; the rules are locked once the body is baked.
   Corners never move or disappear. Feature-curve vertices move or merge only
   along their curve. A closed feature loop keeps at least three vertices.
 - **Never**: change the topology (Euler characteristic, number of open
-  boundary loops, number of connected parts; the one exception is Merge by
-  Distance welding open boundaries together, §9.5.7), create a non-manifold edge or
+  boundary loops, number of connected parts; the one exception is welding
+  open boundaries together, by Merge by Distance §9.5.7 or Target Merge
+  §9.5.13), create a non-manifold edge or
   vertex, a duplicate polygon, a zero-length edge or zero-area polygon, a
   concave triangle or quad, or a polygon whose normal is more than the
   normal limit (default 60°) away from the mean of the CAD normals at its
@@ -1142,6 +1167,14 @@ mesh, never back to rules; the rules are locked once the body is baked.
   is closed), or **all feature runs** of the mesh, for Cleanup and
   Resample; vertices for Vertex Slide and Merge by Distance (the result
   carries the vertex selection after the edit too).
+- **Stay on CAD surface** (move tools: Vertex Slide, Edge Slide, Relax,
+  Space; off by default): after the tool ran, every vertex it moved is put
+  on the nearest point of the CAD faces of its polygons (asked from the CAD
+  kernel). A vertex whose projection would make a shape-valid polygon
+  concave or degenerate, or flip any polygon, stays where the tool put it;
+  the report counts both.
+- **Keep CAD and hard edges** in the tool panel is the Preserve toggle pair
+  (both together).
 - Refused with a reason: empty mesh, invalid mesh (first problem named),
   parameters out of range, empty selection, a selected pair that is not an
   edge, a vertex that is not in the mesh, "all feature runs" on a mesh
@@ -1198,7 +1231,7 @@ edges.
   - Same input, same output (bit-identical); ratio 1 leaves the mesh
     unchanged.
 
-#### 9.5.4 Cleanup
+#### 9.5.4 Cleanup ("Loop Cleanup" in the app)
 Tidies dense or jagged edge runs, typically where two parts were joined and
 the seam between them has too many, too close or zig-zagging vertices.
 
@@ -1389,7 +1422,145 @@ parts that should be one surface, and very short edges.
   close comes back unchanged with "No vertices closer than the merge
   distance"; applying the tool to its own result changes nothing.
 
-#### 9.5.8 Testing
+#### 9.5.9 Selection
+Mesh mode has its own vertex, edge and face selection (keys 1–3; there is no
+object mode), separate from the CAD selection, which comes back when
+leaving mesh mode.
+- **Click** selects one element, **Shift+click** adds it or, if it is
+  selected, removes it; box and lasso as in CAD mode (§5.3).
+- **Loop**: Alt+click on an edge selects its edge loop (Shift+Alt adds;
+  double-click and `L` do the same). The loop walks straight on through
+  every vertex inside the surface with exactly four edges (the next edge is
+  the one sharing no polygon with the previous one); an open boundary edge
+  follows the boundary. It stops anywhere else, or when it closes. In
+  vertex mode the loop's vertices are selected. With the Maya navigation
+  preset Alt+click orbits; use double-click or `L` there.
+- **Shortest Path**: Ctrl+click selects the shortest edge path (by length,
+  ties to lower vertex indices) from the last clicked vertex or edge to the
+  clicked one and adds it to the selection; the panel button joins the last
+  two clicked elements.
+- Tools that need edge runs take the selected edges; in vertex mode, the
+  edges whose two ends are selected. Vertex tools take the selected
+  vertices; in edge mode, the selected edges' ends.
+
+#### 9.5.10 Edge Slide
+Slides the vertices of selected edge runs along their cross edges, all to
+the same side: positive factors towards the side where the run's edges run
+forward in their polygon, negative factors to the other side. Each run
+vertex slides along the edge beside the run edge in the polygon on that
+side (on a quad strip: the strip's cross edge). The sliding is Vertex Slide
+(§9.5.6) with those edges: the same feature rules, validity checks and stop
+just short of the largest valid factor; vertices without a cross edge on
+that side, or whose cross edge is on the run, are skipped and reported.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| Factor | 0.5 | −1 to 1: fraction of each cross edge; the sign picks the side |
+| Even | off | Every vertex moves the same distance (factor × shortest cross edge) |
+| Stay on CAD surface | off | §9.5.2 |
+
+Interaction: drag in the viewport (the drag's projection on each side's
+average cross edge on screen gives the factor), or set the factor in the
+panel. **AC**: a grid row slides as a whole (its border ends along the
+border) by exactly the factor of a cell, everything else stays, and the
+two signs go to opposite sides; factor 0 changes nothing; |factor| > 1 is
+refused.
+
+#### 9.5.11 Relax
+Smooths the selected edge runs. Each iteration moves every free run vertex
+half way towards the point predicted from its run neighbours: their
+midpoint (**Linear**) or the cubic through two run vertices on each side
+(**Cubic**: weights −1/6, 2/3, 2/3, −1/6, which keeps the run's curvature
+and shrinks it less; near run ends it falls back to the midpoint). With
+**Keep even spacing** the run is respaced evenly (as Space) after every
+iteration. Vertices leave the old surface (unless Stay on CAD surface is
+on). Run ends, junctions, corners and feature-edge vertices stay. A step
+that would break a polygon (§9.5.2 checks; a polygon that was already bad
+keeps its area and orientation) is halved, halved again, then skipped for
+that iteration and reported. Refused when no selected run has a free vertex
+between its ends.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| Iterations | 5 | 1, 3, 5, 10 or 25 in the panel (1–1000 in the engine) |
+| Interpolation | Cubic | Cubic or Linear |
+| Keep even spacing | on | Respace the run after every iteration |
+| Stay on CAD surface | off | §9.5.2 |
+
+**AC**: a ±3 % zig-zag row in a plane comes out within 30 % of its
+amplitude after 25 iterations in every mode, with nothing else moved and
+(even spacing on) equal edge lengths within 2 %; more iterations smooth
+more; border and cube-edge runs refuse.
+
+#### 9.5.12 Space
+Distributes the vertices of each selected run evenly by arc length along
+its current shape (they stay on the old run polyline). Fixed: open run
+ends, junctions, corners, and vertices with feature edges off the run; a
+vertex on a feature curve moves only when the run is that curve. A closed
+run without a fixed vertex keeps its first. A run whose new spacing would
+break a polygon beside it is left unchanged and reported. **AC**: an
+unevenly spaced row (inside the plate or on its border) comes out with
+equal edge lengths (1e-9), on the same line, and spacing again changes
+nothing; a jittered ring on a cylinder comes out with chords within 5 %.
+
+#### 9.5.13 Target Merge
+Click a vertex, then the vertex it merges into: the first disappears, its
+polygons use the second, which stays where it is. Vertices that share a
+polygon merge under the §9.5.2 rules (feature-curve vertices only along
+their curve into a curve neighbour, corners and pinned vertices never; the
+result must stay valid). Vertices that share no polygon are welded
+(Merge by Distance's weld rules, §9.5.7), for example to zip up a slit; a
+weld that would make a non-manifold vertex is refused. **AC**: a free
+vertex merges into an edge neighbour (one vertex fewer, the target
+unmoved); the flat-grid diagonal merge, a border vertex into the interior
+and a pinned corner are refused with their reasons; a slit zips one
+segment.
+
+#### 9.5.14 Mesh mode in the app
+- **Switch**: a `CAD | Mesh` segmented control in the top bar (`M`). Mesh
+  mode has its own tool panel and its own vertex/edge/face selection; CAD
+  tools (and the Preview, Auto-fill, Link and Symmetry toggles) are not
+  available in mesh mode, mesh tools not in CAD mode (a toast says so).
+  Switching is refused while a CAD preview is open (§5.10).
+- **Entry warning**: the first switch to mesh mode in a session shows one
+  dialog: mesh editing is destructive (vertices may leave the CAD surface;
+  edits apply at once, no preview, no confirmation, only Undo; an object
+  with mesh edits can't be edited in CAD mode until its mesh edits are
+  discarded). "Don't show this again" turns it off for good (stored in the
+  preferences, where "Warn before switching to mesh editing" turns it back
+  on). Cancel stays in CAD mode.
+- **Always visible**: in mesh mode the accent is amber (`mesh_accent` in
+  both built-in themes; themes without it get the default amber), the
+  selection is drawn in it, the viewport says "Mesh editing" under the
+  projection label, and a badge in the bottom-left corner reads
+  "Destructive editing · off the CAD surface".
+- **No prompts**: no confirmation and no preview/Apply step. Every edit is
+  one undo step. Relax, Space, Merge by Distance, Loop Cleanup, Resample and
+  Decimate run on the selection as soon as they are picked; Vertex Slide
+  and Edge Slide follow a drag in the viewport; Target Merge takes two
+  clicks. **Live values**: changing a value in the tool panel redoes the
+  last edit from the mesh it started on, while that edit is still the
+  latest change (the undo step is replaced, so it stays one step). "Apply
+  … again" runs the tool once more as a new step.
+- **Tool panel** (sections as the mockup): Select (Loop, Shortest Path),
+  Move (Vertex Slide, Edge Slide, Relax, Space), Merge and clean (Target
+  Merge, Merge by Distance, Loop Cleanup, Resample, Decimate), then the
+  picked tool's values, "Stay on CAD surface" for move tools, "Keep CAD and
+  hard edges", and the list of edited objects with Discard mesh edits.
+  Distances are percentages of the object's bounding-box diagonal.
+  Decimate and Merge by Distance (without "Selected only") work on every
+  object that has something selected.
+- **Shortcuts** (rebindable, none shared with CAD commands): switch `M`,
+  Vertex Slide `Shift+S`, Edge Slide `Shift+E`, Relax `Shift+R`, Space
+  `Alt+S`, Target Merge `Shift+W`, Merge by Distance `Alt+M`, Loop Cleanup
+  `Shift+C`, Resample `Alt+R`, Decimate `Shift+D`; Discard mesh edits and
+  Select shortest path from the palette. Esc cancels a slide drag, then a
+  first Target Merge pick, then the tool.
+- A mesh edit, undo or redo that changes a body's mesh drops that body's
+  mesh-mode selection (its indices no longer fit); a mesh tool's own edit
+  carries the selection over (the run it worked on, or the merged vertex).
+
+#### 9.5.15 Testing
 In addition to the ACs above (unit tests on synthetic meshes with exact
 normals: height fields, cubes, cylinders with UVs, UV spheres, tori):
 - **Baked models**: every mock reference model with a Grid on every face,
@@ -1401,9 +1572,15 @@ normals: height fields, cubes, cylinders with UVs, UV spheres, tori):
   is identical when the call is repeated, and keeps its tool-specific
   guarantee (Decimate: vertices are a subset of the input, triangle count
   never grows; Cleanup: deviation within the tolerance; Vertex Slide,
-  clamped: every vertex on the input surface; Merge by Distance: vertex
-  count never grows, applying it again at the same distance changes
-  nothing).
+  clamped, and Space: every vertex on the input surface; Merge by
+  Distance: vertex count never grows, applying it again at the same
+  distance changes nothing; Target Merge: exactly one vertex fewer; Relax
+  and Edge Slide: the same polygons).
+- **Scene and UI**: the edited mesh round-trips through save/load, a
+  format 1 scene loads, a missing or broken mesh entry is refused; the CAD
+  lock refuses CAD ops until Discard; undo and redo work across mode
+  switches; the entry warning and its tick box; Alt-click loops, Ctrl-click
+  shortest paths; export writes the edited positions.
 
 ---
 
@@ -1448,7 +1625,7 @@ deterministic:
   the step with a reason (Collapse and Weld must refuse results that flip a
   face against the CAD normal or are non-manifold); undoing everything returns the
   initial document exactly; save → load → evaluate gives the same output.
-- **Mesh mode** (§9.5.8): baked reference models through every mesh tool,
+- **Mesh mode** (§9.5.15): baked reference models through every mesh tool,
   and property tests with random meshes and random tool sequences.
 - **Golden tests**: CLI scripts → exported OBJ compared by topology hash and
   positions within tolerance (`insta`).

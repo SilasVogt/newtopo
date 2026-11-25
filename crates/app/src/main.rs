@@ -15,6 +15,7 @@ mod jobs;
 mod keymap;
 mod kit;
 mod launch;
+mod meshmode;
 mod palette;
 mod panels;
 mod prefs;

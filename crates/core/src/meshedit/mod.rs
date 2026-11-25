@@ -48,7 +48,9 @@ mod tests_mode;
 
 pub use cleanup::{CleanupParams, cleanup};
 pub use decimate::{DecimateMode, DecimateParams, Target, decimate};
-pub use edgeslide::{EdgeSlideParams, TargetMergeParams, edge_slide, target_merge};
+pub use edgeslide::{
+    EdgeSlideParams, TargetMergeParams, edge_slide, edge_slide_cross, target_merge,
+};
 pub use merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_by_distance};
 pub use mesh::{EdgeFlags, EditMesh, EditPolygon, FlaggedEdge};
 pub use pick::{edge_loop, shortest_edge_path, shortest_path};

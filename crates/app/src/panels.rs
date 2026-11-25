@@ -965,6 +965,10 @@ impl AppState {
     // ------------------------------------------------------------ tool panel
 
     pub fn tool_panel_ui(&mut self, ui: &mut Ui) {
+        if self.in_mesh_mode() {
+            self.mesh_panel_ui(ui);
+            return;
+        }
         let pal = self.pal;
         // Tool switcher.
         ui.horizontal_wrapped(|ui| {

@@ -200,12 +200,15 @@ pub struct AppState {
     pub themes: Vec<Theme>,
     pub theme: Theme,
     pub pal: Palette,
-    pub theme_applied: Option<(String, u32)>,
+    pub theme_applied: Option<(String, u32, bool)>,
     pub doc: DocState,
     pub demo: Option<Demo>,
     pub view: ViewState,
     pub sel: Selection,
     pub mode: Mode,
+    /// CAD or mesh editing (SPEC §9.5).
+    pub edit: crate::meshmode::EditMode,
+    pub mm: crate::meshmode::MeshState,
     pub tool: ToolState,
     pub ui: UiState,
     pub toasts: Toasts,
@@ -291,6 +294,8 @@ impl App {
             view: ViewState::default(),
             sel: Selection::default(),
             mode: Mode::Object,
+            edit: crate::meshmode::EditMode::Cad,
+            mm: Default::default(),
             tool: ToolState::default(),
             ui: UiState::default(),
             toasts: Toasts::default(),
@@ -605,6 +610,7 @@ impl TabViewer for Viewer<'_> {
 
     fn title(&mut self, tab: &mut Tab) -> egui::WidgetText {
         let t = match tab {
+            Tab::Tool if self.st.in_mesh_mode() => "Mesh tools".to_string(),
             Tab::Tool => self.st.tool.active.title().to_string(),
             t => t.title().to_string(),
         };
@@ -654,20 +660,35 @@ impl TabViewer for Viewer<'_> {
 
 impl AppState {
     pub fn colors(&self) -> OverlayColors {
-        self.prefs
+        let mut c = self
+            .prefs
             .overlay
             .clone()
-            .unwrap_or_else(|| self.theme.overlay.clone())
+            .unwrap_or_else(|| self.theme.overlay.clone());
+        if self.in_mesh_mode() {
+            // The selection takes the mesh-mode amber.
+            let [r, g, b, _] = self.pal.mesh_accent.to_normalized_gamma_f32();
+            c.selection = [r, g, b, 1.0];
+        }
+        c
     }
 
     fn ensure_theme(&mut self, ctx: &egui::Context) {
+        let mesh = self.in_mesh_mode();
         let key = (
             self.theme.name.clone(),
             (self.prefs.ui_scale * 100.0) as u32,
+            mesh,
         );
         if self.theme_applied.as_ref() != Some(&key) {
-            theme::apply(ctx, &self.theme, self.prefs.ui_scale);
-            self.pal = self.theme.palette();
+            // Mesh editing swaps the accent for amber (SPEC §9.5).
+            let t = if mesh {
+                self.theme.for_mesh_mode()
+            } else {
+                self.theme.clone()
+            };
+            theme::apply(ctx, &t, self.prefs.ui_scale);
+            self.pal = t.palette();
             self.theme_applied = Some(key);
             self.invalidate_view();
         }
@@ -751,7 +772,8 @@ impl AppState {
         DisplayParams {
             preview: self.view.preview,
             wireframe: self.view.wireframe,
-            show_verts: self.mode == Mode::Vertex && !self.view.preview,
+            show_verts: self.mode == Mode::Vertex && (!self.view.preview || self.in_mesh_mode()),
+            mesh: self.in_mesh_mode(),
             show_grid: self.prefs.show_grid,
             up: self.prefs.up,
             hidden: self.effective_hidden(),
@@ -789,8 +811,15 @@ impl AppState {
         if self.vd_key.as_ref() == Some(&key) {
             return;
         }
+        if params.mesh {
+            self.ensure_meshes();
+        }
         self.vd = if let Some(scene) = self.doc.scene.as_mut() {
-            crate::viewdata::from_scene(scene, &params)
+            if params.mesh {
+                crate::viewdata::from_meshes(scene, &self.mm.meshes, &params)
+            } else {
+                crate::viewdata::from_scene(scene, &params)
+            }
         } else if let Some(demo) = &self.demo {
             crate::viewdata::from_demo(&demo.bodies, &params)
         } else {
@@ -1062,6 +1091,9 @@ impl AppState {
     }
 
     pub fn set_mode(&mut self, m: Mode) {
+        if self.in_mesh_mode() && m == Mode::Object {
+            return;
+        }
         if self.mode != m {
             self.mode = m;
             self.hover = None;
@@ -1072,7 +1104,39 @@ impl AppState {
 
     pub fn run(&mut self, cmd: Cmd) {
         use Cmd::*;
+        // The two editing modes have separate tools (SPEC §9.5).
+        match (cmd.scope(), self.in_mesh_mode()) {
+            (crate::commands::Scope::Cad, true) => {
+                self.toast(
+                    ToastKind::Info,
+                    format!("{} {}", cmd.label(), S::TOAST_MESH_CAD_ONLY),
+                );
+                return;
+            }
+            (crate::commands::Scope::Mesh, false) => {
+                self.toast(
+                    ToastKind::Info,
+                    format!("{} {}", cmd.label(), S::TOAST_MESH_MESH_ONLY),
+                );
+                return;
+            }
+            _ => {}
+        }
+        use crate::meshmode::MeshTool as MT;
         match cmd {
+            EditModeToggle => self.toggle_edit_mode(),
+            MeshVertexSlide => self.mesh_pick_tool(MT::VertexSlide),
+            MeshEdgeSlide => self.mesh_pick_tool(MT::EdgeSlide),
+            MeshRelax => self.mesh_pick_tool(MT::Relax),
+            MeshSpace => self.mesh_pick_tool(MT::Space),
+            MeshTargetMerge => self.mesh_pick_tool(MT::TargetMerge),
+            MeshMergeByDistance => self.mesh_pick_tool(MT::MergeByDistance),
+            MeshLoopCleanup => self.mesh_pick_tool(MT::LoopCleanup),
+            MeshResample => self.mesh_pick_tool(MT::Resample),
+            MeshDecimate => self.mesh_pick_tool(MT::Decimate),
+            MeshShortestPath => self.mesh_shortest_path_cmd(),
+            MeshDiscard => self.mesh_discard(),
+            Loop if self.in_mesh_mode() => self.mesh_select_loops(),
             ModeVertex => self.set_mode(Mode::Vertex),
             ModeEdge => self.set_mode(Mode::Edge),
             ModeFace => self.set_mode(Mode::Face),
@@ -1494,6 +1558,8 @@ impl AppState {
             self.ui.prefs_open = false;
         } else if self.drag.is_some() {
             self.drag = None;
+        } else if self.in_mesh_mode() {
+            self.mesh_cancel();
         } else if self.tool.cancel_pending() {
         } else if self.doc.in_preview() {
             self.discard_preview();
@@ -1529,7 +1595,9 @@ impl AppState {
                         w.inactive.bg_fill = Color32::TRANSPARENT;
                         self.menus(ui);
                     });
-                    ui.add_space(10.0);
+                    ui.add_space(6.0);
+                    self.edit_mode_switch(ui);
+                    ui.add_space(4.0);
                     sep(ui, &pal);
                     // Undo / redo.
                     for (icon, cmd, can) in [
@@ -1550,12 +1618,16 @@ impl AppState {
                     }
                     sep(ui, &pal);
                     // Component modes.
+                    let mesh = self.in_mesh_mode();
                     for (m, icon, label, cmd) in [
                         (Mode::Vertex, Icon::Vertex, S::MODE_VERTEX, Cmd::ModeVertex),
                         (Mode::Edge, Icon::Edge, S::MODE_EDGE, Cmd::ModeEdge),
                         (Mode::Face, Icon::Face, S::MODE_FACE, Cmd::ModeFace),
                         (Mode::Object, Icon::Object, S::MODE_OBJECT, Cmd::ModeObject),
-                    ] {
+                    ]
+                    .into_iter()
+                    .filter(|(m, ..)| !(mesh && *m == Mode::Object))
+                    {
                         let r = icons::icon_button(ui, icon, self.mode == m, 26.0);
                         if r.on_hover_text(format!("{label} mode  ({})", self.keymap.label(cmd)))
                             .clicked()
@@ -1565,68 +1637,71 @@ impl AppState {
                     }
                     sep(ui, &pal);
                     let s = self.scene_toggles();
-                    let r = icons::icon_text_button(
-                        ui,
-                        Icon::Preview,
-                        S::TOGGLE_PREVIEW,
-                        self.view.preview,
-                    );
-                    if r.on_hover_text(format!(
-                        "{}  ({})",
-                        S::TOGGLE_PREVIEW,
-                        self.keymap.label(Cmd::Preview)
-                    ))
-                    .clicked()
-                    {
-                        self.run(Cmd::Preview);
-                    }
-                    for (icon, label, on, cmd) in [
-                        (
-                            Icon::AutoFill,
-                            S::TOGGLE_AUTOFILL,
-                            s.as_ref().is_some_and(|s| s.autofill),
-                            Cmd::AutoFill,
-                        ),
-                        (
-                            Icon::Link,
-                            S::TOGGLE_LINK,
-                            s.as_ref().is_some_and(|s| s.link),
-                            Cmd::Link,
-                        ),
-                        (
-                            Icon::Symmetry,
-                            S::TOGGLE_SYMMETRY,
-                            s.as_ref().is_some_and(|s| s.symmetry),
-                            Cmd::Symmetry,
-                        ),
-                    ] {
-                        let r = ui
-                            .add_enabled_ui(s.is_some(), |ui| {
-                                icons::icon_text_button(ui, icon, label, on)
-                            })
-                            .inner;
-                        let tip = if cmd == Cmd::AutoFill {
-                            format!("{}  ({})", S::AUTOFILL_TIP, self.keymap.label(cmd))
-                        } else {
-                            format!("{label}  ({})", self.keymap.label(cmd))
-                        };
-                        if r.on_hover_text(tip).clicked() {
-                            self.run(cmd);
+                    // The CAD toggles belong to CAD editing.
+                    if !mesh {
+                        let r = icons::icon_text_button(
+                            ui,
+                            Icon::Preview,
+                            S::TOGGLE_PREVIEW,
+                            self.view.preview,
+                        );
+                        if r.on_hover_text(format!(
+                            "{}  ({})",
+                            S::TOGGLE_PREVIEW,
+                            self.keymap.label(Cmd::Preview)
+                        ))
+                        .clicked()
+                        {
+                            self.run(Cmd::Preview);
                         }
-                    }
-                    if let Some(s) = &s
-                        && s.symmetry
-                    {
-                        for (axis, cmd, l) in [
-                            (newtopo_core::doc::Axis::X, Cmd::MirrorX, "X"),
-                            (newtopo_core::doc::Axis::Y, Cmd::MirrorY, "Y"),
-                            (newtopo_core::doc::Axis::Z, Cmd::MirrorZ, "Z"),
+                        for (icon, label, on, cmd) in [
+                            (
+                                Icon::AutoFill,
+                                S::TOGGLE_AUTOFILL,
+                                s.as_ref().is_some_and(|s| s.autofill),
+                                Cmd::AutoFill,
+                            ),
+                            (
+                                Icon::Link,
+                                S::TOGGLE_LINK,
+                                s.as_ref().is_some_and(|s| s.link),
+                                Cmd::Link,
+                            ),
+                            (
+                                Icon::Symmetry,
+                                S::TOGGLE_SYMMETRY,
+                                s.as_ref().is_some_and(|s| s.symmetry),
+                                Cmd::Symmetry,
+                            ),
                         ] {
-                            if ui
-                                .selectable_label(s.symmetry_axes.contains(&axis), l)
-                                .clicked()
-                            {
+                            let r = ui
+                                .add_enabled_ui(s.is_some(), |ui| {
+                                    icons::icon_text_button(ui, icon, label, on)
+                                })
+                                .inner;
+                            let tip = if cmd == Cmd::AutoFill {
+                                format!("{}  ({})", S::AUTOFILL_TIP, self.keymap.label(cmd))
+                            } else {
+                                format!("{label}  ({})", self.keymap.label(cmd))
+                            };
+                            if r.on_hover_text(tip).clicked() {
                                 self.run(cmd);
+                            }
+                        }
+                        if let Some(s) = &s
+                            && s.symmetry
+                        {
+                            for (axis, cmd, l) in [
+                                (newtopo_core::doc::Axis::X, Cmd::MirrorX, "X"),
+                                (newtopo_core::doc::Axis::Y, Cmd::MirrorY, "Y"),
+                                (newtopo_core::doc::Axis::Z, Cmd::MirrorZ, "Z"),
+                            ] {
+                                if ui
+                                    .selectable_label(s.symmetry_axes.contains(&axis), l)
+                                    .clicked()
+                                {
+                                    self.run(cmd);
+                                }
                             }
                         }
                     }
@@ -1888,7 +1963,9 @@ impl AppState {
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let hint = if self.is_demo() && self.tool.active == Tool::Select {
+                    let hint = if self.in_mesh_mode() {
+                        self.mm.tool.hint()
+                    } else if self.is_demo() && self.tool.active == Tool::Select {
                         S::HINT_DEMO
                     } else {
                         self.tool.active.hint()
@@ -1902,8 +1979,9 @@ impl AppState {
                             Mode::Object => S::MODE_OBJECT,
                         };
                         let n = self.sel.count(self.mode);
+                        let edit = if self.in_mesh_mode() { "Mesh · " } else { "" };
                         ui.label(
-                            RichText::new(format!("{mode} · {n} selected"))
+                            RichText::new(format!("{edit}{mode} · {n} selected"))
                                 .small()
                                 .color(pal.text_dim),
                         );

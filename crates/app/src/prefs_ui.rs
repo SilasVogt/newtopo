@@ -206,6 +206,9 @@ impl AppState {
                 ui.end_row();
             });
         ui.add_space(10.0);
+        heading(ui, S::PREFS_MESH);
+        crate::kit::checkbox(ui, &mut self.prefs.mesh_warning, S::PREFS_MESH_WARNING);
+        ui.add_space(10.0);
         heading(ui, S::IMPORT_OPTIONS);
         egui::Grid::new("prefs-import")
             .num_columns(2)

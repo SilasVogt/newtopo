@@ -36,8 +36,26 @@ pub struct Theme {
     pub warn: String,
     pub error: String,
     pub ok: String,
+    /// Accent while mesh editing (SPEC §9.5): amber, so destructive editing
+    /// is always recognisable. Themes without it get the built-in amber.
+    #[serde(default = "default_mesh_accent")]
+    pub mesh_accent: String,
+    #[serde(default = "default_mesh_accent_text")]
+    pub mesh_accent_text: String,
+    #[serde(default = "default_mesh_selection_bg")]
+    pub mesh_selection_bg: String,
     pub rounding: f32,
     pub overlay: OverlayColors,
+}
+
+fn default_mesh_accent() -> String {
+    "#f0b24a".into()
+}
+fn default_mesh_accent_text() -> String {
+    "#1c1404".into()
+}
+fn default_mesh_selection_bg() -> String {
+    "#3a2e15".into()
 }
 
 /// Parsed colours for drawing.
@@ -62,6 +80,7 @@ pub struct Palette {
     pub warn: Color32,
     pub error: Color32,
     pub ok: Color32,
+    pub mesh_accent: Color32,
     pub rounding: f32,
 }
 
@@ -133,7 +152,18 @@ impl Theme {
             warn: parse_color(&self.warn),
             error: parse_color(&self.error),
             ok: parse_color(&self.ok),
+            mesh_accent: parse_color(&self.mesh_accent),
             rounding: self.rounding,
+        }
+    }
+
+    /// This theme with the mesh-mode accent in place of its accent.
+    pub fn for_mesh_mode(&self) -> Theme {
+        Theme {
+            accent: self.mesh_accent.clone(),
+            accent_text: self.mesh_accent_text.clone(),
+            selection_bg: self.mesh_selection_bg.clone(),
+            ..self.clone()
         }
     }
 }

@@ -19,6 +19,9 @@
   "warn": "#b9770e",
   "error": "#d23c3c",
   "ok": "#1f9d55",
+  "mesh_accent": "#b4690e",
+  "mesh_accent_text": "#ffffff",
+  "mesh_selection_bg": "#f5e2c4",
   "rounding": 6.0,
   "overlay": {
     "cad_edge": [0.149, 0.165, 0.192, 1.0],

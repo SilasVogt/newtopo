@@ -105,6 +105,21 @@ pub(crate) fn cross_edges(w: &Work, positive: bool) -> (Vec<[u32; 2]>, Vec<Strin
     (pairs, skipped)
 }
 
+/// The `[vertex, neighbour]` cross edges Edge Slide would use on one side
+/// (positive factors when `positive`), for drawing or for turning a drag
+/// into a factor.
+pub fn edge_slide_cross(
+    mesh: &EditMesh,
+    sel: &Selection,
+    preserve: Preserve,
+    positive: bool,
+) -> Result<Vec<[u32; 2]>, Refusal> {
+    check_input(mesh)?;
+    let mut w = Work::new(mesh, preserve.mask());
+    mark_selection(&mut w, sel)?;
+    Ok(cross_edges(&w, positive).0)
+}
+
 /// Edge Slide: slide the selected runs along their cross edges.
 pub fn edge_slide(
     mesh: &EditMesh,

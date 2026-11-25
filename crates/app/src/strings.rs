@@ -357,3 +357,51 @@ pub const COMPARE_BEFORE: &str = "Before";
 pub const COMPARE_AFTER: &str = "After";
 pub const AUTOFILL_EXPLAIN: &str = "Auto-fill closes the polygons left between your lines and the CAD edges: it connects vertices that already exist into quads and triangles. It adds edges, never new vertices, and only runs while you have it switched on.";
 pub const AUTOFILL_TIP: &str = "Auto-fill: connect the existing vertices of each remaining polygon into quads and triangles (adds edges, never vertices). Off by default; turning it on shows a before/after preview to apply or discard.";
+
+// Mesh mode (SPEC §9.5)
+pub const EDIT_CAD: &str = "CAD";
+pub const EDIT_MESH: &str = "Mesh";
+pub const EDIT_SWITCH_TIP: &str = "CAD editing works on lines over the CAD model; mesh editing works directly on the finished mesh";
+pub const MESH_DLG_TITLE: &str = "Switch to mesh editing?";
+pub const MESH_DLG_BODY: &str =
+    "Mesh editing works directly on the finished mesh. It is destructive:";
+pub const MESH_DLG_POINT_1: &str = "Vertices no longer have to stay on the CAD surface.";
+pub const MESH_DLG_POINT_2: &str =
+    "Edits apply at once. There is no preview and no confirmation, only Undo.";
+pub const MESH_DLG_POINT_3: &str =
+    "An object with mesh edits can't be edited in CAD mode until you discard its mesh edits.";
+pub const MESH_DLG_DONT_SHOW: &str = "Don't show this again";
+pub const MESH_DLG_OK: &str = "Edit mesh";
+pub const MESH_BADGE: &str = "Destructive editing · off the CAD surface";
+pub const MESH_HUD: &str = "Mesh editing";
+pub const PREFS_MESH_WARNING: &str = "Warn before switching to mesh editing";
+pub const PREFS_MESH: &str = "Mesh editing";
+pub const MESH_SEC_SELECT: &str = "Select";
+pub const MESH_SEC_MOVE: &str = "Move";
+pub const MESH_SEC_MERGE: &str = "Merge and clean";
+pub const MESH_DISCARD: &str = "Discard mesh edits";
+pub const MESH_DISCARD_TIP: &str =
+    "Return the selected objects to their CAD-driven mesh (undoable)";
+pub const MESH_NO_EDITS: &str =
+    "No mesh edits yet: the first edit locks CAD editing of the object.";
+pub const MESH_HAS_EDITS: &str = "has mesh edits: CAD editing is locked";
+pub const MESH_STAY_ON_SURFACE: &str = "Stay on CAD surface";
+pub const MESH_STAY_TIP: &str = "Put moved vertices back on the nearest point of the CAD surface";
+pub const MESH_KEEP_FEATURES: &str = "Keep CAD and hard edges";
+pub const MESH_KEEP_FEATURES_TIP: &str =
+    "Vertices on CAD and hard edges only move or merge along them";
+pub const MESH_LIVE_NOTE: &str =
+    "Changing a value redoes the last edit with it (still one undo step).";
+pub const HINT_MESH_SELECT: &str = "Alt-click an edge for its loop · Ctrl-click for the shortest path · Shift-click adds or removes · values update live";
+pub const HINT_MESH_VERTEX_SLIDE: &str =
+    "Vertex Slide: drag in the viewport to slide the selected vertices along their edges";
+pub const HINT_MESH_EDGE_SLIDE: &str =
+    "Edge Slide: drag in the viewport to slide the selected edge loop to either side";
+pub const HINT_MESH_TARGET_MERGE: &str =
+    "Target Merge: click a vertex, then the vertex it merges into";
+pub const HINT_MESH_RUN: &str =
+    "Applied to the selection · change a value to redo it with that value";
+pub const TOAST_MESH_NO_SCENE: &str =
+    "Open or import a model first: mesh editing works on its mesh.";
+pub const TOAST_MESH_CAD_ONLY: &str = "is a CAD tool. Switch to CAD editing (M) to use it.";
+pub const TOAST_MESH_MESH_ONLY: &str = "is a mesh tool. Switch to mesh editing (M) to use it.";
