@@ -14,7 +14,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | P4 Precision and cleanup | ✅ | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits. The radial menu shipped here was later removed. |
 | P5 Repeat and ship | 🟡 | Link, Symmetry, copy/paste rules, OBJ/glTF/FBX export, Blender import test. Link/Symmetry mirror rules and split lines but not edits (remove/collapse/weld). |
 | P6 Studio | 🟡 | Batch rename, Blender bridge + add-on, themes, keymap editor, autosave. Quick UV unwrap (§9.2) is not implemented (panel says "coming soon"). Update notice (§9.4): opt-in daily check of this repo's GitHub releases, link only, no self-update. |
-| P7 Polish | 🟡 | From user testing: every mesh change previews until Apply, with a before/after compare (§5.10); auto-fill off by default; Undo/Redo buttons; STEP files with loose vertex tolerances now work. Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
+| P7 Polish | 🟡 | Crash logs and problem reports (§5.11): rotated log file, panic hook, previous-crash offer, "Report a problem" dialog with a zip, a pre-filled GitHub issue link and an AI agent prompt; nothing is uploaded. From user testing: every mesh change previews until Apply, with a before/after compare (§5.10); auto-fill off by default; Undo/Redo buttons; STEP files with loose vertex tolerances now work. Maya and 3ds Max add-ons written but untested in those hosts. macOS arm64 build ships. User guide with screenshots of every tool not written yet. |
 
 ## Mesh mode (SPEC §9.5)
 
@@ -30,6 +30,12 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 | Merge by Distance, Loop Cleanup, Resample, Decimate | ✅ | Engine (§9.5.3–§9.5.7) and UI. |
 
 ## Known gaps
+
+- **Problem reports (§5.11)**: model files go into the report as they are,
+  so a STEP header's author or original path is included when the user
+  switches the model on. Two app instances share one session marker, so a
+  crash in one of them may go unnoticed at the next start. Backtraces of
+  Windows builds without `.pdb` files carry no function names.
 
 - **Performance budgets (§4.6)** are met on the reference models (a one-patch change takes 3–21 ms) but not on very large multi-hole faces: a 106-face plate with 100 holes in one face needs ~90 ms per change (budget 16 ms). The 2,000-face rebuild budget is unmeasured (no such reference body yet).
 - **Evaluator edge cases** refused by the validation gate instead of producing output: welds/collapses into sphere/cone poles, a single radial slice of a bare torus with auto-fill on, a few collapses that would flip a face. They're refused with a reason, never silently broken.
@@ -49,7 +55,7 @@ What [`SPEC.md`](../SPEC.md) asks for and where the implementation stands.
 
 ## Test inventory
 
-`cargo test --workspace` (with `OCCT_DIR` set): 351 passing, 6 ignored
+`cargo test --workspace` (with `OCCT_DIR` set): 425 passing, 6 ignored
 opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`, and perf timings).
 
 - Engine ACs (§4.6), tool ACs (§6.2–§6.14), API tests (Link 4×4 holes,
@@ -64,7 +70,10 @@ opt-in tests (Blender headless import and bridge, which need `NEWTOPO_BLENDER=1`
 - OCCT kernel invariants on all 12 reference models; import helper crash,
   hang, timeout and malformed-file handling.
 - App: UI tests driven with synthetic input; renderer incl. one headless GPU
-  render.
+  render. Problem reports: scrubbing of home and user name, folder
+  stripping, report files matching the toggles (zip read back), issue URL
+  cap, prompt without switched-off data, dialog once per caught panic and
+  never after a refusal, previous-crash detection, log rotation.
 - Mesh mode: tool ACs on synthetic meshes, every mock model baked and run
   through every tool, property tests with random meshes and tool sequences
   (`MESHEDIT_CASES=1000` for a longer soak); the mesh-mode scene (storage,

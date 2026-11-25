@@ -3,6 +3,7 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=DEP_OCCT_SHIM_LIB_DIR");
     windows_icon();
+    git_commit();
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if let Ok(dir) = std::env::var("DEP_OCCT_SHIM_LIB_DIR")
         && os != "windows"
@@ -13,6 +14,44 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
         }
         println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+    }
+}
+
+/// The commit this build is made from, for problem reports
+/// (`NEWTOPO_COMMIT`): from `NEWTOPO_COMMIT` or `GITHUB_SHA` when set (CI,
+/// packagers), else from git. Builds outside a git checkout have none.
+fn git_commit() {
+    println!("cargo:rerun-if-env-changed=NEWTOPO_COMMIT");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).output().ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let sha = std::env::var("NEWTOPO_COMMIT")
+        .ok()
+        .or_else(|| std::env::var("GITHUB_SHA").ok())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Rebuild when HEAD moves (a checkout or a new commit).
+            for p in [
+                git(&["rev-parse", "--git-path", "HEAD"]),
+                git(&["symbolic-ref", "-q", "HEAD"])
+                    .and_then(|r| git(&["rev-parse", "--git-path", &r])),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if std::path::Path::new(&p).exists() {
+                    println!("cargo:rerun-if-changed={p}");
+                }
+            }
+            git(&["rev-parse", "HEAD"])
+        });
+    if let Some(sha) = sha.filter(|s| s.len() >= 7 && s.bytes().all(|b| b.is_ascii_hexdigit())) {
+        println!("cargo:rustc-env=NEWTOPO_COMMIT={sha}");
     }
 }
 

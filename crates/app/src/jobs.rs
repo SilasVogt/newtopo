@@ -6,6 +6,7 @@ use crate::app::{AppState, PendingAfterPrompt};
 use crate::docstate::guard;
 use crate::kit;
 use crate::prefs::Paths;
+use crate::report::crash::Failure;
 use crate::strings as S;
 use crate::toasts::ToastKind;
 use egui::{RichText, Ui, vec2};
@@ -136,11 +137,32 @@ struct ImportJob {
     progress: Arc<Mutex<(f32, String)>>,
     cancel: Arc<AtomicBool>,
     rx: Receiver<Result<ImportedFile, String>>,
+    /// A panic on the job thread, for the problem report.
+    panic: Arc<Mutex<Option<Failure>>>,
 }
 
 struct ExportJob {
     path: PathBuf,
     rx: Receiver<Result<ExportFiles, String>>,
+    panic: Arc<Mutex<Option<Failure>>>,
+}
+
+/// On a job thread after a caught panic: keep the hook's record (or a
+/// plain one) for the UI thread.
+fn keep_panic(slot: &Mutex<Option<Failure>>, context: &str, fallback: &str) {
+    let mut f =
+        crate::report::crash::take_last().unwrap_or_else(|| Failure::from_message(fallback));
+    f.context = Some(context.to_string());
+    if let Ok(mut g) = slot.lock() {
+        *g = Some(f);
+    }
+}
+
+/// On the UI thread: queue a job's panic for the report dialog.
+fn queue_panic(slot: &Mutex<Option<Failure>>) {
+    if let Some(f) = slot.lock().ok().and_then(|mut g| g.take()) {
+        crate::report::crash::queue(f);
+    }
 }
 
 #[derive(Default)]
@@ -204,6 +226,7 @@ pub enum Modal {
     Recovery,
     ImportList,
     ImportReport,
+    Report,
     Export,
     About,
 }
@@ -266,24 +289,29 @@ impl AppState {
 
     /// A document passed on the command line (file association).
     pub fn open_from_launch(&mut self, p: PathBuf) {
+        crate::report::scrub::know_file(&p);
+        let name = crate::report::file_name(&p);
         if !p.is_file() {
-            self.toast(
+            self.toast_log(
                 ToastKind::Error,
                 format!("Can't open {}: file not found", p.display()),
+                &format!("open failed: {name}: file not found"),
             );
         } else if is_scene(&p) {
             self.open_scene(Some(p));
         } else if is_cad(&p) {
             self.start_import(p);
         } else {
-            self.toast(
+            self.toast_log(
                 ToastKind::Warn,
                 format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+                &format!("can't open {name}: not STEP, IGES, BREP or .ntopo"),
             );
         }
     }
 
     pub fn start_import(&mut self, path: PathBuf) {
+        crate::report::scrub::know_file(&path);
         if !newtopo_kernel::HAS_CAD_IMPORT {
             self.toast(ToastKind::Error, S::TOAST_NO_CAD_IMPORT);
             return;
@@ -311,6 +339,9 @@ impl AppState {
             ..Default::default()
         };
         let (p2, c2, path2) = (progress.clone(), cancel.clone(), path.clone());
+        let panic = Arc::new(Mutex::new(None));
+        let panic2 = panic.clone();
+        log::info!("import started: {}", crate::report::file_name(&path));
         std::thread::Builder::new()
             .name("import".into())
             .spawn(move || {
@@ -326,7 +357,10 @@ impl AppState {
                 let r = match r {
                     Ok(Ok(f)) => Ok(f),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err("import helper runner panicked".to_string()),
+                    Err(_) => {
+                        keep_panic(&panic2, "Import", "import helper runner panicked");
+                        Err("import helper runner panicked".to_string())
+                    }
                 };
                 let _ = tx.send(r);
             })
@@ -336,6 +370,7 @@ impl AppState {
             progress,
             cancel,
             rx,
+            panic,
         });
     }
 
@@ -356,6 +391,17 @@ impl AppState {
                 Ok(r) => {
                     let job = self.jobs.import.take().expect("job");
                     let cancelled = job.cancel.load(Ordering::Relaxed);
+                    queue_panic(&job.panic);
+                    let name = crate::report::file_name(&job.path);
+                    match &r {
+                        _ if cancelled => log::info!("import cancelled: {name}"),
+                        Ok(f) => log::info!(
+                            "import read: {name}, {} object(s), unit {}",
+                            f.bodies.len(),
+                            f.units
+                        ),
+                        Err(e) => log::warn!("import failed: {name}: {e}"),
+                    }
                     match r {
                         // Cancel wins even if the helper finished meanwhile.
                         Ok(_) if cancelled => self.toast(ToastKind::Info, S::IMPORT_CANCELLED),
@@ -418,7 +464,9 @@ impl AppState {
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
-                    self.jobs.import = None;
+                    if let Some(job) = self.jobs.import.take() {
+                        queue_panic(&job.panic);
+                    }
                     self.toast(ToastKind::Error, S::IMPORT_FAILED);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -429,16 +477,27 @@ impl AppState {
             match job.rx.try_recv() {
                 Ok(r) => {
                     let job = self.jobs.export.take().expect("job");
+                    queue_panic(&job.panic);
                     match r.and_then(|files| write_export(&job.path, files)) {
-                        Ok(()) => self.toast(
+                        Ok(()) => self.toast_log(
                             ToastKind::Info,
                             format!("{} {}", S::TOAST_EXPORTED, short_path(&job.path)),
+                            &format!("export finished: {}", crate::report::file_name(&job.path)),
                         ),
-                        Err(e) => self.toast(ToastKind::Error, e),
+                        Err(e) => self.toast_log(
+                            ToastKind::Error,
+                            &e,
+                            &format!(
+                                "export failed: {}: {e}",
+                                crate::report::file_name(&job.path)
+                            ),
+                        ),
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
-                    self.jobs.export = None;
+                    if let Some(job) = self.jobs.export.take() {
+                        queue_panic(&job.panic);
+                    }
                 }
                 Err(TryRecvError::Empty) => {}
             }
@@ -474,6 +533,8 @@ impl AppState {
         if choices.iter().all(|c| *c == ImportChoice::Exclude) {
             return;
         }
+        let _action = crate::report::crash::action("Import");
+        self.session.import(path);
         if let Err(e) = self.doc.ensure_scene() {
             report.errors.push(e);
             self.ui.import_report = Some(report);
@@ -574,9 +635,14 @@ impl AppState {
             } else if is_scene(&p) {
                 self.request(PendingAfterPrompt::Open(Some(p)));
             } else {
-                self.toast(
+                crate::report::scrub::know_file(&p);
+                self.toast_log(
                     ToastKind::Warn,
                     format!("Can't open {}: use STEP, IGES, BREP or .ntopo", p.display()),
+                    &format!(
+                        "can't open {}: not STEP, IGES, BREP or .ntopo",
+                        crate::report::file_name(&p)
+                    ),
                 );
             }
         }
@@ -630,8 +696,11 @@ impl AppState {
                 None => return,
             },
         };
+        let _action = crate::report::crash::action("Open");
+        crate::report::scrub::know_file(&path);
         match self.doc.open(&path) {
             Ok(()) => {
+                self.session.open(&path);
                 self.end_compare();
                 self.drop_held_import();
                 self.demo = None;
@@ -652,9 +721,10 @@ impl AppState {
                     self.view.needs_frame = false;
                 }
             }
-            Err(e) => self.toast(
+            Err(e) => self.toast_log(
                 ToastKind::Error,
                 format!("Couldn't open {}: {e}", path.display()),
+                &format!("open failed: {}: {e}", crate::report::file_name(&path)),
             ),
         }
     }
@@ -684,6 +754,8 @@ impl AppState {
         };
         let old_autosave = autosave_path(&self.paths, self.doc.path.as_deref());
         self.doc.set_camera(self.view.camera.to_doc());
+        crate::report::scrub::know_file(&path);
+        let name = crate::report::file_name(&path);
         match self.doc.save(&path) {
             Ok(()) => {
                 if let Some(a) = old_autosave
@@ -695,12 +767,17 @@ impl AppState {
                 }
                 self.prefs.push_recent(&path);
                 self.dirty_settings = true;
-                self.toast(
+                self.toast_log(
                     ToastKind::Info,
                     format!("{} {}", S::TOAST_SAVED, short_path(&path)),
+                    &format!("saved: {name}"),
                 );
             }
-            Err(e) => self.toast(ToastKind::Error, format!("Couldn't save: {e}")),
+            Err(e) => self.toast_log(
+                ToastKind::Error,
+                format!("Couldn't save: {e}"),
+                &format!("save failed: {name}: {e}"),
+            ),
         }
     }
 
@@ -737,12 +814,14 @@ impl AppState {
             let _ = std::fs::create_dir_all(dir);
         }
         self.doc.set_camera(self.view.camera.to_doc());
+        crate::report::scrub::know_file(&p);
+        let name = crate::report::file_name(&p);
         match self.doc.save_copy(&p) {
             Ok(()) => {
-                log::info!("autosaved to {}", p.display());
+                log::info!("autosaved: {name}");
                 self.owned_autosaves.insert(p);
             }
-            Err(e) => log::warn!("autosave failed: {e}"),
+            Err(e) => log::warn!("autosave failed: {name}: {e}"),
         }
     }
 
@@ -752,6 +831,7 @@ impl AppState {
             .and_then(|s| s.strip_suffix(".autosave"))
             .map(PathBuf::from)
             .filter(|p| is_scene(p) && self.paths.untitled_autosave().as_deref() != Some(autosave));
+        crate::report::scrub::know_file(autosave);
         match self.doc.open(autosave) {
             Ok(()) => {
                 // The user chose this autosave: it is ours to clean up now.
@@ -764,7 +844,14 @@ impl AppState {
                 self.view.needs_frame = true;
                 self.toast(ToastKind::Info, "Recovered. Save to keep it.");
             }
-            Err(e) => self.toast(ToastKind::Error, format!("Couldn't recover: {e}")),
+            Err(e) => self.toast_log(
+                ToastKind::Error,
+                format!("Couldn't recover: {e}"),
+                &format!(
+                    "recover failed: {}: {e}",
+                    crate::report::file_name(autosave)
+                ),
+            ),
         }
     }
 
@@ -839,6 +926,7 @@ impl AppState {
         if self.blocked_by_preview() {
             return;
         }
+        crate::report::scrub::know_file(&path);
         let Some(objects) = self.export_items() else {
             self.toast(ToastKind::Error, S::TOAST_ENGINE_MISSING);
             return;
@@ -860,6 +948,9 @@ impl AppState {
         self.prefs.export = d.opts;
         self.dirty_settings = true;
         let (tx, rx) = channel();
+        let panic = Arc::new(Mutex::new(None));
+        let panic2 = panic.clone();
+        log::info!("export started: {:?}, {} object(s)", format, objects.len());
         std::thread::Builder::new()
             .name("export".into())
             .spawn(move || {
@@ -879,12 +970,15 @@ impl AppState {
                 let r = match r {
                     Ok(Ok(f)) => Ok(f),
                     Ok(Err(e)) => Err(format!("Export failed: {e:#}")),
-                    Err(_) => Err(format!("Export failed: {}", S::TOAST_ENGINE_MISSING)),
+                    Err(_) => {
+                        keep_panic(&panic2, "Export", "export panicked");
+                        Err(format!("Export failed: {}", S::TOAST_ENGINE_MISSING))
+                    }
                 };
                 let _ = tx.send(r);
             })
             .ok();
-        self.jobs.export = Some(ExportJob { path, rx });
+        self.jobs.export = Some(ExportJob { path, rx, panic });
     }
 
     // ------------------------------------------------------------ dialogs
@@ -907,6 +1001,8 @@ impl AppState {
             Some(Modal::ImportList)
         } else if self.ui.import_report.is_some() {
             Some(Modal::ImportReport)
+        } else if self.ui.report.is_some() {
+            Some(Modal::Report)
         } else if self.ui.export.is_some() {
             Some(Modal::Export)
         } else if self.ui.about_open {
@@ -925,6 +1021,7 @@ impl AppState {
             Modal::Recovery => !self.ui.recovery.is_empty(),
             Modal::ImportList => self.ui.import_list.is_some(),
             Modal::ImportReport => self.ui.import_report.is_some(),
+            Modal::Report => self.ui.report.is_some(),
             Modal::Export => self.ui.export.is_some(),
             Modal::About => self.ui.about_open,
         }
@@ -940,6 +1037,7 @@ impl AppState {
             Modal::Recovery => {}
             Modal::ImportList => self.ui.import_list = None,
             Modal::ImportReport => self.ui.import_report = None,
+            Modal::Report => self.ui.report = None,
             Modal::Export => self.ui.export = None,
             Modal::About => self.ui.about_open = false,
         }
@@ -1106,6 +1204,7 @@ impl AppState {
         match active {
             Some(Modal::ImportList) => self.import_list_ui(ctx),
             Some(Modal::ImportReport) => self.import_report_ui(ctx),
+            Some(Modal::Report) => self.report_dialog_ui(ctx),
             Some(Modal::Export) => self.export_dialog_ui(ctx),
             _ => {}
         }
@@ -1563,6 +1662,7 @@ mod tests {
             progress: Arc::new(Mutex::new((1.0, String::new()))),
             cancel: Arc::new(AtomicBool::new(cancel)),
             rx,
+            panic: Default::default(),
         });
         app.st.poll_jobs(&ctx);
         (ctx, app)

@@ -152,6 +152,7 @@ commands! {
     Quit => "file.quit", "Quit", File, None, ["Ctrl+Q"];
 
     CheckUpdates => "help.check_updates", "Check for updates…", Help, None, [];
+    ReportProblem => "help.report_problem", "Report a problem…", Help, Some(Icon::Warning), [];
     About => "help.about", "About newtopo", Help, Some(Icon::Info), [];
 }
 
