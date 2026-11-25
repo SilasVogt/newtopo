@@ -264,26 +264,31 @@ impl Scene {
     /// Apply several ops as one undo step, all or nothing (the result of the
     /// whole batch must validate).
     pub fn apply_all(&mut self, ops: Vec<Op>) -> Result<Vec<OpOutcome>, Refusal> {
-        let orig = self.doc.clone();
-        let mut outs = Vec::with_capacity(ops.len());
-        for op in &ops {
-            match self.run_op(op) {
-                Ok((d, o)) => {
-                    self.doc = Arc::new(d);
-                    outs.push(o);
-                }
-                Err(e) => {
-                    self.doc = orig;
-                    self.stashed = None;
-                    return Err(e);
-                }
+        let (fin, outs) = self.with_scratch_doc(|s| {
+            let mut outs = Vec::with_capacity(ops.len());
+            for op in &ops {
+                let (d, o) = s.run_op(op)?;
+                s.doc = Arc::new(d);
+                outs.push(o);
             }
-        }
-        let fin = (*self.doc).clone();
-        self.doc = orig;
-        self.stashed = None;
+            Ok(((*s.doc).clone(), outs))
+        })?;
         self.gate_and_commit(fin)?;
         Ok(outs)
+    }
+
+    /// Run `f`, which may put intermediate documents in `self.doc`. The
+    /// document it started with is back when this returns, also if `f`
+    /// panics (callers catch panics and keep using the scene).
+    fn with_scratch_doc<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) -> R {
+        let orig = self.doc.clone();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        self.doc = orig;
+        self.stashed = None;
+        match r {
+            Ok(r) => r,
+            Err(e) => std::panic::resume_unwind(e),
+        }
     }
 
     /// Validation gate shared by [`Scene::apply`] and [`Scene::apply_all`].
@@ -1050,6 +1055,22 @@ pub fn issue_reason(i: &Issue) -> &'static str {
 #[cfg(test)]
 mod poison_tests {
     use super::*;
+
+    #[test]
+    fn a_panic_in_a_batch_leaves_the_document_as_it_was() {
+        let mut scene = Scene::new(Arc::new(newtopo_kernel::mock::MockKernel::default()));
+        let before = scene.doc.clone();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scene.with_scratch_doc(|s| {
+                let mut d = (*s.doc).clone();
+                d.settings.autofill = !d.settings.autofill;
+                s.doc = Arc::new(d);
+                panic!("the second op failed");
+            })
+        }));
+        assert!(r.is_err());
+        assert!(Arc::ptr_eq(&scene.doc, &before), "no partial batch is kept");
+    }
 
     #[test]
     fn a_panicked_evaluation_does_not_break_the_caches() {
