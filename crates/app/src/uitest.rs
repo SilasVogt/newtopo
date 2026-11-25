@@ -814,3 +814,139 @@ fn refused_op_leaves_no_preview_open() {
     assert!(r.is_none(), "refused");
     assert!(!h.app.st.doc.in_preview(), "no empty preview blocks saving");
 }
+
+// ------------------------------------------------------------ problem reports (SPEC §5.11)
+
+fn report_origin(h: &Harness) -> Option<crate::report::ui::Origin> {
+    h.app.st.ui.report.as_ref().map(|d| d.origin)
+}
+
+#[test]
+fn report_opens_once_after_a_caught_panic() {
+    use crate::jobs::Modal;
+    use crate::report::ui::Origin;
+    fn boom() {
+        panic!("engine blew up")
+    }
+    let mut h = Harness::new(false);
+    let r: Result<(), String> = crate::docstate::guard(boom);
+    assert!(r.is_err());
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Caught));
+    assert_eq!(h.app.st.active_modal(), Some(Modal::Report));
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    assert_eq!(d.failure().unwrap().message, "engine blew up");
+    // A second failure while it is open doesn't replace or stack it.
+    let _ = crate::docstate::guard(|| panic!("another one"));
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    assert_eq!(d.failure().unwrap().message, "engine blew up");
+    // Esc closes it; the same failure again doesn't reopen it.
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.app.st.ui.report.is_none());
+    let _ = crate::docstate::guard(boom);
+    h.frames(2);
+    assert!(h.app.st.ui.report.is_none(), "once per failure");
+    // A new failure does.
+    let _ = crate::docstate::guard(|| panic!("a different failure"));
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Caught));
+}
+
+#[test]
+fn refusals_do_not_open_the_report() {
+    use newtopo_core::Op;
+    let mut h = Harness::new(false);
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(1);
+    let r = h.app.st.apply(Op::DeleteRule {
+        rule: newtopo_core::keys::RuleId(4242),
+    });
+    assert!(r.is_none(), "refused");
+    h.frames(3);
+    assert!(h.app.st.ui.report.is_none());
+    assert!(!h.app.st.toasts.items.is_empty(), "the refusal is a toast");
+    // It is in the session's steps, as refused.
+    let steps = h.app.st.session.steps_json();
+    assert!(steps.contains("\"refused\""), "{steps}");
+    assert_eq!(h.app.st.session.op_count(), 0);
+}
+
+#[test]
+fn report_from_help_has_no_error_and_never_stacks() {
+    use crate::report::ui::Origin;
+    let mut h = Harness::new(true);
+    h.app.st.run(Cmd::ReportProblem);
+    h.frames(2);
+    assert_eq!(report_origin(&h), Some(Origin::Manual));
+    assert!(h.app.st.ui.report.as_ref().unwrap().failure().is_none());
+    h.app.st.ui.report.as_mut().unwrap().choices.comment = "typed".into();
+    // Opening again (palette, menu) keeps the open one.
+    h.app.st.run(Cmd::ReportProblem);
+    assert_eq!(
+        h.app.st.ui.report.as_ref().unwrap().choices.comment,
+        "typed"
+    );
+    // The palette lists it.
+    assert!(crate::commands::ALL.contains(&Cmd::ReportProblem));
+}
+
+#[test]
+fn saving_writes_the_listed_files_and_issue_links_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::new(false);
+    let _ = crate::docstate::guard(|| panic!("save test failure"));
+    h.frames(2);
+    let path = dir.path().join("report.zip");
+    {
+        let d = h.app.st.ui.report.as_mut().expect("open");
+        d.save_to = Some(path.clone());
+        d.choices.pc = false;
+    }
+    // Open GitHub issue saves first, then opens the page once.
+    h.app.st.open_issue();
+    assert!(path.exists(), "saved before opening the issue");
+    assert_eq!(h.app.st.opened_urls.len(), 1);
+    let url = &h.app.st.opened_urls[0];
+    assert!(url.starts_with(crate::report::ISSUE_URL));
+    assert!(url.len() <= crate::report::MAX_ISSUE_URL);
+    assert!(url.contains("report.zip"));
+    let d = h.app.st.ui.report.as_ref().unwrap();
+    let listed: Vec<String> = d
+        .rows()
+        .into_iter()
+        .filter(|r| r.included)
+        .map(|r| r.name)
+        .collect();
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let inside: Vec<String> = (0..z.len())
+        .map(|i| z.by_index(i).unwrap().name().unwrap().to_string())
+        .collect();
+    assert_eq!(inside, listed);
+    assert!(!inside.iter().any(|n| n == "system.txt"), "PC details off");
+}
+
+#[test]
+fn previous_crash_is_offered_at_start() {
+    use crate::report::crash;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        config: None,
+        data: Some(dir.path().to_path_buf()),
+    };
+    // A session that crashed: marker left, crash file written.
+    assert!(crash::begin_session(dir.path()).is_none());
+    crash::write_crash_file(dir.path(), &crash::Failure::from_message("hard crash"));
+    let ctx = egui::Context::default();
+    let app = App::new(&ctx, paths.clone(), false, false);
+    let d = app.st.ui.report.as_ref().expect("offered");
+    assert_eq!(d.origin, crate::report::ui::Origin::PreviousCrash);
+    assert_eq!(d.failure().unwrap().message, "hard crash");
+    // This session is running now; a clean exit means no offer next time.
+    crash::end_session(dir.path());
+    let app = App::new(&ctx, paths, false, false);
+    assert!(app.st.ui.report.is_none());
+}

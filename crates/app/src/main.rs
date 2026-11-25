@@ -19,6 +19,7 @@ mod palette;
 mod panels;
 mod prefs;
 mod prefs_ui;
+mod report;
 mod selection;
 mod shot;
 mod strings;
@@ -97,9 +98,17 @@ fn icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let launch = launch::parse_args(&args);
+    // Interactive runs log to the data directory and keep a crash file
+    // there; screenshot runs touch nothing on disk (SPEC §5.11).
+    let paths = prefs::Paths::user();
+    let data = paths.data.clone().filter(|_| launch.shot.is_none());
+    report::log::init(data.as_deref());
+    report::crash::install_hook();
+    if let Some(d) = &data {
+        report::crash::set_crash_dir(d);
+    }
     if let Some(dir) = &launch.shot {
         let r = match &launch.models {
             Some(m) => shot::run_real(dir, m),
@@ -135,6 +144,10 @@ fn main() -> eframe::Result {
         strings::APP_NAME,
         options,
         Box::new(move |cc| {
+            let gpu = cc
+                .wgpu_render_state
+                .as_ref()
+                .map(|rs| report::system::GpuInfo::from_wgpu(&rs.adapter.get_info()));
             let gpu_ok = match &cc.wgpu_render_state {
                 Some(rs) => {
                     newtopo_render::egui_viewport::install(rs);
@@ -142,7 +155,17 @@ fn main() -> eframe::Result {
                 }
                 None => false,
             };
-            let mut app = app::App::new(&cc.egui_ctx, prefs::Paths::user(), gpu_ok, false);
+            log::info!(
+                "{} starting on {} {}; graphics: {}",
+                report::version_line(),
+                report::system::platform_short(),
+                std::env::consts::ARCH,
+                gpu.as_ref()
+                    .map(|g| format!("{} ({})", g.name, g.backend))
+                    .unwrap_or_else(|| "none".into())
+            );
+            let mut app = app::App::new(&cc.egui_ctx, paths, gpu_ok, false);
+            app.st.gpu_info = gpu;
             if sample {
                 app.st.load_sample();
             }

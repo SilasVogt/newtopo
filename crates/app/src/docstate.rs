@@ -21,6 +21,8 @@ pub fn guard<T>(f: impl FnOnce() -> T) -> Result<T, String> {
             .cloned()
             .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_else(|| "engine error".into());
+        // Queue it for the problem-report dialog (SPEC §5.11).
+        crate::report::crash::caught(&msg);
         if msg.contains("not yet implemented") || msg.contains("not implemented") {
             format!("{} ({msg})", crate::strings::TOAST_ENGINE_MISSING)
         } else {

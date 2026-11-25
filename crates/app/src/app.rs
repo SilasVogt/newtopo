@@ -191,6 +191,8 @@ pub struct UiState {
     /// The app modal drawn in the last frame (what Esc dismisses).
     pub shown_modal: Option<crate::jobs::Modal>,
     pub warned_engine: bool,
+    /// The problem-report dialog (SPEC §5.11).
+    pub report: Option<crate::report::ui::ReportDialog>,
 }
 
 pub struct AppState {
@@ -240,6 +242,16 @@ pub struct AppState {
     pub quit: bool,
     pub screenshot_mode: bool,
     pub gpu_ok: bool,
+    /// This session's steps, for problem reports.
+    pub session: crate::report::Session,
+    /// Failures the report dialog was already offered for (once each).
+    pub reported: BTreeSet<(String, Option<String>)>,
+    /// The graphics adapter, for "PC details".
+    pub gpu_info: Option<crate::report::system::GpuInfo>,
+    /// Window scale of the last frame, for "PC details".
+    pub display: crate::report::system::Display,
+    /// Report links opened (screenshot and test runs only record them).
+    pub opened_urls: Vec<String>,
 }
 
 pub struct App {
@@ -277,6 +289,12 @@ impl App {
             vec![]
         } else {
             crate::jobs::find_recoverable(&paths, &prefs)
+        };
+        // Did the last session end in a crash? Offer a report (after the
+        // recovery dialog, which has priority).
+        let previous_crash = match (&paths.data, screenshot_mode) {
+            (Some(d), false) => crate::report::crash::begin_session(d),
+            _ => None,
         };
         let mut st = AppState {
             paths,
@@ -319,8 +337,18 @@ impl App {
             quit: false,
             screenshot_mode,
             gpu_ok,
+            session: Default::default(),
+            reported: BTreeSet::new(),
+            gpu_info: None,
+            display: Default::default(),
+            opened_urls: Vec::new(),
         };
         st.ui.recovery = recovery;
+        if let Some(f) = previous_crash {
+            log::warn!("the previous session ended in a crash: {}", f.message);
+            st.reported.insert(f.key());
+            st.open_report(Some(f), crate::report::ui::Origin::PreviousCrash);
+        }
         st.view.camera.up = st.prefs.up;
         App {
             st,
@@ -346,7 +374,13 @@ impl App {
             }
         }
         st.ensure_theme(&ctx);
+        st.display = crate::report::system::Display {
+            pixels_per_point: ctx.pixels_per_point(),
+            native: ctx.input(|i| i.viewport().native_pixels_per_point),
+            ui_scale: st.prefs.ui_scale,
+        };
         st.poll_jobs(&ctx);
+        st.poll_failures();
         st.poll_update(&ctx);
         st.view.shown = false;
         st.view.chip_rect = None;
@@ -480,6 +514,10 @@ impl App {
         // without the prompt when the OS kills it).
         if !st.doc.is_dirty() {
             crate::jobs::remove_autosaves(st);
+        }
+        log::info!("newtopo exiting");
+        if let Some(d) = &st.paths.data {
+            crate::report::crash::end_session(d);
         }
     }
 }
@@ -694,6 +732,12 @@ impl AppState {
     }
 
     pub fn toast(&mut self, kind: ToastKind, msg: impl Into<String>) {
+        let msg = msg.into();
+        match kind {
+            ToastKind::Error => log::error!("{msg}"),
+            ToastKind::Warn => log::warn!("{msg}"),
+            ToastKind::Info => {}
+        }
         self.toasts.push(kind, msg, self.time);
     }
 
@@ -849,7 +893,14 @@ impl AppState {
         if !coalesced {
             self.doc.end_gesture();
         }
-        match self.doc.apply_all(ops.clone(), coalesced) {
+        let _action =
+            crate::report::crash::action(crate::report::op_label(&crate::report::op_name(&ops[0])));
+        let r = self.doc.apply_all(ops.clone(), coalesced);
+        let outcome = outcome_of(&r);
+        for op in &ops {
+            self.session.op(op, outcome);
+        }
+        match r {
             Ok(outs) => {
                 for m in outs.iter().filter_map(|o| o.message.clone()) {
                     self.toast(ToastKind::Info, m);
@@ -887,11 +938,14 @@ impl AppState {
         if op.changes_mesh() {
             self.doc.begin_preview();
         }
+        let _action =
+            crate::report::crash::action(crate::report::op_label(&crate::report::op_name(&op)));
         let r = if coalesced {
             self.doc.apply_coalesced(op.clone())
         } else {
             self.doc.apply(op.clone())
         };
+        self.session.op(&op, outcome_of(&r));
         match r {
             Ok(o) => {
                 if let Some(m) = &o.message {
@@ -1010,6 +1064,8 @@ impl AppState {
     /// Write the previewed changes (one undo step).
     pub fn apply_preview(&mut self) {
         if self.doc.in_preview() {
+            let _action = crate::report::crash::action(S::PREVIEW_APPLY);
+            self.session.event("apply_preview");
             self.doc.commit_preview();
         }
         self.end_compare();
@@ -1018,6 +1074,8 @@ impl AppState {
     /// Throw the previewed changes away.
     pub fn discard_preview(&mut self) {
         if self.doc.in_preview() {
+            let _action = crate::report::crash::action(S::PREVIEW_DISCARD);
+            self.session.event("discard_preview");
             self.doc.cancel_preview();
             self.toast(ToastKind::Info, S::PREVIEW_DISCARDED);
         }
@@ -1048,15 +1106,19 @@ impl AppState {
             self.discard_preview();
             return;
         }
+        let _action = crate::report::crash::action("Undo");
         match self.doc.undo() {
-            Ok(_) => {}
+            Ok(true) => self.session.event("undo"),
+            Ok(false) => {}
             Err(e) => self.toast(ToastKind::Error, e),
         }
     }
 
     pub fn redo(&mut self) {
+        let _action = crate::report::crash::action("Redo");
         match self.doc.redo() {
-            Ok(_) => {}
+            Ok(true) => self.session.event("redo"),
+            Ok(false) => {}
             Err(e) => self.toast(ToastKind::Error, e),
         }
     }
@@ -1182,6 +1244,7 @@ impl AppState {
             LoadSample => self.load_sample(),
             Quit => self.request(PendingAfterPrompt::Quit),
             CheckUpdates => self.start_update_check(true),
+            ReportProblem => self.open_report(None, crate::report::ui::Origin::Manual),
             About => self.ui.about_open = true,
         }
     }
@@ -1368,6 +1431,7 @@ impl AppState {
     pub fn do_pending(&mut self, what: PendingAfterPrompt) {
         match what {
             PendingAfterPrompt::New => {
+                self.session.event("new_scene");
                 self.end_compare();
                 self.drop_held_import();
                 self.doc.close();
@@ -1857,6 +1921,7 @@ impl AppState {
                 for c in [
                     Cmd::Palette,
                     Cmd::KeymapEditor,
+                    Cmd::ReportProblem,
                     Cmd::CheckUpdates,
                     Cmd::About,
                 ] {
@@ -1926,6 +1991,15 @@ impl AppState {
         self.preview_bar(ctx);
         self.dialogs_ui(ctx);
         self.update_dialogs(ctx);
+    }
+}
+
+/// How an apply went, for the session's steps.
+fn outcome_of<T>(r: &Result<T, ApplyError>) -> crate::report::Outcome {
+    match r {
+        Ok(_) => crate::report::Outcome::Applied,
+        Err(ApplyError::Engine(_)) => crate::report::Outcome::Failed,
+        Err(_) => crate::report::Outcome::Refused,
     }
 }
 
