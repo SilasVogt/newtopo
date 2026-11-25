@@ -348,10 +348,7 @@ impl AppState {
 
     /// Any dialog or overlay that Esc would close before the update dialogs.
     fn other_modal_open(&self) -> bool {
-        self.ui.palette.open
-            || self.ui.radial.open
-            || self.ui.key_capture.is_some()
-            || self.active_modal().is_some()
+        self.ui.palette.open || self.ui.key_capture.is_some() || self.active_modal().is_some()
     }
 
     /// Top-bar chip while a newer version is known.

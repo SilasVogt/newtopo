@@ -36,9 +36,6 @@ pub struct Theme {
     pub warn: String,
     pub error: String,
     pub ok: String,
-    pub radial_bg: String,
-    pub radial_slot: String,
-    pub radial_hover: String,
     pub rounding: f32,
     pub overlay: OverlayColors,
 }
@@ -65,9 +62,6 @@ pub struct Palette {
     pub warn: Color32,
     pub error: Color32,
     pub ok: Color32,
-    pub radial_bg: Color32,
-    pub radial_slot: Color32,
-    pub radial_hover: Color32,
     pub rounding: f32,
 }
 
@@ -139,9 +133,6 @@ impl Theme {
             warn: parse_color(&self.warn),
             error: parse_color(&self.error),
             ok: parse_color(&self.ok),
-            radial_bg: parse_color(&self.radial_bg),
-            radial_slot: parse_color(&self.radial_slot),
-            radial_hover: parse_color(&self.radial_hover),
             rounding: self.rounding,
         }
     }
@@ -349,5 +340,18 @@ mod tests {
         assert!(d.dark && !l.dark);
         assert_eq!(parse_color("#3ec7a5"), Color32::from_rgb(0x3e, 0xc7, 0xa5));
         assert_eq!(color_hex(parse_color("#14171bf0")), "#14171bf0");
+    }
+
+    /// User themes written before the radial menu was removed still parse.
+    #[test]
+    fn theme_with_old_radial_colours_parses() {
+        let old = BUILTIN_DARK.replacen(
+            "\"rounding\"",
+            "\"radial_bg\": \"#14171bf0\", \"radial_slot\": \"#232930\", \"radial_hover\": \"#3ec7a5\", \"rounding\"",
+            1,
+        );
+        assert!(old.contains("radial_bg"));
+        let t: Theme = serde_json::from_str(&old).unwrap();
+        assert_eq!(t, Theme::builtin_dark());
     }
 }

@@ -5,7 +5,6 @@ use newtopo_render::{OverlayColors, UpAxis};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const RADIAL_SLOTS: usize = 12;
 pub const MAX_RECENT: usize = 8;
 
 /// Config/data directories. `None` in screenshot/test mode so nothing on
@@ -62,13 +61,6 @@ pub enum StatsShow {
     Selection,
     #[default]
     Both,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RadialStyle {
-    #[default]
-    FollowTheme,
-    HighContrast,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -143,13 +135,11 @@ pub struct Prefs {
     pub up: UpAxis,
     pub autosave_minutes: u32,
     pub theme: String,
-    pub radial_style: RadialStyle,
     /// `None` = use the theme's overlay colours.
     pub overlay: Option<OverlayColors>,
     pub ui_scale: f32,
     pub stats: StatsPrefs,
     pub favourites: Vec<String>,
-    pub radial: Vec<Option<String>>,
     pub recent: Vec<PathBuf>,
     pub import: ImportPrefs,
     pub export: newtopo_core::export::ExportOptions,
@@ -169,31 +159,12 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        let mut radial: Vec<Option<String>> = [
-            "tool.connect",
-            "tool.grid",
-            "tool.slice",
-            "tool.iso",
-            "tool.cut",
-            "tool.weld",
-            "edit.collapse",
-            "edit.remove_edge",
-            "select.loop",
-            "select.ring",
-            "view.preview",
-            "toggle.autofill",
-        ]
-        .iter()
-        .map(|s| Some(s.to_string()))
-        .collect();
-        radial.resize(RADIAL_SLOTS, None);
         Prefs {
             nav: NavPreset::Blender,
             units: "mm".into(),
             up: UpAxis::Z,
             autosave_minutes: 5,
             theme: crate::theme::Theme::builtin_dark().name,
-            radial_style: RadialStyle::FollowTheme,
             overlay: None,
             ui_scale: 1.0,
             stats: StatsPrefs::default(),
@@ -202,7 +173,6 @@ impl Default for Prefs {
                 "file.export".into(),
                 "view.preview".into(),
             ],
-            radial,
             recent: Vec::new(),
             import: ImportPrefs::default(),
             export: Default::default(),
@@ -255,7 +225,6 @@ pub fn save_json<T: Serialize>(path: Option<&Path>, value: &T) {
 impl Prefs {
     pub fn load(paths: &Paths) -> Prefs {
         let mut p: Prefs = load_json(paths.file("prefs.json").as_deref());
-        p.radial.resize(RADIAL_SLOTS, None);
         if p.bridge.token.is_empty() {
             p.bridge.token = newtopo_core::bridge::generate_token();
         }
@@ -293,7 +262,6 @@ mod tests {
             data: None,
         };
         let mut p = Prefs::load(&paths);
-        assert_eq!(p.radial.len(), RADIAL_SLOTS);
         assert_eq!(p.nav, NavPreset::Blender);
         assert_eq!(p.bridge.token.len(), 32);
         p.push_recent(Path::new("/a.ntopo"));
@@ -306,6 +274,26 @@ mod tests {
         p.save(&paths);
         let q = Prefs::load(&paths);
         assert_eq!(q, p);
+    }
+
+    /// Settings files written before the radial menu was removed still
+    /// load: the old fields are ignored and the rest is kept.
+    #[test]
+    fn old_prefs_with_radial_fields_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config: Some(dir.path().to_path_buf()),
+            data: None,
+        };
+        std::fs::write(
+            dir.path().join("prefs.json"),
+            r#"{"units":"cm","radial_style":"HighContrast","radial":["tool.connect",null]}"#,
+        )
+        .unwrap();
+        let p = Prefs::load(&paths);
+        assert_eq!(p.units, "cm");
+        assert!(dir.path().join("prefs.json").exists());
+        assert!(!dir.path().join("prefs.json.bak").exists());
     }
 
     #[test]

@@ -229,42 +229,6 @@ fn lasso_select_with_right_drag() {
 }
 
 #[test]
-fn radial_tap_keeps_open_and_hold_runs() {
-    let mut h = Harness::new(true);
-    // Tap: press and release quickly → stays open.
-    h.key(Key::Q, Modifiers::NONE);
-    assert!(h.app.st.ui.radial.open && h.app.st.ui.radial.sticky);
-    h.key(Key::Escape, Modifiers::NONE);
-    assert!(!h.app.st.ui.radial.open);
-    // Hold over the slot at 12 o'clock (Connect by default) and release.
-    let c = h.app.st.view.rect.center();
-    h.frame(vec![Event::PointerMoved(c)]);
-    h.frame(vec![Event::Key {
-        key: Key::Q,
-        physical_key: Some(Key::Q),
-        pressed: true,
-        repeat: false,
-        modifiers: Modifiers::NONE,
-    }]);
-    let centre = h.app.st.ui.radial.center;
-    for k in 0..8 {
-        h.frame(vec![Event::PointerMoved(
-            centre + vec2(0.0, -20.0 - 12.0 * k as f32),
-        )]);
-    }
-    h.frame(vec![Event::Key {
-        key: Key::Q,
-        physical_key: Some(Key::Q),
-        pressed: false,
-        repeat: false,
-        modifiers: Modifiers::NONE,
-    }]);
-    h.frames(1);
-    assert!(!h.app.st.ui.radial.open);
-    assert_eq!(h.app.st.tool.active, Tool::Connect);
-}
-
-#[test]
 fn escape_precedence_tool_then_isolate() {
     let mut h = Harness::new(true);
     h.app.st.sel.objects.insert(BodyId(1));

@@ -236,7 +236,6 @@ type Setup = Box<dyn Fn(&mut App)>;
 pub fn run(dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut s = Shooter::new()?;
-    let viewport_centre = pos2(SIZE[0] * 0.5, SIZE[1] * 0.5);
     let scenarios: Vec<(&str, Setup, Vec<Vec<Event>>)> = vec![
         ("01-empty.png", Box::new(|_a: &mut App| {}), frames(6)),
         (
@@ -260,14 +259,6 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
                 a.st.ui.palette.query = "sel".into();
             }),
             frames(8),
-        ),
-        (
-            "04-radial.png",
-            Box::new(move |a: &mut App| {
-                a.st.load_sample();
-                a.st.ui.radial.open_at(viewport_centre, 0.0, true);
-            }),
-            pointer_frames(6, pos2(SIZE[0] * 0.5 + 60.0, SIZE[1] * 0.5 - 100.0)),
         ),
         (
             "05-preferences.png",

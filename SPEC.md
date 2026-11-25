@@ -115,7 +115,7 @@ export or send to a DCC app.
 | --- | --- | --- |
 | Language | **Rust (stable, 2024 edition)** for everything except the kernel shim | Memory safety, enums for rules/anchors, cargo workspace, good test tooling. |
 | CAD kernel | **Open CASCADE Technology 7.8+** (LGPL-2.1 + exception) behind a thin C++ shim crate (`occt-shim`) using **`cxx`** | The only mature open-source STEP/IGES reader with exact B-rep, pcurves, projection, intersection, healing and layers (XCAF). See §3.4. Link dynamically; ship its licence notices. |
-| UI | **egui + eframe** (wgpu backend), **egui_dock** for docking/floating panels | Immediate mode suits tool overlays, the radial menu and the command palette. |
+| UI | **egui + eframe** (wgpu backend), **egui_dock** for docking/floating panels | Immediate mode suits tool overlays and the command palette. |
 | Rendering | **wgpu**, own small renderer drawn into the viewport via `egui_wgpu` paint callbacks | Custom overlays (edge kinds, direction arrows, tints); same renderer runs headless for `newtopo-cli render`. |
 | Math | `glam` (f64 for geometry, f32 for GPU buffers); `faer` for sparse solves | |
 | 2D geometry | `robust` crate (Shewchuk's adaptive exact predicates) for orientation/in-circle tests; `spade` (constrained Delaunay, MIT/Apache) | Arrangements and fills in UV space. |
@@ -155,7 +155,7 @@ newtopo/
       export/    # obj, gltf, fbx, normals, hard edges, uv, rename
       bridge/    # wire protocol, client side
     render/      # wgpu renderer, windowed and headless
-    app/         # eframe shell, panels, viewport, input, palette, radial menu
+    app/         # eframe shell, panels, viewport, input, palette
     cli/         # newtopo-cli
     import/      # newtopo-import helper process (§3.4)
     testmodels/  # generates reference STEP files through the kernel (§11)
@@ -570,14 +570,11 @@ of a 2,000-face body (auto-fill on).
   isolates the next object of the original selection each press, and an exit.
 - Link and symmetry expand selections live (§6.11, §6.12).
 
-### 5.4 Command palette and radial menu
+### 5.4 Command palette
 - **Command palette** (default `Ctrl+K`): every command with its shortcut,
-  fuzzy search, and a per-command menu: change shortcut, toggle favourite,
-  add to radial menu. Favourites appear at the top and can be removed by
-  right-click.
-- **Radial menu**: hold its key to show a ring of up to **12** slots around
-  the cursor; release over a slot to run it. A short tap (< 200 ms) keeps it
-  open until a click. Right-click a slot to replace, remove or move it.
+  fuzzy search, and a per-command menu: change shortcut, toggle favourite.
+  Favourites appear at the top and can be removed by right-click.
+- There is no radial menu: an earlier version had one, and it was removed.
 - Shortcuts: any key combo, plus **double-press** bindings (press the same key
   twice within 300 ms). Keymap stored as JSON; reset to defaults per command.
 
@@ -600,7 +597,7 @@ of a 2,000-face body (auto-fill on).
 ### 5.7 Preferences
 - General: navigation preset, scene units, up axis (Y or Z), autosave interval.
 - Appearance: every overlay colour (CAD edge, line, fill edge, selection,
-  Connect arrow A and B, linked faces, symmetry plane), UI theme, radial theme.
+  Connect arrow A and B, linked faces, symmetry plane), UI theme.
   Themes are JSON files; ship a dark and a light one, designed from scratch.
 - Statistics: which rows and which totals.
 - Keymap (also reachable from the palette).
@@ -610,7 +607,7 @@ of a 2,000-face body (auto-fill on).
 | Action | Key | Action | Key |
 | --- | --- | --- | --- |
 | Vertex/edge/face/object mode | 1/2/3/4 | Command palette | Ctrl+K |
-| Radial menu | hold/tap Q | Preferences | Ctrl+, |
+| Preferences | Ctrl+, | | |
 | Preview mode | V | Wireframe in preview | Shift+V |
 | Auto-fill on/off | Shift+A | Link on/off | Shift+L |
 | Symmetry on/off | Shift+M | Mirror X / Y / Z | Alt+X / Alt+Y / Alt+Z |
@@ -1147,10 +1144,10 @@ the PR, and Silas's on-screen check.
 | Phase | Scope | Exit criteria |
 | --- | --- | --- |
 | **P0 Skeleton** | Cargo workspace; `occt-shim` building and linking OCCT on Linux + Windows CI; `CadKernel` + `MockKernel`; `testshapes` feature and `crates/testmodels` generating the reference models; eframe window with a wgpu viewport; `newtopo-cli info` (bodies, faces, surface types, layers; link sets and symmetry are added in P5) | CI green on both OSes; `info` prints stats for every reference model. **Do the FFI build first.** |
-| **P1 Import and view** | Import helper + list dialog, healing report, layers, outliner, navigation presets, view cube, selection (modes, box/lasso, visible-only, hide/isolate), command palette (search, run, favourites; shortcut editing and "add to radial" arrive with the radial menu in P4 and the keymap editor in P6), statistics | Silas opens the reference models and a real Plasticity export; 60 fps orbit. |
+| **P1 Import and view** | Import helper + list dialog, healing report, layers, outliner, navigation presets, view cube, selection (modes, box/lasso, visible-only, hide/isolate), command palette (search, run, favourites; shortcut editing arrives with the keymap editor in P6), statistics | Silas opens the reference models and a real Plasticity export; 60 fps orbit. |
 | **P2 Document engine** | Patches, split lines, rules, anchors, keys, arrangement, incremental evaluation, undo, save/load, preview mode, `run`/`validate`/`render` CLI. Engine-level `Grid` and plain `Iso` rules (no tool UI yet) to exercise it | Property tests green using split lines, Grid and Iso rules, undo and save/load; closed edges, seams and poles validate on every reference model. |
 | **P3 Core loop** | Connect, Surface Grid, Slice, shared panel, auto-fill, loop/ring/every-other | §6.1–6.4, §6.14 and §7 AC pass. First internal milestone: import → lines → fill → preview. |
-| **P4 Precision and cleanup** | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits, radial menu | §6.5–6.10 AC pass. |
+| **P4 Precision and cleanup** | Iso (through, split), Cut, Join, Remove edge, Collapse, Target Weld, Remove CAD edge, dormant edits (the radial menu once planned here was removed) | §6.5–6.10 AC pass. |
 | **P5 Repeat and ship** | Link, Symmetry, copy/paste rules, OBJ/glTF/FBX export with normals and hard edges, Blender headless import test | §6.11–6.13 and §8.3 AC pass. **First usable release.** |
 | **P6 Studio** | Batch rename, quick UV, Blender bridge + addon, themes, keymap editor, autosave | §9 AC pass for Blender. |
 | **P7 Polish** | Maya and 3ds Max addons, macOS build, user guide in `docs/` | — |

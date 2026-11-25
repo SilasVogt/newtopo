@@ -262,7 +262,7 @@ pub const UV_CHECKER: &str = "Checker preview";
 pub const UV_TILES: &str = "Tiles";
 pub const UV_RUN: &str = "Unwrap";
 
-// Palette / radial / keymap
+// Palette / keymap
 pub const PALETTE_HINT: &str = "Type a command…";
 pub const PALETTE_FAVOURITES: &str = "Favourites";
 pub const PALETTE_ALL: &str = "All commands";
@@ -270,13 +270,7 @@ pub const PALETTE_NO_MATCH: &str = "No command matches";
 pub const PALETTE_CHANGE_SHORTCUT: &str = "Change shortcut…";
 pub const PALETTE_ADD_FAV: &str = "Add to favourites";
 pub const PALETTE_REMOVE_FAV: &str = "Remove from favourites";
-pub const PALETTE_ADD_RADIAL: &str = "Add to radial menu";
 pub const PALETTE_RESET_SHORTCUT: &str = "Reset shortcut";
-pub const RADIAL_REPLACE: &str = "Replace…";
-pub const RADIAL_REMOVE: &str = "Remove";
-pub const RADIAL_MOVE: &str = "Move…";
-pub const RADIAL_MOVE_HINT: &str = "Click the slot to move it to";
-pub const RADIAL_FULL: &str = "The radial menu is full (12 slots). Remove one first.";
 pub const KEY_CAPTURE_TITLE: &str = "Press the new shortcut";
 pub const KEY_CAPTURE_DOUBLE: &str = "Double-press (same key twice within 300 ms)";
 pub const KEY_CAPTURE_CONFLICT: &str = "Also used by";
@@ -294,7 +288,6 @@ pub const PREFS_UP: &str = "Up axis";
 pub const PREFS_AUTOSAVE: &str = "Autosave every";
 pub const PREFS_MINUTES: &str = "min";
 pub const PREFS_THEME: &str = "UI theme";
-pub const PREFS_RADIAL_THEME: &str = "Radial menu";
 pub const PREFS_OVERLAY: &str = "Viewport colours";
 pub const PREFS_RESET_COLOURS: &str = "Reset to theme";
 pub const PREFS_UI_SCALE: &str = "Interface scale";

@@ -170,7 +170,6 @@ pub struct UiState {
     /// A text field had keyboard focus at the end of the last frame.
     pub was_typing: bool,
     pub palette: crate::palette::PaletteState,
-    pub radial: crate::palette::RadialState,
     pub key_capture: Option<crate::palette::KeyCapture>,
     pub prefs_open: bool,
     pub prefs_tab: crate::prefs_ui::PrefsTab,
@@ -1079,10 +1078,6 @@ impl AppState {
             ModeFace => self.set_mode(Mode::Face),
             ModeObject => self.set_mode(Mode::Object),
             Palette => self.ui.palette.open_fresh(),
-            Radial => {
-                let c = self.view.rect.center();
-                self.ui.radial.open_at(c, self.time, true);
-            }
             Preferences => self.ui.prefs_open = !self.ui.prefs_open,
             KeymapEditor => {
                 self.ui.prefs_open = true;
@@ -1401,7 +1396,6 @@ impl AppState {
             && !self.ui.palette.open
             && self.active_modal().is_none()
             && self.updates.shown.is_none();
-        let pointer = ctx.input(|i| i.pointer.hover_pos());
         for ev in events {
             // Key capture for the keymap editor swallows everything.
             if self.ui.key_capture.is_some() {
@@ -1429,21 +1423,7 @@ impl AppState {
                 egui::Event::Paste(_) if !typing => (Key::V, true, false, Modifiers::COMMAND),
                 _ => continue,
             };
-            // Radial menu: hold to show, release over a slot to run.
-            let radial_binds = self.keymap.bindings(Cmd::Radial);
-            let is_radial_key = radial_binds
-                .iter()
-                .any(|b| !b.double && b.same_combo(&Binding::new(key, mods)));
-            if !pressed {
-                if self.ui.radial.open
-                    && self.ui.radial.held
-                    && radial_binds.iter().any(|b| b.key == key)
-                {
-                    self.radial_release();
-                }
-                continue;
-            }
-            if repeat {
+            if !pressed || repeat {
                 continue;
             }
             if key == Key::Escape {
@@ -1455,13 +1435,6 @@ impl AppState {
                 continue;
             }
             if typing || self.ui.palette.open {
-                continue;
-            }
-            if is_radial_key && !self.ui.radial.open {
-                let at = pointer
-                    .filter(|p| self.view.rect.contains(*p))
-                    .unwrap_or(self.view.rect.center());
-                self.ui.radial.open_at(at, self.time, false);
                 continue;
             }
             if self.tool_key(key, mods) {
@@ -1499,8 +1472,6 @@ impl AppState {
     pub fn escape(&mut self) {
         if self.ui.palette.open {
             self.ui.palette.open = false;
-        } else if self.ui.radial.open {
-            self.ui.radial.close();
         } else if let Some(m) = self.ui.shown_modal.filter(|m| self.modal_open(*m)) {
             // Only the dialog the user has seen; one that arrived this
             // frame and hasn't been drawn yet is left alone.
@@ -1950,7 +1921,6 @@ impl AppState {
 
     fn overlays(&mut self, ctx: &egui::Context) {
         self.palette_ui(ctx);
-        self.radial_ui(ctx);
         self.key_capture_ui(ctx);
         self.prefs_window(ctx);
         self.preview_bar(ctx);
