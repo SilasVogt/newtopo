@@ -97,6 +97,9 @@ pub enum VertexKey {
         b: SplitId,
         occurrence: u32,
     },
+    /// Vertex `i` of a body's edited mesh (mesh mode, SPEC §9.5). Edited
+    /// meshes have no rule-stage keys; these never appear in rules or edits.
+    Mesh(u32),
 }
 
 impl VertexKey {

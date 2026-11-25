@@ -10,35 +10,52 @@
 //!   new vertex count or edge length;
 //! - [`vertex_slide`] / [`SlidePlan`]: move vertices along one of their
 //!   edges (a plan is cheap to apply again and again while dragging);
-//! - [`merge_by_distance`]: merge vertices closer than a distance.
+//! - [`merge_by_distance`]: merge vertices closer than a distance;
+//! - [`edge_slide`]: slide selected edge runs along their cross edges;
+//! - [`relax`] / [`space`]: smooth selected runs, or space their vertices
+//!   evenly along them;
+//! - [`target_merge`]: merge one vertex into another;
+//! - [`edge_loop`], [`shortest_path`], [`shortest_edge_path`]: selection
+//!   helpers;
+//! - [`stay_on_surface`]: put moved vertices back on the CAD surface.
 //!
 //! All are pure functions: input mesh + parameters → new mesh, or a
 //! [`Refusal`] with a reason. None of them adds holes, flips a face, makes
 //! the mesh non-manifold, moves a pinned vertex, or bends a preserved
-//! feature edge. All but Merge by Distance keep the topology (genus,
-//! boundary loops, connected parts); Merge by Distance changes it only by
-//! welding open boundaries together.
+//! feature edge. All but Merge by Distance and Target Merge keep the
+//! topology (genus, boundary loops, connected parts); those two change it
+//! only by welding open boundaries together.
 
 mod cleanup;
 mod decimate;
+mod edgeslide;
 mod merge;
 pub mod mesh;
+mod pick;
+mod project;
 mod quadric;
 mod refill;
 mod resample;
 mod slide;
+mod smooth;
 pub mod synth;
 mod work;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_mode;
 
 pub use cleanup::{CleanupParams, cleanup};
 pub use decimate::{DecimateMode, DecimateParams, Target, decimate};
+pub use edgeslide::{EdgeSlideParams, TargetMergeParams, edge_slide, target_merge};
 pub use merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_by_distance};
 pub use mesh::{EdgeFlags, EditMesh, EditPolygon, FlaggedEdge};
+pub use pick::{edge_loop, shortest_edge_path, shortest_path};
+pub use project::{Projector, stay_on_surface};
 pub use resample::{ResampleParams, Spacing, resample};
 pub use slide::{SlideEdge, SlideMove, SlideParams, SlidePlan, vertex_slide};
+pub use smooth::{Interpolation, MAX_RELAX_ITERATIONS, RelaxParams, SpaceParams, relax, space};
 
 use crate::mesh::MeshStats;
 use crate::ops::Refusal;

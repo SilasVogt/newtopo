@@ -1,17 +1,22 @@
 //! The procedural document (SPEC §4): B-rep references, split lines, rules
 //! and edits. The output mesh is a cache computed by [`crate::eval`]; it is
-//! never stored.
+//! never stored, except for bodies edited in mesh mode (SPEC §9.5), whose
+//! edited mesh is part of the document.
 //!
 //! The document is a plain value type. Undo (SPEC §4.7) snapshots it behind
 //! an `Arc`; mutations clone-on-write via `Arc::make_mut`.
 
 use crate::keys::{EdgeKey, LineKey, RuleId, SplitId, VertexKey};
+use crate::meshedit::EditMesh;
 use glam::{DMat4, DVec3};
 use newtopo_kernel::{BodyId, EdgeId, FaceId, HealReport};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-pub const FORMAT_VERSION: u32 = 1;
+/// Format 2 adds mesh-mode edits (`mesh/<body>.json`, SPEC §9.5). Format 1
+/// files load unchanged (they have none).
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -391,6 +396,63 @@ pub struct Document {
     pub phase_overrides: BTreeMap<PhaseTarget, DVec3>,
     pub camera: Camera,
     pub next_id: u32,
+    /// Bodies edited in mesh mode (SPEC §9.5): the edited mesh replaces the
+    /// body's evaluated output and locks its CAD stage. `scene.json` lists
+    /// only the body ids; each mesh is its own archive entry,
+    /// `mesh/<body>.json`, read back by `Scene::load`.
+    #[serde(
+        default,
+        with = "mesh_refs",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub meshes: BTreeMap<BodyId, MeshRef>,
+}
+
+/// A shared edited mesh. Equality is pointer-first, so comparing documents
+/// (done on every op) doesn't walk unchanged meshes.
+#[derive(Clone, Debug, Default)]
+pub struct MeshRef(pub Arc<EditMesh>);
+
+impl MeshRef {
+    pub fn new(m: EditMesh) -> Self {
+        MeshRef(Arc::new(m))
+    }
+}
+
+impl std::ops::Deref for MeshRef {
+    type Target = EditMesh;
+    fn deref(&self) -> &EditMesh {
+        &self.0
+    }
+}
+
+impl PartialEq for MeshRef {
+    fn eq(&self, o: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &o.0) || *self.0 == *o.0
+    }
+}
+
+/// `meshes` in `scene.json`: the list of body ids. Deserialising gives
+/// empty placeholder meshes that the loader replaces.
+mod mesh_refs {
+    use super::MeshRef;
+    use newtopo_kernel::BodyId;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S: Serializer>(
+        m: &BTreeMap<BodyId, MeshRef>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        m.keys().copied().collect::<Vec<BodyId>>().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<BodyId, MeshRef>, D::Error> {
+        let ids = Vec::<BodyId>::deserialize(d)?;
+        Ok(ids.into_iter().map(|b| (b, MeshRef::default())).collect())
+    }
 }
 
 impl Default for Document {
@@ -412,6 +474,7 @@ impl Default for Document {
             phase_overrides: BTreeMap::new(),
             camera: Camera::default(),
             next_id: 1,
+            meshes: BTreeMap::new(),
         }
     }
 }
@@ -507,6 +570,14 @@ impl Document {
                 PhaseTarget::Edge(b, e) => PhaseTarget::Edge(*map.get(&b).unwrap_or(&b), e),
             };
             self.phase_overrides.insert(k, v);
+        }
+        let meshes = std::mem::take(&mut self.meshes);
+        for (b, mut mesh) in meshes {
+            let nb = *map.get(&b).unwrap_or(&b);
+            if mesh.body != nb {
+                Arc::make_mut(&mut mesh.0).body = nb;
+            }
+            self.meshes.insert(nb, mesh);
         }
     }
 }

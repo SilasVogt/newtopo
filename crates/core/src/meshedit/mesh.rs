@@ -165,6 +165,66 @@ impl EditMesh {
         Ok(mesh)
     }
 
+    /// The edited mesh in the shape every consumer of evaluated output
+    /// reads (display, statistics, export, the Blender bridge). Vertices get
+    /// [`VertexKey::Mesh`] keys and a face anchor on the CAD face of their
+    /// first polygon (edited meshes have no anchors); edges are
+    /// [`OutEdgeKind::Mesh`], straight, hard where flagged hard.
+    pub fn to_output(&self) -> OutputMesh {
+        use crate::mesh::{OutEdge, OutPolygon, OutVertex};
+        let mut group: Vec<Option<FaceId>> = vec![None; self.positions.len()];
+        for p in &self.polygons {
+            for &v in &p.verts {
+                let g = &mut group[v as usize];
+                if g.is_none() {
+                    *g = Some(p.group);
+                }
+            }
+        }
+        let flags = self.flag_map();
+        OutputMesh {
+            body: self.body,
+            vertices: self
+                .positions
+                .iter()
+                .enumerate()
+                .map(|(i, &position)| OutVertex {
+                    key: VertexKey::Mesh(i as u32),
+                    anchor: Anchor::Face {
+                        face: group[i].unwrap_or(FaceId(0)),
+                        uv: DVec2::ZERO,
+                    },
+                    position,
+                })
+                .collect(),
+            edges: self
+                .edges()
+                .into_iter()
+                .map(|(a, b)| {
+                    let f = flags.get(&(a, b)).copied().unwrap_or_default();
+                    OutEdge {
+                        a,
+                        b,
+                        kind: OutEdgeKind::Mesh { cad: f.cad },
+                        key: None,
+                        hard: f.hard,
+                        path: vec![self.positions[a as usize], self.positions[b as usize]],
+                    }
+                })
+                .collect(),
+            polygons: self
+                .polygons
+                .iter()
+                .map(|p| OutPolygon {
+                    verts: p.verts.clone(),
+                    face: p.group,
+                    normals: p.normals.clone(),
+                    fan_fallback: false,
+                })
+                .collect(),
+        }
+    }
+
     /// Set the seam flag on every edge whose two sides carry different UVs
     /// (and clear it elsewhere), so `flagged` agrees with the UVs.
     pub(crate) fn flag_seams(&mut self) {

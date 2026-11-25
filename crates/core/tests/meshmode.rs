@@ -1,0 +1,320 @@
+//! Mesh mode on the scene (SPEC §9.5): edited meshes in the document, the
+//! CAD lock, discarding, amending the last edit, undo, save/load (format 2
+//! and the format 1 migration) and the effective output that export uses.
+mod common;
+use common::*;
+use newtopo_core::Op;
+use newtopo_core::doc::Spacing as GridSpacing;
+use newtopo_core::meshedit::*;
+use newtopo_core::ops::PatchSel;
+use newtopo_kernel::BodyId;
+use newtopo_kernel::mock::{MockBody, MockKernel};
+use std::io::{Read, Write};
+use std::sync::Arc;
+
+fn grid(face: u32, n: u32) -> Op {
+    Op::Grid {
+        patches: PatchSel {
+            faces: vec![face],
+            ..Default::default()
+        },
+        u: n,
+        v: n,
+        start_on_seam: false,
+        spacing: GridSpacing::ArcLength,
+    }
+}
+
+/// A box with a grid on every face, auto-fill on.
+fn gridded_box() -> (newtopo_core::Scene, BodyId) {
+    let (mut s, b) = scene_with(MockBody::make_box(glam::DVec3::new(4.0, 3.0, 2.0)));
+    set_autofill(&mut s, true);
+    for f in 0..6 {
+        s.apply(grid(f, 4)).unwrap();
+    }
+    (s, b)
+}
+
+/// A small, valid edit of a baked mesh: move every free vertex a little
+/// off its face along the face normal.
+fn edited(m: &EditMesh) -> EditMesh {
+    let mut out = m.clone();
+    let mut push = vec![glam::DVec3::ZERO; m.positions.len()];
+    for p in &m.polygons {
+        for (k, &v) in p.verts.iter().enumerate() {
+            push[v as usize] += p.normals[k];
+        }
+    }
+    for (i, p) in out.positions.iter_mut().enumerate() {
+        if !m.pinned[i] {
+            *p += push[i].normalize_or_zero() * 0.01;
+        }
+    }
+    out
+}
+
+#[test]
+fn entering_changes_nothing_and_the_first_edit_is_one_undo_step() {
+    let (mut s, b) = gridded_box();
+    let before = s.doc().clone();
+    let m = s.editable_mesh(b).unwrap();
+    assert_eq!(
+        *s.doc(),
+        before,
+        "baking for mesh mode doesn't touch the document"
+    );
+    assert!(!s.has_mesh_edits(b));
+    assert!(
+        Arc::ptr_eq(&m, &s.editable_mesh(b).unwrap()),
+        "bake is cached"
+    );
+
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    assert!(s.has_mesh_edits(b));
+    assert_eq!(*s.editable_mesh(b).unwrap(), edited(&m));
+    // The effective output (statistics, export) is the edited mesh.
+    let out = s.output()[0].clone();
+    assert_eq!(out.vertices.len(), m.positions.len());
+    assert!(
+        out.vertices
+            .iter()
+            .zip(&edited(&m).positions)
+            .all(|(v, p)| v.position == *p)
+    );
+    assert_eq!(s.effective_output_of(b).unwrap(), out);
+    assert!(s.validate(b).is_empty());
+    s.undo();
+    assert!(!s.has_mesh_edits(b));
+    assert_eq!(*s.doc(), before);
+    s.redo();
+    assert!(s.has_mesh_edits(b));
+}
+
+#[test]
+fn mesh_edits_lock_cad_editing_until_discarded() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    let r = s.apply(grid(0, 6)).unwrap_err();
+    assert!(r.reason.contains("locked"), "{}", r.reason);
+    assert!(r.reason.contains("Discard mesh edits"));
+    // Scene settings and names still change.
+    s.apply(Op::RenameBody {
+        body: b,
+        name: "Edited".into(),
+    })
+    .unwrap();
+    s.apply(Op::SetAutofill { on: false }).unwrap();
+    // Discard: CAD-driven again, editable again, one undo step.
+    assert_eq!(s.discard_mesh_edits(&[b]).unwrap(), 1);
+    assert!(!s.has_mesh_edits(b));
+    s.apply(grid(0, 6)).unwrap();
+    s.undo();
+    s.undo();
+    assert!(s.has_mesh_edits(b), "undo brings the mesh edits back");
+    assert_eq!(s.discard_mesh_edits(&[]).unwrap(), 0);
+}
+
+#[test]
+fn amend_replaces_the_last_edit_only_while_nothing_else_changed() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    let undo_before = s.can_undo();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    assert!(s.can_amend_meshes());
+    let twice = edited(&edited(&m));
+    s.amend_meshes(vec![(b, Some(twice.clone()))]).unwrap();
+    assert_eq!(*s.mesh_edit(b).unwrap(), twice);
+    // Still one undo step back to before the edit.
+    s.undo();
+    assert!(!s.has_mesh_edits(b));
+    assert_eq!(s.can_undo(), undo_before);
+    // After undo (or any other change) amending is refused.
+    assert!(!s.can_amend_meshes());
+    assert!(s.amend_meshes(vec![(b, Some(twice))]).is_err());
+}
+
+#[test]
+fn invalid_meshes_are_refused() {
+    let (mut s, b) = gridded_box();
+    let mut bad = (*s.editable_mesh(b).unwrap()).clone();
+    bad.polygons[0].verts.reverse();
+    assert!(s.set_meshes(vec![(b, Some(bad))]).is_err());
+    let mut bad = (*s.editable_mesh(b).unwrap()).clone();
+    bad.polygons[0].group = newtopo_kernel::FaceId(99);
+    assert!(s.set_meshes(vec![(b, Some(bad))]).is_err());
+    assert!(s.set_meshes(vec![(BodyId(77), None)]).is_err());
+    assert!(!s.has_mesh_edits(b));
+    // No mesh while a CAD preview is open.
+    s.begin_preview();
+    let m = (*s.editable_mesh(b).unwrap()).clone();
+    assert!(s.set_meshes(vec![(b, Some(m))]).is_err());
+}
+
+#[test]
+fn save_and_load_keep_mesh_edits() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    let r = relax(
+        &m,
+        &Selection::Edges(edge_loop(&m, m.edges()[40].0, m.edges()[40].1).unwrap()),
+        &RelaxParams::default(),
+    );
+    let e = match r {
+        Ok(r) if r.mesh != *m => r.mesh,
+        _ => edited(&m),
+    };
+    s.set_meshes(vec![(b, Some(e.clone()))]).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("m.ntopo");
+    s.save(&p).unwrap();
+    let mut s2 = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &p).unwrap();
+    let b2 = s2.body_ids()[0];
+    assert!(s2.has_mesh_edits(b2));
+    let mut e2 = e.clone();
+    e2.body = b2;
+    assert_eq!(*s2.mesh_edit(b2).unwrap(), e2);
+    assert_eq!(s2.stats(), s.stats());
+    assert!(!s2.is_modified());
+    // The archive lists the mesh in scene.json and stores it on its own.
+    let f = std::fs::File::open(&p).unwrap();
+    let mut z = zip::ZipArchive::new(f).unwrap();
+    let mut json = String::new();
+    z.by_name("scene.json")
+        .unwrap()
+        .read_to_string(&mut json)
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["format_version"], 2);
+    assert_eq!(v["meshes"], serde_json::json!([b.0]));
+    assert!(z.by_name(&format!("mesh/{}.json", b.0)).is_ok());
+    // Still locked after the reload.
+    assert!(s2.apply(grid(0, 6)).is_err());
+}
+
+/// Rewrite one archive with `f` applied to its entries.
+fn rewrite(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    f: impl Fn(&str, Vec<u8>) -> Option<Vec<u8>>,
+) {
+    let mut z = zip::ZipArchive::new(std::fs::File::open(src).unwrap()).unwrap();
+    let mut w = zip::ZipWriter::new(std::fs::File::create(dst).unwrap());
+    for i in 0..z.len() {
+        let mut e = z.by_index(i).unwrap();
+        let name = e.name().unwrap().to_string();
+        let mut bytes = Vec::new();
+        e.read_to_end(&mut bytes).unwrap();
+        if let Some(b) = f(&name, bytes) {
+            w.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            w.write_all(&b).unwrap();
+        }
+    }
+    w.finish().unwrap();
+}
+
+#[test]
+fn format_1_scenes_load_and_broken_mesh_entries_are_refused() {
+    let (mut s, b) = gridded_box();
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("plain.ntopo");
+    s.save(&p).unwrap();
+    // A format 1 file (as older builds wrote it): no meshes.
+    let v1 = dir.path().join("v1.ntopo");
+    rewrite(&p, &v1, |name, bytes| {
+        if name != "scene.json" {
+            return Some(bytes);
+        }
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        v["format_version"] = serde_json::json!(1);
+        Some(serde_json::to_vec(&v).unwrap())
+    });
+    let mut s1 = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &v1).unwrap();
+    assert_eq!(s1.doc().format_version, 2, "migrated");
+    assert!(s1.mesh_edited_bodies().is_empty());
+    assert_eq!(s1.stats(), s.stats());
+
+    // A format 2 scene whose mesh entry is missing or broken is refused.
+    let m = s.editable_mesh(b).unwrap();
+    s.set_meshes(vec![(b, Some(edited(&m)))]).unwrap();
+    let p2 = dir.path().join("edited.ntopo");
+    s.save(&p2).unwrap();
+    let missing = dir.path().join("missing.ntopo");
+    rewrite(&p2, &missing, |name, bytes| {
+        (!name.starts_with("mesh/")).then_some(bytes)
+    });
+    let e = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &missing)
+        .err()
+        .unwrap();
+    assert!(format!("{e:#}").contains("mesh/"), "{e:#}");
+    let broken = dir.path().join("broken.ntopo");
+    rewrite(&p2, &broken, |name, bytes| {
+        if !name.starts_with("mesh/") {
+            return Some(bytes);
+        }
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        v["polygons"][0]["verts"] = serde_json::json!([0, 0, 1]);
+        Some(serde_json::to_vec(&v).unwrap())
+    });
+    let e = newtopo_core::Scene::load(Arc::new(MockKernel::new()), &broken)
+        .err()
+        .unwrap();
+    assert!(format!("{e:#}").contains("mesh edits"), "{e:#}");
+}
+
+#[test]
+fn export_writes_the_edited_mesh() {
+    let (mut s, b) = gridded_box();
+    let m = s.editable_mesh(b).unwrap();
+    let e = edited(&m);
+    s.set_meshes(vec![(b, Some(e.clone()))]).unwrap();
+    let meshes = s.output().to_vec();
+    let doc = s.doc().clone();
+    let objects: Vec<newtopo_core::export::ExportObject> = meshes
+        .iter()
+        .map(|m| newtopo_core::export::ExportObject {
+            name: "box",
+            layer: "Default",
+            color: None,
+            transform: doc.body(m.body).unwrap().transform,
+            mesh: m,
+        })
+        .collect();
+    let opts = newtopo_core::export::ExportOptions {
+        up: newtopo_core::export::ExportUp::Z,
+        scale: 1.0,
+        ..Default::default()
+    };
+    let files =
+        newtopo_core::export::export(newtopo_core::export::Format::Obj, &objects, &opts).unwrap();
+    let obj = String::from_utf8(files.main).unwrap();
+    let vs = obj.lines().filter(|l| l.starts_with("v ")).count();
+    assert!(vs >= e.positions.len(), "{vs}");
+    // A moved vertex is written where the edit put it.
+    let free = (0..e.positions.len()).find(|&i| !e.pinned[i]).unwrap();
+    let q = e.positions[free];
+    let found = obj.lines().filter(|l| l.starts_with("v ")).any(|l| {
+        let c: Vec<f64> = l[2..]
+            .split_whitespace()
+            .map(|x| x.parse().unwrap())
+            .collect();
+        (c[0] - q.x).abs() < 1e-5 && (c[1] - q.y).abs() < 1e-5 && (c[2] - q.z).abs() < 1e-5
+    });
+    assert!(found, "edited position {q:?} not in the OBJ");
+}
+
+#[test]
+fn project_to_cad_lands_on_the_face() {
+    let (s, b) = gridded_box();
+    // Face 0 of the mock box: whatever plane it is, a point projected onto
+    // it projects onto itself again.
+    let p = glam::DVec3::new(0.3, 0.2, 5.0);
+    let q = s.project_to_cad(b, newtopo_kernel::FaceId(0), &[p])[0].unwrap();
+    let q2 = s.project_to_cad(b, newtopo_kernel::FaceId(0), &[q])[0].unwrap();
+    assert!(q.distance(q2) < 1e-9);
+    assert_eq!(
+        s.project_to_cad(b, newtopo_kernel::FaceId(999), &[p]),
+        vec![None]
+    );
+}

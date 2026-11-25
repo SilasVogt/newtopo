@@ -312,6 +312,7 @@ impl Topo<'_> {
             VertexKey::Crossing { .. }
             | VertexKey::CutPoint { .. }
             | VertexKey::SplitCross { .. } => Ok(()),
+            VertexKey::Mesh(_) => bail!("{what} names a mesh-mode vertex"),
         }
     }
     fn ekey(&self, k: &EdgeKey, what: &str) -> Result<()> {

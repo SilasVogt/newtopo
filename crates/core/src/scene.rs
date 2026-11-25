@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 mod check;
 mod ext;
+mod meshmode;
 pub use check::{MAX_RULE_COUNT, MAX_RULE_CROSSINGS};
 pub(crate) use check::{near_range, norm};
 pub use ext::{BendArrow, BendInfo, ReplaceReport};
@@ -71,6 +72,13 @@ pub struct Scene {
     links: HashMap<BodyId, crate::link::LinkSets>,
     mirrors: HashMap<(BodyId, crate::doc::Axis), crate::link::FaceMap>,
     caches: std::sync::Mutex<HashMap<BodyId, eval::cache::EvalCache>>,
+    /// Mesh mode: evaluated output baked into an `EditMesh`, per body,
+    /// keyed by the body's evaluation fingerprint.
+    baked: HashMap<BodyId, (u64, Arc<crate::meshedit::EditMesh>)>,
+    /// Edited meshes converted to output, keyed by the mesh they came from.
+    mesh_outputs: HashMap<BodyId, (Arc<crate::meshedit::EditMesh>, OutputMesh)>,
+    /// The document right after the last `set_meshes`/`amend_meshes`.
+    amend_mark: Option<Arc<Document>>,
 }
 
 /// A body as returned to the UI for drawing the CAD model.
@@ -115,6 +123,9 @@ impl Scene {
             links: HashMap::new(),
             mirrors: HashMap::new(),
             caches: std::sync::Mutex::new(HashMap::new()),
+            baked: HashMap::new(),
+            mesh_outputs: HashMap::new(),
+            amend_mark: None,
         }
     }
 
@@ -247,6 +258,7 @@ impl Scene {
     /// is refused with a reason).
     pub fn apply(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
         let (doc, outcome) = self.run_op(&op)?;
+        self.check_mesh_locks(&doc)?;
         self.gate_and_commit(doc)?;
         Ok(outcome)
     }
@@ -255,6 +267,7 @@ impl Scene {
     /// want to inspect an invalid result). Still one undo step.
     pub fn apply_unchecked(&mut self, op: Op) -> Result<OpOutcome, Refusal> {
         let (doc, outcome) = self.run_op(&op)?;
+        self.check_mesh_locks(&doc)?;
         if doc != *self.doc {
             self.commit(doc);
         }
@@ -282,6 +295,7 @@ impl Scene {
         let fin = (*self.doc).clone();
         self.doc = orig;
         self.stashed = None;
+        self.check_mesh_locks(&fin)?;
         self.gate_and_commit(fin)?;
         Ok(outs)
     }
@@ -291,11 +305,13 @@ impl Scene {
         if doc == *self.doc {
             return Ok(());
         }
+        // Bodies with mesh edits export their edited mesh, not the
+        // evaluation, so only the others are gated.
         let ids: Vec<BodyId> = doc
             .bodies
             .iter()
             .map(|b| b.id)
-            .filter(|b| self.bodies.contains_key(b))
+            .filter(|b| self.bodies.contains_key(b) && !doc.meshes.contains_key(b))
             .collect();
         let mut fresh: Vec<(BodyId, u64, BodyEval)> = Vec::new();
         for b in ids {
@@ -580,12 +596,16 @@ impl Scene {
         self.caches_lock().get(&body).map(|c| c.last)
     }
 
-    /// Evaluated output for every body (lazy; only dirty bodies re-evaluate).
+    /// Output for every body, as shown, counted and exported: a body's
+    /// edited mesh if it has mesh edits (SPEC §9.5), otherwise its
+    /// evaluated output (lazy; only dirty bodies re-evaluate).
     pub fn output(&mut self) -> &[OutputMesh] {
         let ids: Vec<BodyId> = self.doc.bodies.iter().map(|b| b.id).collect();
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
-            if let Some(ev) = self.eval(id) {
+            if let Some(m) = self.mesh_output(id) {
+                out.push(m);
+            } else if let Some(ev) = self.eval(id) {
                 out.push(ev.mesh.clone());
             }
         }
@@ -593,7 +613,9 @@ impl Scene {
         &self.outputs
     }
 
-    /// Output of one body.
+    /// Evaluated (CAD-stage) output of one body, which the CAD tools work
+    /// on. For a body with mesh edits this is not what it exports; see
+    /// [`Scene::effective_output_of`].
     pub fn output_of(&mut self, body: BodyId) -> Option<&OutputMesh> {
         self.eval(body).map(|e| &e.mesh)
     }
@@ -632,7 +654,11 @@ impl Scene {
     }
 
     /// Validation issues of a body's output (SPEC §4.6 step 8).
+    /// For a body with mesh edits, the problems of its edited mesh.
     pub fn validate(&mut self, body: BodyId) -> Vec<Issue> {
+        if self.has_mesh_edits(body) {
+            return self.mesh_issues(body);
+        }
         let Some(ev) = self.eval(body).cloned() else {
             return vec![];
         };
@@ -811,6 +837,11 @@ impl Scene {
         }
         zip.start_file("cad/source.sha256", opts)?;
         zip.write_all(shas.as_bytes())?;
+        // Mesh-mode edits (format 2): one entry per edited body.
+        for (b, m) in &self.doc.meshes {
+            zip.start_file(format!("mesh/{}.json", b.0), opts)?;
+            serde_json::to_writer(&mut zip, &*m.0)?;
+        }
         Ok(zip.finish()?)
     }
 
@@ -852,6 +883,24 @@ impl Scene {
             );
         }
         let mut doc: Document = migrate(raw)?;
+        // Edited meshes (format 2): `scene.json` lists the bodies, each mesh
+        // is its own entry.
+        let ids: Vec<BodyId> = doc.meshes.keys().copied().collect();
+        for b in ids {
+            if doc.body(b).is_none() {
+                bail!("mesh edits for body {}, which the scene doesn't have", b.0);
+            }
+            let bytes = read_entry(
+                &mut zip,
+                &format!("mesh/{}.json", b.0),
+                limits.max_brep,
+                &mut budget,
+            )?;
+            let mut m: crate::meshedit::EditMesh = serde_json::from_slice(&bytes)
+                .with_context(|| format!("mesh/{}.json is not a mesh", b.0))?;
+            m.body = b;
+            doc.meshes.insert(b, crate::doc::MeshRef::new(m));
+        }
         let mut scene = Scene::new(kernel);
         let mut remap: BTreeMap<BodyId, BodyId> = BTreeMap::new();
         for b in &doc.bodies {
@@ -879,6 +928,12 @@ impl Scene {
                 }
             };
             let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
+            if let Some(m) = doc.meshes.get(&b.id)
+                && let Err(e) = meshmode::check_mesh(m, ctx.topo.faces.len())
+            {
+                scene.kernel.unload(kbody);
+                bail!("the mesh edits of body {} are broken: {e}", b.id.0);
+            }
             remap.insert(b.id, kbody);
             scene.bodies.insert(
                 kbody,
@@ -1010,8 +1065,26 @@ fn read_entry(
     Ok(out)
 }
 
-/// Older formats → current (SPEC §8.2). Format 1 is current.
-fn migrate(raw: serde_json::Value) -> anyhow::Result<Document> {
+/// Older formats → current (SPEC §8.2). Format 2 is current.
+///
+/// - 1 → 2: format 2 adds mesh-mode edits (`meshes` in `scene.json`, one
+///   `mesh/<body>.json` entry each). A format 1 scene has none, so it only
+///   gets the new version number. A format 2 scene is refused by builds
+///   that read format 1, which would otherwise drop its mesh edits.
+pub(crate) fn migrate(mut raw: serde_json::Value) -> anyhow::Result<Document> {
+    let ver = raw
+        .get("format_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if ver <= 1
+        && let Some(o) = raw.as_object_mut()
+    {
+        o.remove("meshes");
+        o.insert(
+            "format_version".into(),
+            serde_json::json!(crate::doc::FORMAT_VERSION),
+        );
+    }
     Ok(serde_json::from_value(raw)?)
 }
 

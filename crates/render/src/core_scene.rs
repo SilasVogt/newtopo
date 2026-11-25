@@ -123,8 +123,10 @@ pub fn build(scene: &mut Scene, d: &CoreDisplay) -> RenderScene {
         if let Some(out) = out {
             for e in &out.edges {
                 let (col, w) = match e.kind {
-                    OutEdgeKind::Cad(_) | OutEdgeKind::Split(_) => (c.cad_edge, 1.8),
-                    OutEdgeKind::Line(_) => (c.line, 1.6),
+                    OutEdgeKind::Cad(_)
+                    | OutEdgeKind::Split(_)
+                    | OutEdgeKind::Mesh { cad: true } => (c.cad_edge, 1.8),
+                    OutEdgeKind::Line(_) | OutEdgeKind::Mesh { cad: false } => (c.line, 1.6),
                     OutEdgeKind::Fill => (c.fill_edge, 1.1),
                 };
                 let pts: Vec<Vec3> = if e.path.len() >= 2 {

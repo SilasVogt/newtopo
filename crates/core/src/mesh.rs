@@ -44,6 +44,9 @@ pub enum OutEdgeKind {
     /// Keyless edge added by the evaluator (bridge chord, kept seam, auto-fill
     /// diagonal). Not editable.
     Fill,
+    /// Edge of a body's edited mesh (mesh mode, SPEC §9.5); `cad` if it
+    /// still carries the CAD-edge flag.
+    Mesh { cad: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

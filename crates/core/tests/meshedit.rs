@@ -179,6 +179,26 @@ fn baked_models_survive_every_tool() {
         let again = merge_by_distance(&md.mesh, &VertexScope::All, &big).unwrap();
         assert_eq!(again.mesh, md.mesh, "{name}: merge not idempotent");
 
+        // The loop tools on the loop through an edge in the middle of the
+        // vertex range: each refuses with a reason or keeps the mesh sound.
+        let (a, b) = m.edges()[m.edges().len() / 2];
+        let lp = edge_loop(&m, a, b).unwrap();
+        assert!(!lp.is_empty());
+        let sel = Selection::Edges(lp);
+        for (what, r) in [
+            (
+                "edge slide",
+                edge_slide(&m, &sel, &EdgeSlideParams::default()),
+            ),
+            ("relax", relax(&m, &sel, &RelaxParams::default())),
+            ("space", space(&m, &sel, &SpaceParams::default())),
+        ] {
+            match r {
+                Ok(r) => assert_outcome(&m, &r, &format!("{name} {what}")),
+                Err(e) => assert!(!e.reason.is_empty()),
+            }
+        }
+
         let has_features = !m.flagged.is_empty() || !m.boundary_edges().is_empty();
         let c = cleanup(&m, &Selection::AllFeatures, &CleanupParams::for_mesh(&m));
         if !has_features {
@@ -240,6 +260,14 @@ enum Tool {
     Slide(u32, f64, bool, bool),
     /// Distance in mean edge lengths, mode, centroid.
     Merge(f64, u8, bool),
+    /// Selection seed, factor, even.
+    EdgeSlide(u8, f64, bool),
+    /// Selection seed, iterations, cubic, even.
+    Relax(u8, u32, bool, bool),
+    /// Selection seed.
+    Space(u8),
+    /// Vertex seed, which neighbour.
+    TargetMerge(u32, u8),
 }
 
 fn arb_tool() -> impl Strategy<Value = Tool> {
@@ -251,6 +279,11 @@ fn arb_tool() -> impl Strategy<Value = Tool> {
         (any::<u32>(), -1.5f64..2.0, any::<bool>(), any::<bool>())
             .prop_map(|(v, t, e, c)| Tool::Slide(v, t, e, c)),
         (0.0f64..0.6, 0u8..3, any::<bool>()).prop_map(|(d, k, c)| Tool::Merge(d, k, c)),
+        (1u8..12, -1.0f64..1.0, any::<bool>()).prop_map(|(k, f, e)| Tool::EdgeSlide(k, f, e)),
+        (1u8..12, 1u32..12, any::<bool>(), any::<bool>())
+            .prop_map(|(k, n, c, e)| Tool::Relax(k, n, c, e)),
+        (1u8..12).prop_map(Tool::Space),
+        (any::<u32>(), any::<u8>()).prop_map(|(v, k)| Tool::TargetMerge(v, k)),
     ]
 }
 
@@ -390,6 +423,54 @@ fn run_tool(m: &EditMesh, t: &Tool) -> Result<EditOutcome, newtopo_core::Refusal
             },
         ),
         Tool::Merge(..) => merge_by_distance(m, &VertexScope::All, &merge_params(m, t)),
+        Tool::EdgeSlide(k, factor, even) => edge_slide(
+            m,
+            &selection(m, k),
+            &EdgeSlideParams {
+                factor,
+                even,
+                ..Default::default()
+            },
+        ),
+        Tool::Relax(k, iterations, cubic, even) => relax(
+            m,
+            &selection(m, k),
+            &RelaxParams {
+                iterations,
+                interpolation: if cubic {
+                    Interpolation::Cubic
+                } else {
+                    Interpolation::Linear
+                },
+                even,
+                ..Default::default()
+            },
+        ),
+        Tool::Space(k) => space(m, &selection(m, k), &SpaceParams::default()),
+        Tool::TargetMerge(seed, k) => {
+            // A vertex and one of its edge neighbours (so the topology
+            // stays; welds are tested separately).
+            let n = m.positions.len() as u32;
+            let from = seed.wrapping_mul(2654435761) % n;
+            let nb: Vec<u32> = m
+                .edges()
+                .into_iter()
+                .filter_map(|(a, b)| {
+                    if a == from {
+                        Some(b)
+                    } else if b == from {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let to = nb
+                .get(k as usize % nb.len().max(1))
+                .copied()
+                .unwrap_or(from);
+            target_merge(m, from, to, &TargetMergeParams::default())
+        }
     }
 }
 
@@ -495,6 +576,17 @@ proptest! {
                     if let Tool::Slide(_, _, _, true) = t {
                         // Clamped slides move along input edges only.
                         prop_assert!(vertex_deviation(&r.mesh, &m) < 1e-9, "slide left the surface");
+                    }
+                    if let Tool::Space(_) = t {
+                        // Space moves run vertices along the run only.
+                        prop_assert!(vertex_deviation(&r.mesh, &m) < 1e-9, "space left the surface");
+                        prop_assert_eq!(r.mesh.stats(), m.stats());
+                    }
+                    if let Tool::Relax(..) | Tool::EdgeSlide(..) = t {
+                        prop_assert_eq!(r.mesh.polygons.len(), m.polygons.len());
+                    }
+                    if let Tool::TargetMerge(..) = t {
+                        prop_assert_eq!(r.mesh.stats().verts + 1, m.stats().verts);
                     }
                     if let Tool::Merge(..) = t {
                         prop_assert!(r.mesh.stats().verts <= m.stats().verts);

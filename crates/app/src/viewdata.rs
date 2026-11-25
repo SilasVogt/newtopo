@@ -466,9 +466,9 @@ pub fn from_scene(scene: &mut Scene, p: &DisplayParams) -> ViewData {
                     vec![wpos[e.a as usize], wpos[e.b as usize]]
                 };
                 let kind = match e.kind {
-                    OutEdgeKind::Cad(_) => EdgeKind::Cad,
+                    OutEdgeKind::Cad(_) | OutEdgeKind::Mesh { cad: true } => EdgeKind::Cad,
                     OutEdgeKind::Split(_) => EdgeKind::Split,
-                    OutEdgeKind::Line(_) => EdgeKind::Line,
+                    OutEdgeKind::Line(_) | OutEdgeKind::Mesh { cad: false } => EdgeKind::Line,
                     OutEdgeKind::Fill => EdgeKind::Fill,
                 };
                 if p.preview {

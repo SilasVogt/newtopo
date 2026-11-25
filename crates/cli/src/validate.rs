@@ -35,7 +35,10 @@ pub fn run(a: &ValidateArgs) -> Result<()> {
             .body(id)
             .map(|b| b.name.clone())
             .unwrap_or_default();
-        let stats = scene.output_of(id).map(|m| m.stats()).unwrap_or_default();
+        let stats = scene
+            .effective_output_of(id)
+            .map(|m| m.stats())
+            .unwrap_or_default();
         let issues = scene.validate(id).into_iter().map(|i| i.message).collect();
         reports.push(BodyReport {
             body: id.0,
