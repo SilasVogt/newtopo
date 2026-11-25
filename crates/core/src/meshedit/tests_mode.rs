@@ -644,3 +644,53 @@ fn stay_on_surface_keeps_the_normal_limit() {
     let s = stay_on_surface(&m, r, 89.0, &mut proj);
     assert_eq!(s.mesh.positions[v], lifted);
 }
+
+/// Each projection is checked against the polygon as earlier projections
+/// left it; the result must also keep the orientation the tool gave it.
+/// Here the polygon is already past the normal limit (its CAD normals are
+/// +x), so only orientation guards it: B then C each turn it by less than
+/// 90°, together by more.
+#[test]
+fn stay_on_surface_never_reverses_a_polygon_in_steps() {
+    let p = |x: f64, y: f64, z: f64| DVec3::new(x, y, z);
+    let (b0, c0) = (p(1.0, 0.0, 0.0), p(0.0, 1.0, 0.0));
+    let tri = |b: DVec3, c: DVec3| EditMesh {
+        positions: vec![p(0.0, 0.0, 0.0), b, c],
+        pinned: vec![false; 3],
+        polygons: vec![EditPolygon {
+            verts: vec![0, 1, 2],
+            group: newtopo_kernel::FaceId(0),
+            normals: vec![DVec3::X; 3],
+            uvs: None,
+        }],
+        ..Default::default()
+    };
+    // The tool moved B and C (from slightly elsewhere) to b0, c0.
+    let before = tri(p(1.0, -0.1, 0.0), p(-0.1, 1.0, 0.0));
+    let out = EditOutcome {
+        mesh: tri(b0, c0),
+        vertex_map: vec![Some(0), Some(1), Some(2)],
+        selection: vec![],
+        selected_vertices: vec![],
+        report: Default::default(),
+    };
+    let (b1, c1) = (p(1.0, 1.0, 1.0), p(2.0, 1.0, -1.0));
+    let mut proj = |_: newtopo_kernel::FaceId, pts: &[DVec3]| {
+        pts.iter()
+            .map(|q| {
+                Some(if *q == b0 {
+                    b1
+                } else if *q == c0 {
+                    c1
+                } else {
+                    *q
+                })
+            })
+            .collect()
+    };
+    let s = stay_on_surface(&before, out.clone(), 60.0, &mut proj);
+    let n = |m: &EditMesh| super::mesh::area_vec(&m.polygon_positions(0));
+    assert!(n(&s.mesh).dot(n(&out.mesh)) > 0.0, "{:?}", s.mesh.positions);
+    assert_eq!(s.mesh.positions[1], b1, "B alone keeps the orientation");
+    assert_eq!(s.mesh.positions[2], c0, "C after B would reverse it");
+}

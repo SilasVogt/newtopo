@@ -5,7 +5,8 @@
 //! The projection is a caller-supplied function (the scene asks the CAD
 //! kernel), so the tools stay pure. A vertex whose projection would break a
 //! polygon around it (a shape-valid polygon becoming concave or degenerate,
-//! any polygon flipping, or a polygon within the normal limit leaving it)
+//! any polygon flipping, against the polygon before this vertex moved and
+//! against the tool's result, or a polygon within the normal limit leaving it)
 //! stays where the tool put it; the report says how many vertices were put
 //! back and how many could not be.
 
@@ -87,6 +88,9 @@ pub fn stay_on_surface(
             }
         }
     }
+    // Where the tool put the vertices: every polygon keeps that
+    // orientation, not only the one the projections before left it with.
+    let tool_pos = m.positions.clone();
     let (mut put, mut held) = (0usize, 0usize);
     for (&v, &(d, q)) in &best {
         if d <= 1e-12 * diag {
@@ -112,7 +116,10 @@ pub fn stay_on_surface(
                     .dot(reference.normalize_or_zero())
                     >= min_cos
             };
-            polygon_acceptable(&b, &a, diag) && (!within(&b) || within(&a))
+            let t: Vec<DVec3> = poly.verts.iter().map(|&x| tool_pos[x as usize]).collect();
+            polygon_acceptable(&b, &a, diag)
+                && area_vec(&a).dot(area_vec(&t)) > 0.0
+                && (!within(&b) || within(&a))
         });
         if ok {
             m.positions[v as usize] = q;
