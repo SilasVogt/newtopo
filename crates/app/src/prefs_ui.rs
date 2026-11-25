@@ -3,7 +3,7 @@
 use crate::app::AppState;
 use crate::commands::{ALL, Cmd};
 use crate::palette::{KeyCapture, fuzzy_score};
-use crate::prefs::{NavPreset, RadialStyle, StatsShow};
+use crate::prefs::{NavPreset, StatsShow};
 use crate::strings as S;
 use egui::{Color32, RichText, Ui, vec2};
 use newtopo_render::{OverlayColors, UpAxis};
@@ -244,20 +244,6 @@ impl AppState {
                 if chosen != self.theme.name {
                     self.set_theme(&chosen);
                 }
-                ui.end_row();
-                ui.label(S::PREFS_RADIAL_THEME);
-                crate::kit::segmented(ui, &self.pal, |ui| {
-                    ui.selectable_value(
-                        &mut self.prefs.radial_style,
-                        RadialStyle::FollowTheme,
-                        "Follow theme",
-                    );
-                    ui.selectable_value(
-                        &mut self.prefs.radial_style,
-                        RadialStyle::HighContrast,
-                        "High contrast",
-                    );
-                });
                 ui.end_row();
                 ui.label(S::PREFS_VIEWPORT);
                 crate::kit::checkbox(ui, &mut self.prefs.show_grid, "Ground grid");

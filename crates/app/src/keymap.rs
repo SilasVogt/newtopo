@@ -250,7 +250,6 @@ mod tests {
         let k = Keymap::default();
         let b = |s: &str| Binding::parse(s).unwrap();
         assert_eq!(k.lookup(&b("Ctrl+K")), vec![Cmd::Palette]);
-        assert_eq!(k.lookup(&b("Q")), vec![Cmd::Radial]);
         assert_eq!(k.lookup(&b("Ctrl+Comma")), vec![Cmd::Preferences]);
         assert_eq!(k.lookup(&b("Shift+V")), vec![Cmd::Wireframe]);
         assert_eq!(k.lookup(&b("Alt+C")), vec![Cmd::Collapse]);

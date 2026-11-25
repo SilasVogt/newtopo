@@ -229,42 +229,6 @@ fn lasso_select_with_right_drag() {
 }
 
 #[test]
-fn radial_tap_keeps_open_and_hold_runs() {
-    let mut h = Harness::new(true);
-    // Tap: press and release quickly → stays open.
-    h.key(Key::Q, Modifiers::NONE);
-    assert!(h.app.st.ui.radial.open && h.app.st.ui.radial.sticky);
-    h.key(Key::Escape, Modifiers::NONE);
-    assert!(!h.app.st.ui.radial.open);
-    // Hold over the slot at 12 o'clock (Connect by default) and release.
-    let c = h.app.st.view.rect.center();
-    h.frame(vec![Event::PointerMoved(c)]);
-    h.frame(vec![Event::Key {
-        key: Key::Q,
-        physical_key: Some(Key::Q),
-        pressed: true,
-        repeat: false,
-        modifiers: Modifiers::NONE,
-    }]);
-    let centre = h.app.st.ui.radial.center;
-    for k in 0..8 {
-        h.frame(vec![Event::PointerMoved(
-            centre + vec2(0.0, -20.0 - 12.0 * k as f32),
-        )]);
-    }
-    h.frame(vec![Event::Key {
-        key: Key::Q,
-        physical_key: Some(Key::Q),
-        pressed: false,
-        repeat: false,
-        modifiers: Modifiers::NONE,
-    }]);
-    h.frames(1);
-    assert!(!h.app.st.ui.radial.open);
-    assert_eq!(h.app.st.tool.active, Tool::Connect);
-}
-
-#[test]
 fn escape_precedence_tool_then_isolate() {
     let mut h = Harness::new(true);
     h.app.st.sel.objects.insert(BodyId(1));
@@ -356,6 +320,34 @@ fn viewport_orbit_with_middle_drag() {
         (h.app.st.view.camera.yaw - yaw).abs() > 0.1,
         "middle drag orbits (Blender preset)"
     );
+}
+
+#[test]
+fn named_view_is_orthographic_until_the_next_orbit() {
+    let mut h = Harness::new(true);
+    let c = h.app.st.view.rect.center();
+    assert!(!h.app.st.view.camera.ortho);
+    h.app.st.run(Cmd::ViewTop);
+    assert!(h.app.st.view.camera.ortho, "a named view is orthographic");
+    h.drag(c, c + vec2(0.0, 80.0), PointerButton::Middle);
+    assert!(
+        !h.app.st.view.camera.ortho,
+        "orbiting returns to perspective"
+    );
+
+    // An orthographic camera the user chose stays orthographic.
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::ViewFront);
+    h.drag(c, c + vec2(120.0, 0.0), PointerButton::Middle);
+    assert!(h.app.st.view.camera.ortho, "the user's choice is kept");
+
+    // Switching by hand during a named view keeps that choice too.
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::ViewRight);
+    h.app.st.run(Cmd::Ortho);
+    h.app.st.run(Cmd::Ortho);
+    h.drag(c, c + vec2(120.0, 0.0), PointerButton::Middle);
+    assert!(h.app.st.view.camera.ortho);
 }
 
 #[test]

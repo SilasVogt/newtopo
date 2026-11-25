@@ -66,7 +66,6 @@ commands! {
     ModeObject => "mode.object", "Object mode", Select, Some(Icon::Object), ["4"];
 
     Palette => "app.palette", "Command palette", Help, Some(Icon::Command), ["Ctrl+K"];
-    Radial => "app.radial", "Radial menu (hold or tap)", Help, Some(Icon::Radial), ["Q"];
     Preferences => "app.preferences", "Preferences", Help, Some(Icon::Gear), ["Ctrl+Comma"];
     KeymapEditor => "app.keymap", "Edit keymap", Help, Some(Icon::Keyboard), [];
 

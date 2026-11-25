@@ -19,9 +19,6 @@
   "warn": "#b9770e",
   "error": "#d23c3c",
   "ok": "#1f9d55",
-  "radial_bg": "#fbfbfcf2",
-  "radial_slot": "#e6e9ed",
-  "radial_hover": "#0f8a6e",
   "rounding": 6.0,
   "overlay": {
     "cad_edge": [0.149, 0.165, 0.192, 1.0],

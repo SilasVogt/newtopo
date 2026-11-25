@@ -1,44 +1,17 @@
-//! Command palette, radial menu and shortcut capture (SPEC §5.4).
+//! Command palette and shortcut capture (SPEC §5.4).
 
 use crate::app::AppState;
 use crate::commands::{ALL, Cmd};
 use crate::icons;
 use crate::keymap::Binding;
-use crate::prefs::{RADIAL_SLOTS, RadialStyle};
 use crate::strings as S;
-use crate::toasts::ToastKind;
-use egui::{Align2, Color32, Key, Pos2, Rect, RichText, Sense, Stroke, vec2};
-
-/// Hold shorter than this keeps the radial menu open (SPEC §5.4).
-pub const RADIAL_TAP_SECS: f64 = 0.2;
-const RADIAL_INNER: f32 = 66.0;
-const RADIAL_OUTER: f32 = 168.0;
-
-/// An annular sector (angles clockwise from 12 o'clock) as a filled mesh.
-fn wedge(c: Pos2, r0: f32, r1: f32, a0: f32, a1: f32, color: Color32) -> egui::Shape {
-    let mut m = egui::Mesh::default();
-    let n = 10;
-    for k in 0..=n {
-        let a = a0 + (a1 - a0) * k as f32 / n as f32;
-        let d = vec2(a.sin(), -a.cos());
-        m.colored_vertex(c + d * r0, color);
-        m.colored_vertex(c + d * r1, color);
-    }
-    for k in 0..n as u32 {
-        let i = k * 2;
-        m.add_triangle(i, i + 1, i + 3);
-        m.add_triangle(i, i + 3, i + 2);
-    }
-    egui::Shape::mesh(m)
-}
+use egui::{Align2, Color32, Key, Rect, RichText, Sense, Stroke, vec2};
 
 #[derive(Default)]
 pub struct PaletteState {
     pub open: bool,
     pub query: String,
     pub selected: usize,
-    /// When set, picking a command assigns it to this radial slot.
-    pub for_radial_slot: Option<usize>,
     focus: bool,
 }
 
@@ -47,41 +20,7 @@ impl PaletteState {
         self.open = true;
         self.query.clear();
         self.selected = 0;
-        self.for_radial_slot = None;
         self.focus = true;
-    }
-}
-
-#[derive(Default)]
-pub struct RadialState {
-    pub open: bool,
-    pub center: Pos2,
-    pub opened_at: f64,
-    /// Key still held (release decides tap vs. hold).
-    pub held: bool,
-    pub sticky: bool,
-    pub hovered: Option<usize>,
-    pub moving: Option<usize>,
-    pub menu_slot: Option<usize>,
-}
-
-impl RadialState {
-    pub fn open_at(&mut self, c: Pos2, t: f64, sticky: bool) {
-        *self = RadialState {
-            open: true,
-            center: c,
-            opened_at: t,
-            held: !sticky,
-            sticky,
-            hovered: None,
-            moving: None,
-            menu_slot: None,
-        };
-    }
-    pub fn close(&mut self) {
-        self.open = false;
-        self.held = false;
-        self.moving = None;
     }
 }
 
@@ -172,28 +111,9 @@ impl AppState {
         self.dirty_settings = true;
     }
 
-    pub fn add_to_radial(&mut self, c: Cmd, slot: Option<usize>) {
-        let slot = slot.or_else(|| self.prefs.radial.iter().position(|s| s.is_none()));
-        match slot {
-            Some(i) => {
-                self.prefs.radial[i] = Some(c.id().to_string());
-                self.dirty_settings = true;
-                self.toast(
-                    ToastKind::Info,
-                    format!("Added \"{}\" to the radial menu", c.label()),
-                );
-            }
-            None => self.toast(ToastKind::Warn, S::RADIAL_FULL),
-        }
-    }
-
     fn pick_from_palette(&mut self, c: Cmd) {
         self.ui.palette.open = false;
-        if let Some(slot) = self.ui.palette.for_radial_slot.take() {
-            self.add_to_radial(c, Some(slot));
-        } else {
-            self.run(c);
-        }
+        self.run(c);
     }
 
     pub fn palette_ui(&mut self, ctx: &egui::Context) {
@@ -245,7 +165,6 @@ impl AppState {
         let mut run: Option<Cmd> = None;
         let mut fav_toggle: Option<Cmd> = None;
         let mut capture: Option<Cmd> = None;
-        let mut radial_add: Option<Cmd> = None;
         let mut reset: Option<Cmd> = None;
         egui::Area::new(egui::Id::new("palette")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
             egui::Frame::new()
@@ -259,9 +178,8 @@ impl AppState {
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                         icons::paint(ui.painter(), r, icons::Icon::Search, pal.text_dim);
-                        let hint = if self.ui.palette.for_radial_slot.is_some() { "Pick a command for the radial slot…" } else { S::PALETTE_HINT };
                         let te = egui::TextEdit::singleline(&mut self.ui.palette.query)
-                            .hint_text(hint)
+                            .hint_text(S::PALETTE_HINT)
                             .frame(egui::Frame::NONE)
                             .font(egui::FontId::proportional(16.0))
                             .desired_width(f32::INFINITY);
@@ -337,7 +255,7 @@ impl AppState {
                                 ui.painter().rect_filled(menu_r, 4.0, pal.widget_hover);
                             }
                             icons::paint(ui.painter(), menu_r.shrink(4.0), icons::Icon::Dots, pal.text_dim);
-                            let cmd_menu = |ui: &mut egui::Ui, capture: &mut Option<Cmd>, fav: &mut Option<Cmd>, radial: &mut Option<Cmd>, reset: &mut Option<Cmd>| {
+                            let cmd_menu = |ui: &mut egui::Ui, capture: &mut Option<Cmd>, fav: &mut Option<Cmd>, reset: &mut Option<Cmd>| {
                                 if ui.button(S::PALETTE_CHANGE_SHORTCUT).clicked() {
                                     *capture = Some(*c);
                                     ui.close();
@@ -346,17 +264,13 @@ impl AppState {
                                     *fav = Some(*c);
                                     ui.close();
                                 }
-                                if ui.button(S::PALETTE_ADD_RADIAL).clicked() {
-                                    *radial = Some(*c);
-                                    ui.close();
-                                }
                                 if ui.button(S::PALETTE_RESET_SHORTCUT).clicked() {
                                     *reset = Some(*c);
                                     ui.close();
                                 }
                             };
-                            egui::Popup::menu(&menu).show(|ui| cmd_menu(ui, &mut capture, &mut fav_toggle, &mut radial_add, &mut reset));
-                            resp.context_menu(|ui| cmd_menu(ui, &mut capture, &mut fav_toggle, &mut radial_add, &mut reset));
+                            egui::Popup::menu(&menu).show(|ui| cmd_menu(ui, &mut capture, &mut fav_toggle, &mut reset));
+                            resp.context_menu(|ui| cmd_menu(ui, &mut capture, &mut fav_toggle, &mut reset));
                             if resp.clicked() {
                                 run = Some(*c);
                             }
@@ -366,9 +280,6 @@ impl AppState {
         });
         if let Some(c) = fav_toggle {
             self.toggle_favourite(c);
-        }
-        if let Some(c) = radial_add {
-            self.add_to_radial(c, None);
         }
         if let Some(c) = reset {
             self.keymap.reset(c);
@@ -383,234 +294,6 @@ impl AppState {
         }
         if let Some(c) = run {
             self.pick_from_palette(c);
-        }
-    }
-
-    // ------------------------------------------------------------ radial
-
-    fn radial_slot_at(&self, p: Pos2) -> Option<usize> {
-        let d = p - self.ui.radial.center;
-        if d.length() < RADIAL_INNER * 0.6 || d.length() > RADIAL_OUTER + 40.0 {
-            return None;
-        }
-        // Slot 0 at the top, clockwise.
-        let a = d.x.atan2(-d.y).rem_euclid(std::f32::consts::TAU);
-        let step = std::f32::consts::TAU / RADIAL_SLOTS as f32;
-        Some(((a + step * 0.5) / step) as usize % RADIAL_SLOTS)
-    }
-
-    pub fn radial_release(&mut self) {
-        let held_for = self.time - self.ui.radial.opened_at;
-        self.ui.radial.held = false;
-        if held_for < RADIAL_TAP_SECS {
-            // Tap: stay open until a click.
-            self.ui.radial.sticky = true;
-            return;
-        }
-        let slot = self.ui.radial.hovered;
-        self.ui.radial.close();
-        if let Some(c) = slot
-            .and_then(|i| self.prefs.radial[i].clone())
-            .and_then(|id| Cmd::from_id(&id))
-        {
-            self.run(c);
-        }
-    }
-
-    pub fn radial_ui(&mut self, ctx: &egui::Context) {
-        if !self.ui.radial.open {
-            return;
-        }
-        let pal = self.pal;
-        let hc = self.prefs.radial_style == RadialStyle::HighContrast;
-        let (bg, slot_bg, hover_bg, text, dim, hover_text) = if hc {
-            (
-                Color32::from_black_alpha(235),
-                Color32::from_gray(28),
-                Color32::WHITE,
-                Color32::WHITE,
-                Color32::from_gray(150),
-                Color32::BLACK,
-            )
-        } else {
-            (
-                pal.radial_bg,
-                pal.radial_slot,
-                pal.radial_hover,
-                pal.text_strong,
-                pal.text_dim,
-                pal.accent_text,
-            )
-        };
-        let screen = ctx.content_rect();
-        let margin = vec2(RADIAL_OUTER + 12.0, RADIAL_OUTER + 12.0);
-        let c = self.ui.radial.center.clamp(
-            screen.min + margin,
-            (screen.max - margin).max(screen.min + margin),
-        );
-        self.ui.radial.center = c;
-        let pointer = ctx.input(|i| i.pointer.hover_pos());
-        self.ui.radial.hovered = pointer.and_then(|p| self.radial_slot_at(p));
-        let mut run: Option<Cmd> = None;
-        let mut close = false;
-        let mut replace: Option<usize> = None;
-        let mut remove: Option<usize> = None;
-        let mut start_move: Option<usize> = None;
-        let mut swap: Option<(usize, usize)> = None;
-        egui::Area::new(egui::Id::new("radial"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(screen.min)
-            .show(ctx, |ui| {
-                let resp = ui.allocate_rect(screen, Sense::click());
-                let p = ui.painter();
-                p.circle_filled(
-                    c + vec2(0.0, 6.0),
-                    RADIAL_OUTER + 10.0,
-                    Color32::from_black_alpha(if pal.dark { 60 } else { 25 }),
-                );
-                p.circle_filled(c, RADIAL_OUTER + 6.0, bg);
-                let step = std::f32::consts::TAU / RADIAL_SLOTS as f32;
-                let gap = 0.022;
-                for i in 0..RADIAL_SLOTS {
-                    let a0 = i as f32 * step - step * 0.5 + gap;
-                    let a1 = i as f32 * step + step * 0.5 - gap;
-                    let cmd = self.prefs.radial[i].as_deref().and_then(Cmd::from_id);
-                    let hovered = self.ui.radial.hovered == Some(i);
-                    let fill = if hovered {
-                        hover_bg
-                    } else if cmd.is_some() {
-                        slot_bg
-                    } else {
-                        slot_bg.gamma_multiply(0.5)
-                    };
-                    p.add(wedge(c, RADIAL_INNER, RADIAL_OUTER, a0, a1, fill));
-                    if self.ui.radial.moving == Some(i) {
-                        p.add(wedge(c, RADIAL_OUTER - 4.0, RADIAL_OUTER, a0, a1, pal.warn));
-                    }
-                    let am = i as f32 * step;
-                    let mid = c + vec2(am.sin(), -am.cos()) * (RADIAL_INNER + RADIAL_OUTER) * 0.5;
-                    let fg = if hovered { hover_text } else { text };
-                    match cmd {
-                        Some(cmd) => {
-                            if let Some(icon) = cmd.icon() {
-                                icons::paint(
-                                    p,
-                                    Rect::from_center_size(mid - vec2(0.0, 9.0), vec2(18.0, 18.0)),
-                                    icon,
-                                    fg,
-                                );
-                            }
-                            p.text(
-                                mid + vec2(0.0, 10.0),
-                                Align2::CENTER_CENTER,
-                                short_label(cmd),
-                                egui::FontId::proportional(11.5),
-                                fg,
-                            );
-                        }
-                        None => {
-                            p.text(
-                                mid,
-                                Align2::CENTER_CENTER,
-                                "+",
-                                egui::FontId::proportional(16.0),
-                                if hovered { fg } else { dim },
-                            );
-                        }
-                    }
-                }
-                // Centre: the hovered command's full name, or a hint.
-                p.circle_filled(c, RADIAL_INNER - 6.0, slot_bg.gamma_multiply(0.6));
-                let centre_text = if self.ui.radial.moving.is_some() {
-                    S::RADIAL_MOVE_HINT.to_string()
-                } else {
-                    self.ui
-                        .radial
-                        .hovered
-                        .and_then(|i| self.prefs.radial[i].as_deref().and_then(Cmd::from_id))
-                        .map(|c| c.label().to_string())
-                        .unwrap_or_default()
-                };
-                if !centre_text.is_empty() {
-                    let g = p.layout(
-                        centre_text,
-                        egui::FontId::proportional(12.0),
-                        text,
-                        (RADIAL_INNER - 12.0) * 2.0,
-                    );
-                    p.galley(c - g.size() * 0.5, g, text);
-                } else {
-                    p.text(
-                        c,
-                        Align2::CENTER_CENTER,
-                        self.keymap.label(Cmd::Radial),
-                        egui::FontId::monospace(12.0),
-                        dim,
-                    );
-                }
-                // Clicks: primary runs (or completes a move), secondary opens the slot menu.
-                if resp.secondary_clicked() {
-                    self.ui.radial.menu_slot = self.ui.radial.hovered;
-                }
-                if resp.clicked() {
-                    match (self.ui.radial.hovered, self.ui.radial.moving) {
-                        (Some(i), Some(src)) => swap = Some((src, i)),
-                        (Some(i), None) => {
-                            run = self.prefs.radial[i].as_deref().and_then(Cmd::from_id)
-                        }
-                        (None, _) if self.ui.radial.sticky => close = true,
-                        _ => {}
-                    }
-                }
-                if let Some(i) = self.ui.radial.menu_slot {
-                    let has = self.prefs.radial[i].is_some();
-                    resp.context_menu(|ui| {
-                        if ui.button(S::RADIAL_REPLACE).clicked() {
-                            replace = Some(i);
-                            ui.close();
-                        }
-                        if ui
-                            .add_enabled(has, egui::Button::new(S::RADIAL_REMOVE))
-                            .clicked()
-                        {
-                            remove = Some(i);
-                            ui.close();
-                        }
-                        if ui
-                            .add_enabled(has, egui::Button::new(S::RADIAL_MOVE))
-                            .clicked()
-                        {
-                            start_move = Some(i);
-                            ui.close();
-                        }
-                    });
-                }
-            });
-        if let Some(i) = replace {
-            self.ui.radial.close();
-            self.ui.palette.open_fresh();
-            self.ui.palette.for_radial_slot = Some(i);
-            return;
-        }
-        if let Some(i) = remove {
-            self.prefs.radial[i] = None;
-            self.dirty_settings = true;
-        }
-        if let Some(i) = start_move {
-            self.ui.radial.moving = Some(i);
-            self.ui.radial.sticky = true;
-        }
-        if let Some((a, b)) = swap {
-            self.prefs.radial.swap(a, b);
-            self.ui.radial.moving = None;
-            self.dirty_settings = true;
-            return;
-        }
-        if let Some(cmd) = run {
-            self.ui.radial.close();
-            self.run(cmd);
-        } else if close {
-            self.ui.radial.close();
         }
     }
 
@@ -760,37 +443,6 @@ impl AppState {
     }
 }
 
-/// Compact label for radial slots.
-fn short_label(c: Cmd) -> &'static str {
-    match c {
-        Cmd::Remove => "Remove",
-        Cmd::Loop => "Loop",
-        Cmd::Ring => "Ring",
-        Cmd::LoopAlternate => "Loop ½",
-        Cmd::RingAlternate => "Ring ½",
-        Cmd::Preview => "Preview",
-        Cmd::AutoFill => "Auto-fill",
-        Cmd::Link => "Link",
-        Cmd::Symmetry => "Symmetry",
-        Cmd::Frame => "Frame",
-        Cmd::Ortho => "Ortho",
-        Cmd::Weld => "Weld",
-        Cmd::Grid => "Grid",
-        Cmd::Open => "Open",
-        Cmd::SaveAs => "Save as",
-        Cmd::Import => "Import",
-        Cmd::Export => "Export",
-        c => {
-            let l = c.label();
-            if l.len() <= 12 {
-                l
-            } else {
-                l.split_whitespace().next().unwrap_or(l)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,10 +458,5 @@ mod tests {
         let exact = fuzzy_score("undo", "Undo").unwrap();
         let loose = fuzzy_score("undo", "Unhide all dormant").unwrap_or(i32::MIN);
         assert!(exact > loose);
-    }
-
-    #[test]
-    fn radial_tap_constant() {
-        assert!((RADIAL_TAP_SECS - 0.2).abs() < 1e-9);
     }
 }

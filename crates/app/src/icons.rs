@@ -42,7 +42,6 @@ pub enum Icon {
     Open,
     Gear,
     Command,
-    Radial,
     Rename,
     Bridge,
     Uv,
@@ -485,14 +484,6 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Command => {
             poly(&[(2.0, 4.0), (6.0, 8.0), (2.0, 12.0)], false, st);
             line((8.0, 12.0), (14.0, 12.0));
-        }
-        Icon::Radial => {
-            ring(8.0, 8.0, 5.5);
-            for i in 0..6 {
-                let a = i as f32 * std::f32::consts::TAU / 6.0;
-                dot(8.0 + 5.5 * a.cos(), 8.0 + 5.5 * a.sin(), 1.3);
-            }
-            dot(8.0, 8.0, 1.2);
         }
         Icon::Rename => {
             painter.rect_stroke(

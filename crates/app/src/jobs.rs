@@ -647,6 +647,7 @@ impl AppState {
                     .filter(|c| *c != newtopo_core::doc::Camera::default())
                 {
                     self.view.camera = newtopo_render::OrbitCamera::from_doc(&cam, self.prefs.up);
+                    self.view.auto_ortho = false;
                     self.view.needs_frame = false;
                 }
             }

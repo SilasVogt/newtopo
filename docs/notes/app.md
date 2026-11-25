@@ -25,7 +25,7 @@ user's config folder (tests and agents should always do this).
 renderer with the viewport paint callback installed, so screenshots show
 exactly what the window shows (no window, no user settings). `uitest.rs` drives
 the UI with synthetic keyboard/mouse events (no GPU) and checks state: mode
-keys, palette, click/Shift/Ctrl selection, box and lasso, radial tap vs. hold,
+keys, palette, click/Shift/Ctrl selection, box and lasso,
 Esc precedence, loops and double-press, middle-drag orbit, and that every
 command degrades gracefully with no scene.
 

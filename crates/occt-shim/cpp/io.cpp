@@ -133,6 +133,29 @@ std::string label_name(const TDF_Label &l) {
   return std::string();
 }
 
+// XCAF names an instance the file leaves unnamed "=>[<entry of its
+// prototype>]", e.g. "=>[0:1:1:2]", and OCCT-based exporters write that
+// string into the file, so the entry is the exporter's and cannot be
+// compared with a label here. Exactly this form is not a name; any other
+// name, also one that starts the same way ("=>[Bracket]"), is the user's.
+bool is_reference_placeholder(const std::string &name) {
+  if (name.size() < 5 || name.compare(0, 3, "=>[") != 0 || name.back() != ']') {
+    return false;
+  }
+  bool digit_before = false;
+  for (size_t i = 3; i + 1 < name.size(); ++i) {
+    char c = name[i];
+    if (c >= '0' && c <= '9') {
+      digit_before = true;
+    } else if (c == ':' && digit_before) {
+      digit_before = false;
+    } else {
+      return false;
+    }
+  }
+  return digit_before;
+}
+
 struct Attrs {
   std::string name;
   bool has_layer = false;
@@ -192,7 +215,7 @@ private:
   void visit(const TDF_Label &proto, const TDF_Label &inst, const TopLoc_Location &loc, const Attrs &parent) {
     Attrs a;
     a.name = label_name(inst);
-    if (a.name.empty()) {
+    if (a.name.empty() || is_reference_placeholder(a.name)) {
       a.name = label_name(proto);
     }
     a.has_layer = find_layer(inst, a.layer) || find_layer(proto, a.layer);
@@ -289,7 +312,9 @@ private:
     }
     for (size_t i = 0; i < parts.size(); ++i) {
       Attrs pa = a;
-      pa.name = a.name + "." + std::to_string(i + 1);
+      if (!a.name.empty()) {
+        pa.name = a.name + "." + std::to_string(i + 1);
+      }
       emit_body(parts[i], pa, loc);
     }
   }
