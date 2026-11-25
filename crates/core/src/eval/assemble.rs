@@ -343,7 +343,9 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
             }
         }
     }
-    let dropped: Vec<bool> = (0..verts.len())
+    // Grows with `verts`: a placeholder added for one CAD loop is seen (and
+    // looked up here) by a later loop that shares the edge.
+    let mut dropped: Vec<bool> = (0..verts.len())
         .map(|v| seam_rel[v] && shape_ok[v])
         .collect();
     // Edge registry in global ids (dedup), sorted by t.
@@ -497,13 +499,13 @@ pub fn assemble(ctx: &BodyCtx, doc: &Document, body: BodyId, faces: &[FaceRes]) 
                 pos: DVec3::ZERO,
                 alive: true,
             });
+            dropped.push(false);
             let l = ereg.entry(e).or_default();
             l.push((t, v));
             l.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
     }
-    let mut dropped = dropped;
-    dropped.resize(verts.len(), false);
+    debug_assert_eq!(dropped.len(), verts.len());
     // 4b. Face-local loops (split lines, generated lines, kept seams, poles).
     // (face index, owner) -> [(par, vertex)]
     let mut lreg: HashMap<(usize, Owner), Vec<(f64, usize)>> = HashMap::new();
