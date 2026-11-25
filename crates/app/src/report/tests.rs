@@ -51,7 +51,7 @@ fn contents(model: bool) -> Contents {
             vec![ModelFile {
                 name: "model/tube.step".into(),
                 size: 5,
-                data: Data::Bytes(b"STEP;".to_vec()),
+                data: Data::Bytes(b"STEP;".to_vec().into()),
             }]
         } else {
             vec![]
@@ -157,7 +157,75 @@ fn zip_holds_exactly_the_listed_files() {
         std::io::Read::read_to_string(&mut z.by_name("steps.json").unwrap(), &mut steps).unwrap();
         assert!(steps.contains(STEPS_MARK));
     }
-    assert!(!dir.path().join("r-true.zip.part").exists());
+    let left: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".part"))
+        .collect();
+    assert!(left.is_empty(), "temporary files left: {left:?}");
+}
+
+#[test]
+fn listing_and_collecting_never_copy_the_model() {
+    // The dialog lists the files every frame; a scene archive can be
+    // hundreds of MB, so its bytes must be shared, not copied.
+    let mut c = contents(false);
+    let bytes: std::sync::Arc<[u8]> = vec![7u8; 1 << 20].into();
+    c.model.push(ModelFile {
+        name: "model/scene.ntopo".into(),
+        size: bytes.len() as u64,
+        data: Data::Bytes(bytes.clone()),
+    });
+    let ch = Choices {
+        model: true,
+        ..Default::default()
+    };
+    let ps = parts(&c, &ch);
+    let p = ps.iter().find(|p| p.name == "model/scene.ntopo").unwrap();
+    match &p.data {
+        Data::Bytes(b) => assert!(std::sync::Arc::ptr_eq(b, &bytes), "copied"),
+        Data::File(_) => panic!("bytes expected"),
+    }
+    let r = rows(&c, &ch);
+    let row = r.iter().find(|r| r.name == "model/scene.ntopo").unwrap();
+    assert_eq!(row.size, Some(1 << 20));
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_never_writes_through_a_planted_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = dir.path().join("victim.txt");
+    std::fs::write(&victim, "keep me").unwrap();
+    let path = dir.path().join("report.zip");
+    // The old fixed temporary name, and the final name, both planted.
+    std::os::unix::fs::symlink(&victim, dir.path().join("report.zip.part")).unwrap();
+    std::os::unix::fs::symlink(&victim, &path).unwrap();
+    write_zip(&path, &parts(&contents(false), &Choices::default())).unwrap();
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+    // The zip replaced the link at the chosen name.
+    assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert!(zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).is_ok());
+}
+
+#[test]
+fn private_temp_dirs_are_fresh_and_private() {
+    let a = private_temp_dir().unwrap();
+    let b = private_temp_dir().unwrap();
+    assert_ne!(a.path(), b.path());
+    assert!(
+        std::fs::read_dir(a.path()).unwrap().next().is_none(),
+        "empty"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(a.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "readable by others: {mode:o}");
+    }
+    let p = a.path().to_path_buf();
+    drop(a);
+    assert!(!p.exists(), "removed when dropped");
 }
 
 #[test]
@@ -196,6 +264,87 @@ fn steps_json_is_an_op_script() {
     assert_eq!(v["input"], "bracket.step");
     assert_eq!(v["session"][0]["outcome"], "refused");
     assert!(!s.steps_json().contains("/some/where"), "no folders");
+}
+
+#[test]
+fn steps_json_replays_for_any_user_name() {
+    use newtopo_core::doc::Axis;
+    let ops = [
+        Op::Connect {
+            patches: newtopo_core::ops::PatchSel {
+                faces: vec![1, 2],
+                ..Default::default()
+            },
+            a: 4,
+            b: 0,
+            start_on_seam: false,
+        },
+        Op::SetSymmetry {
+            on: true,
+            axes: vec![Axis::X],
+        },
+        Op::SetUnits { units: "mm".into() },
+        Op::RenameBody {
+            body: newtopo_kernel::BodyId(0),
+            name: "pat's part".into(),
+        },
+    ];
+    let mut s = Session::default();
+    for op in &ops {
+        s.op(op, Outcome::Applied);
+    }
+    // User names that match field names, op names and enum values.
+    for user in ["pat", "op", "ops", "connect", "version", "X", "mm", "a"] {
+        let sc = scrub::Scrubber::new(Some(&format!("/home/{user}")), Some(user));
+        let json = s.steps_json_with(&sc);
+        let script: newtopo_core::Script =
+            serde_json::from_str(&json).unwrap_or_else(|e| panic!("user {user:?}: {e}\n{json}"));
+        assert_eq!(script.ops[..3], ops[..3], "user {user:?}");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["session"][0]["step"], "op", "user {user:?}");
+        assert_eq!(v["session"][0]["op"]["op"], "connect", "user {user:?}");
+    }
+    // What the user typed is still scrubbed.
+    let sc = scrub::Scrubber::new(Some("/home/pat"), Some("pat"));
+    let script: newtopo_core::Script = serde_json::from_str(&s.steps_json_with(&sc)).unwrap();
+    match &script.ops[3] {
+        Op::RenameBody { name, .. } => assert_eq!(name, "<user>'s part"),
+        o => panic!("{o:?}"),
+    }
+    assert!(!s.steps_json_with(&sc).contains("pat's"));
+}
+
+#[test]
+fn capture_runs_never_touch_the_session_files() {
+    use crate::launch::parse_args;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // A crash waiting from the last session.
+    assert!(crash::begin_session(d).is_none());
+    crash::write_crash_file(d, &Failure::from_message("waiting crash"));
+    for args in [
+        vec!["--window-shot", "/tmp/x.png"],
+        vec!["--shot", "/tmp/shots"],
+    ] {
+        let args: Vec<String> = args.into_iter().map(String::from).collect();
+        let st = start(&parse_args(&args), Some(d));
+        assert!(st.data.is_none(), "{args:?}: no log or crash file");
+        assert!(st.previous_crash.is_none(), "{args:?}");
+        assert!(
+            d.join("crash.json").exists(),
+            "{args:?} consumed the report"
+        );
+    }
+    // The next interactive start offers it, and the session is marked as
+    // running right away, before any window or graphics start-up.
+    let st = start(&parse_args(&[]), Some(d));
+    assert_eq!(st.data.as_deref(), Some(d));
+    assert_eq!(st.previous_crash.unwrap().message, "waiting crash");
+    assert!(d.join("session.lock").exists());
+    // So a panic during start-up (before the app exists) is offered next time.
+    crash::write_crash_file(d, &Failure::from_message("startup panic"));
+    let st = start(&parse_args(&[]), Some(d));
+    assert_eq!(st.previous_crash.unwrap().message, "startup panic");
 }
 
 #[test]

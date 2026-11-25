@@ -289,10 +289,10 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut s = Shooter::new()?;
     let gpu = shot_gpu(&s);
-    // A stand-in for an imported CAD file, outside the screenshot folder.
-    let fixtures = std::env::temp_dir().join("newtopo-shot-fixtures");
-    std::fs::create_dir_all(&fixtures)?;
-    let model = fixtures.join("tube_v3.step");
+    // A stand-in for an imported CAD file, outside the screenshot folder,
+    // in a fresh private folder (never a predictable shared path).
+    let fixtures = crate::report::private_temp_dir()?;
+    let model = fixtures.path().join("tube_v3.step");
     std::fs::write(&model, vec![b'x'; 1_250_000])?;
     let (gpu2, gpu3, model2) = (gpu.clone(), gpu.clone(), model.clone());
     let scenarios: Vec<(&str, Setup, Vec<Vec<Event>>)> = vec![

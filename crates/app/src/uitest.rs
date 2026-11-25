@@ -930,23 +930,64 @@ fn saving_writes_the_listed_files_and_issue_links_them() {
 }
 
 #[test]
-fn previous_crash_is_offered_at_start() {
+fn previous_crash_is_offered_after_recovery_with_the_recovered_scene() {
     use crate::report::crash;
+    use crate::report::ui::Origin;
     let dir = tempfile::tempdir().unwrap();
-    let paths = Paths {
-        config: None,
-        data: Some(dir.path().to_path_buf()),
-    };
-    // A session that crashed: marker left, crash file written.
+    // A session that crashed: marker left, crash file written. `main`
+    // finds it before the app starts.
     assert!(crash::begin_session(dir.path()).is_none());
     crash::write_crash_file(dir.path(), &crash::Failure::from_message("hard crash"));
-    let ctx = egui::Context::default();
-    let app = App::new(&ctx, paths.clone(), false, false);
-    let d = app.st.ui.report.as_ref().expect("offered");
-    assert_eq!(d.origin, crate::report::ui::Origin::PreviousCrash);
+    let prev = crash::begin_session(dir.path()).expect("crash found");
+    let mut h = Harness::new(false);
+    h.app.st.ui.recovery = vec![dir.path().join("scene.ntopo.autosave")];
+    h.app.st.offer_previous_crash(prev);
+    // `main` sets the adapter after `App::new`.
+    h.app.st.gpu_info = Some(crate::report::system::GpuInfo {
+        name: "TestGPU 9000".into(),
+        backend: "Vulkan".into(),
+        device_type: "DiscreteGpu".into(),
+        driver: "1.0".into(),
+    });
+    h.frames(2);
+    assert!(
+        h.app.st.ui.report.is_none(),
+        "the recovery dialog comes first"
+    );
+    // The user recovers the scene.
+    h.app.st.ui.recovery.clear();
+    h.app.st.doc.set_scene(
+        newtopo_core::scene::Scene::new(newtopo_kernel::default_kernel()),
+        None,
+    );
+    h.frames(2);
+    let d = h.app.st.ui.report.as_ref().expect("offered");
+    assert_eq!(d.origin, Origin::PreviousCrash);
     assert_eq!(d.failure().unwrap().message, "hard crash");
-    // This session is running now; a clean exit means no offer next time.
-    crash::end_session(dir.path());
-    let app = App::new(&ctx, paths, false, false);
-    assert!(app.st.ui.report.is_none());
+    assert!(d.has_model(), "the recovered scene can be attached");
+    assert!(
+        d.contents.system.contains("TestGPU 9000"),
+        "{}",
+        d.contents.system
+    );
+    // Offered once.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.app.st.ui.report.is_none());
+}
+
+#[test]
+fn a_cancelled_or_failed_save_does_not_open_the_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::new(false);
+    let _ = crate::docstate::guard(|| panic!("failed save test"));
+    h.frames(2);
+    let d = h.app.st.ui.report.as_mut().expect("open");
+    d.save_to = Some(dir.path().join("no/such/folder/report.zip"));
+    h.app.st.open_issue();
+    assert!(
+        h.app.st.opened_urls.is_empty(),
+        "no page asking for a missing file"
+    );
+    assert!(h.app.st.ui.report.as_ref().unwrap().saved.is_none());
 }

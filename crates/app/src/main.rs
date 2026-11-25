@@ -101,9 +101,14 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let launch = launch::parse_args(&args);
     // Interactive runs log to the data directory and keep a crash file
-    // there; screenshot runs touch nothing on disk (SPEC §5.11).
+    // there; screenshot runs touch nothing on disk (SPEC §5.11). The
+    // session starts here, before the window and graphics, so a panic
+    // during start-up is offered at the next start too.
     let paths = prefs::Paths::user();
-    let data = paths.data.clone().filter(|_| launch.shot.is_none());
+    let report::Startup {
+        data,
+        previous_crash,
+    } = report::start(&launch, paths.data.as_deref());
     report::log::init(data.as_deref());
     report::crash::install_hook();
     if let Some(d) = &data {
@@ -166,6 +171,10 @@ fn main() -> eframe::Result {
             );
             let mut app = app::App::new(&cc.egui_ctx, paths, gpu_ok, false);
             app.st.gpu_info = gpu;
+            app.st.crash_session = data;
+            if let Some(f) = previous_crash {
+                app.st.offer_previous_crash(f);
+            }
             if sample {
                 app.st.load_sample();
             }

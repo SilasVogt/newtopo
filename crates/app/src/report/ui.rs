@@ -64,7 +64,7 @@ impl ReportDialog {
     }
 
     /// Whether "The model" can be switched on at all.
-    fn has_model(&self) -> bool {
+    pub(crate) fn has_model(&self) -> bool {
         !self.contents.model.is_empty() || self.scene_title.is_some()
     }
 
@@ -146,8 +146,16 @@ impl AppState {
     }
 
     /// Failures caught since the last frame: log them, and open the dialog
-    /// for the first one not reported yet (once per failure).
+    /// for the first one not reported yet (once per failure). The previous
+    /// session's crash is offered once the autosave recovery is done, so the
+    /// report sees the recovered scene and the graphics adapter.
     pub fn poll_failures(&mut self) {
+        if self.ui.recovery.is_empty()
+            && self.ui.report.is_none()
+            && let Some(f) = self.previous_crash.take()
+        {
+            self.open_report(Some(f), Origin::PreviousCrash);
+        }
         for f in crash::take_caught() {
             if !self.reported.insert(f.key()) {
                 continue;
@@ -175,12 +183,15 @@ impl AppState {
             d.scene = SceneCopy::Failed;
             return;
         };
-        let tmp = std::env::temp_dir().join(format!("newtopo-report-{}.ntopo", std::process::id()));
-        let r = self
-            .doc
-            .save_copy(&tmp)
-            .and_then(|()| std::fs::read(&tmp).map_err(|e| e.to_string()));
-        let _ = std::fs::remove_file(&tmp);
+        // A private folder: the scene must not be readable by other users
+        // of the machine while it is copied.
+        let r = super::private_temp_dir()
+            .map_err(|e| e.to_string())
+            .and_then(|dir| {
+                let tmp = dir.path().join("scene.ntopo");
+                self.doc.save_copy(&tmp)?;
+                std::fs::read(&tmp).map_err(|e| e.to_string())
+            });
         let Some(d) = self.ui.report.as_mut() else {
             return;
         };
@@ -189,7 +200,7 @@ impl AppState {
                 d.contents.model.push(ModelFile {
                     name: format!("model/{title}.ntopo"),
                     size: bytes.len() as u64,
-                    data: Data::Bytes(bytes),
+                    data: Data::Bytes(bytes.into()),
                 });
                 d.scene = SceneCopy::Done;
             }
@@ -256,8 +267,10 @@ impl AppState {
             .report
             .as_ref()
             .is_some_and(|d| d.saved_current().is_none());
-        if unsaved {
-            self.save_report();
+        // Cancelled or failed: the issue text would ask for a file that
+        // doesn't exist.
+        if unsaved && self.save_report().is_none() {
+            return;
         }
         let Some(d) = self.ui.report.as_ref() else {
             return;

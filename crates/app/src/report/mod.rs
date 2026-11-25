@@ -42,6 +42,32 @@ const PROMPT_ERROR_LINES: usize = 60;
 const MAX_OPS: usize = 5000;
 const MAX_EVENTS: usize = 10000;
 
+// ------------------------------------------------------------ start-up
+
+/// What [`start`] found.
+#[derive(Debug, Default)]
+pub struct Startup {
+    /// Where this run logs and keeps its crash file; `None` for capture runs.
+    pub data: Option<PathBuf>,
+    /// The previous session's crash, to offer once the app is up.
+    pub previous_crash: Option<Failure>,
+}
+
+/// Start the crash-report session, before the window and graphics start
+/// (a panic there must find the session marker). Capture runs (`--shot`,
+/// `--window-shot`) get no data folder: no log file, no marker, and a crash
+/// report waiting from an earlier session stays for the next real start.
+pub fn start(launch: &crate::launch::LaunchArgs, data: Option<&Path>) -> Startup {
+    let data = data
+        .filter(|_| launch.shot.is_none() && launch.window_shot.is_none())
+        .map(Path::to_path_buf);
+    let previous_crash = data.as_deref().and_then(crash::begin_session);
+    Startup {
+        data,
+        previous_crash,
+    }
+}
+
 // ------------------------------------------------------------ build facts
 
 /// The git commit this build was made from, when the build knew it.
@@ -170,18 +196,42 @@ impl Outcome {
     }
 }
 
+/// One entry of the session timeline.
+#[derive(Clone, Debug)]
+enum Event {
+    Op(Op, Outcome),
+    /// "undo", "redo", "apply_preview", …
+    Step(&'static str),
+    /// A step about a file: (step, file name, already scrubbed).
+    File(&'static str, String),
+}
+
 /// This session's steps, for `steps.json`: every op the user ran with its
 /// outcome, plus undo/redo, preview apply/discard and imports, in order.
 #[derive(Clone, Debug, Default)]
 pub struct Session {
     /// Applied and failed ops, in order (script-compatible).
     ops: Vec<Op>,
-    events: Vec<serde_json::Value>,
+    events: Vec<Event>,
     /// File names of imported CAD files (no folders).
     inputs: Vec<String>,
     /// Full paths of imported CAD files, for "The model".
     pub sources: Vec<PathBuf>,
     truncated: bool,
+}
+
+/// `op` with the text the user typed scrubbed. Only free-text fields
+/// change: field names, op names and enum values stay as they are, so the
+/// script still reads back whatever the user name is.
+fn scrub_op(op: &Op, s: &scrub::Scrubber) -> Op {
+    let mut op = op.clone();
+    match &mut op {
+        Op::RenameBody { name, .. } | Op::CreateLayer { name } | Op::RenameLayer { name, .. } => {
+            *name = s.scrub(name)
+        }
+        _ => {}
+    }
+    op
 }
 
 impl Session {
@@ -190,12 +240,12 @@ impl Session {
         self.ops.len()
     }
 
-    fn push_event(&mut self, v: serde_json::Value) {
+    fn push_event(&mut self, e: Event) {
         if self.events.len() >= MAX_EVENTS {
             self.truncated = true;
             return;
         }
-        self.events.push(v);
+        self.events.push(e);
     }
 
     pub fn op(&mut self, op: &Op, outcome: Outcome) {
@@ -208,25 +258,20 @@ impl Session {
             }
             self.ops.push(op.clone());
         }
-        let op_json = serde_json::to_value(op).unwrap_or(serde_json::Value::Null);
-        self.push_event(serde_json::json!({
-            "step": "op",
-            "op": op_json,
-            "outcome": outcome.as_str(),
-        }));
+        self.push_event(Event::Op(op.clone(), outcome));
     }
 
     /// A step without an op: "undo", "redo", "apply_preview", …
-    pub fn event(&mut self, step: &str) {
+    pub fn event(&mut self, step: &'static str) {
         ::log::info!("{step}");
-        self.push_event(serde_json::json!({ "step": step }));
+        self.push_event(Event::Step(step));
     }
 
     /// A step about a file (import, open): only its name is recorded.
-    pub fn file_event(&mut self, step: &str, path: &Path) {
+    pub fn file_event(&mut self, step: &'static str, path: &Path) {
         let name = file_name(path);
         ::log::info!("{step}: {name}");
-        self.push_event(serde_json::json!({ "step": step, "file": name }));
+        self.push_event(Event::File(step, name));
     }
 
     /// A CAD import finished.
@@ -244,11 +289,32 @@ impl Session {
     /// `steps.json`: an op script (`newtopo-cli run` reads `version`,
     /// `input` and `ops`) plus the full `session` timeline.
     pub fn steps_json(&self) -> String {
+        self.steps_json_with(scrub::Scrubber::current())
+    }
+
+    /// [`Session::steps_json`] with a given scrubber. The user's text is
+    /// scrubbed field by field before serializing (never the JSON as a
+    /// whole, which would also rewrite field and op names).
+    fn steps_json_with(&self, s: &scrub::Scrubber) -> String {
+        let ops: Vec<Op> = self.ops.iter().map(|o| scrub_op(o, s)).collect();
+        let events: Vec<serde_json::Value> = self
+            .events
+            .iter()
+            .map(|e| match e {
+                Event::Op(op, outcome) => serde_json::json!({
+                    "step": "op",
+                    "op": scrub_op(op, s),
+                    "outcome": outcome.as_str(),
+                }),
+                Event::Step(step) => serde_json::json!({ "step": step }),
+                Event::File(step, name) => serde_json::json!({ "step": step, "file": name }),
+            })
+            .collect();
         let v = serde_json::json!({
             "version": 1,
             "input": self.inputs.first(),
-            "ops": self.ops,
-            "session": self.events,
+            "ops": ops,
+            "session": events,
             "inputs": self.inputs,
             "truncated": self.truncated,
             "note": "`ops` lists every op that was applied (or failed) in order, \
@@ -256,7 +322,7 @@ impl Session {
                      `session` is the full timeline, including refused ops, undo, \
                      redo and discarded previews, which `run` does not replay.",
         });
-        scrub(&serde_json::to_string_pretty(&v).unwrap_or_default())
+        serde_json::to_string_pretty(&v).unwrap_or_default()
     }
 }
 
@@ -295,7 +361,9 @@ impl Default for Choices {
 /// Where a part's bytes come from.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
-    Bytes(Vec<u8>),
+    /// Shared, so listing or collecting the report's files never copies a
+    /// (possibly large) scene archive.
+    Bytes(std::sync::Arc<[u8]>),
     /// A file on disk, read when the zip is written.
     File(PathBuf),
 }
@@ -314,7 +382,7 @@ impl Part {
         Part {
             name: name.into(),
             size: s.len() as u64,
-            data: Data::Bytes(s.into_bytes()),
+            data: Data::Bytes(s.into_bytes().into()),
         }
     }
 }
@@ -444,49 +512,70 @@ pub fn rows(c: &Contents, ch: &Choices) -> Vec<Row> {
 }
 
 /// Write the report zip. Files that can no longer be read are noted in
-/// `missing.txt` instead.
+/// `missing.txt` instead. The zip is written to a fresh temporary file
+/// created exclusively next to `path` (a planted file or link there is
+/// never opened), then renamed over `path`.
 pub fn write_zip(path: &Path, parts: &[Part]) -> Result<(), String> {
-    let tmp = path.with_extension("zip.part");
-    let r = (|| -> Result<(), String> {
-        let file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        let mut zip = zip::ZipWriter::new(file);
-        let opts = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        let mut missing = Vec::new();
-        for p in parts {
-            let bytes = match &p.data {
-                Data::Bytes(b) => b.clone(),
-                Data::File(f) => match std::fs::read(f) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        missing.push(format!("{}: {e}", p.name));
-                        continue;
-                    }
-                },
-            };
-            zip.start_file(p.name.as_str(), opts)
-                .map_err(|e| e.to_string())?;
-            zip.write_all(&bytes).map_err(|e| e.to_string())?;
-        }
-        if !missing.is_empty() {
-            zip.start_file("missing.txt", opts)
-                .map_err(|e| e.to_string())?;
-            let text = scrub(&format!(
-                "These files could not be read when the report was saved:\n{}\n",
-                missing.join("\n")
-            ));
-            zip.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-        }
-        zip.finish().map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    match r {
-        Ok(()) => std::fs::rename(&tmp, path).map_err(|e| e.to_string()),
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let tmp = tempfile::Builder::new()
+        .prefix(".newtopo-report-")
+        .suffix(".zip.part")
+        .tempfile_in(dir)
+        .map_err(|e| e.to_string())?;
+    let file = tmp.reopen().map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let mut missing = Vec::new();
+    for p in parts {
+        let read;
+        let bytes: &[u8] = match &p.data {
+            Data::Bytes(b) => b,
+            Data::File(f) => match std::fs::read(f) {
+                Ok(b) => {
+                    read = b;
+                    &read
+                }
+                Err(e) => {
+                    missing.push(format!("{}: {e}", p.name));
+                    continue;
+                }
+            },
+        };
+        zip.start_file(p.name.as_str(), opts)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(bytes).map_err(|e| e.to_string())?;
     }
+    if !missing.is_empty() {
+        zip.start_file("missing.txt", opts)
+            .map_err(|e| e.to_string())?;
+        let text = scrub(&format!(
+            "These files could not be read when the report was saved:\n{}\n",
+            missing.join("\n")
+        ));
+        zip.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    // Dropping `tmp` on an error above removes the temporary file.
+    tmp.persist(path).map_err(|e| e.error.to_string())?;
+    Ok(())
+}
+
+/// A fresh temporary folder only this user can read (0700 on Unix), for
+/// copies of the user's files that must not sit in the shared temp folder.
+/// Removed when dropped.
+pub fn private_temp_dir() -> std::io::Result<tempfile::TempDir> {
+    let mut b = tempfile::Builder::new();
+    b.prefix("newtopo-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        b.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    b.tempdir()
 }
 
 /// "1.2 MB", "31 KB", "512 B".

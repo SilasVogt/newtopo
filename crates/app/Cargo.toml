@@ -34,13 +34,11 @@ ureq.workspace = true
 open.workspace = true
 sysinfo.workspace = true
 zip.workspace = true
+tempfile.workspace = true
 
 # Windows: embed packaging/icons/newtopo.ico as the executable's icon.
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [[bin]]
 name = "newtopo"

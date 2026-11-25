@@ -120,26 +120,41 @@ fn starts_path(s: &str) -> bool {
     }
 }
 
+/// Words after a path that are still looked at for a later separator.
+const MAX_PATH_WORDS: usize = 8;
+
 /// Byte length of the absolute path at the start of `s`, if one starts
-/// there. A path may contain single spaces when the next word continues
-/// it with another separator (`/home/a/My Parts/x.step`).
+/// there. A path may contain folder and file names with single spaces:
+/// it runs on through space-separated words up to the last one that
+/// continues it with another separator (`/mnt/Top Secret Client/x.step`).
+/// Sentence punctuation at the end of a word ends the path there.
 fn path_len(s: &str) -> Option<usize> {
     if !starts_path(s) {
         return None;
     }
     // `<` and `>` stay inside: the scrubber's `<user>` can be part of a path.
     let stop = |c: char| c.is_whitespace() || "\"'|`()[]{}".contains(c);
+    let ends_sentence = |w: &str| w.ends_with(['.', ',', ';', ':', '!', '?']);
     let mut end = s.find(stop).unwrap_or(s.len());
-    loop {
-        let rest = &s[end..];
-        let Some(after) = rest.strip_prefix(' ') else {
+    if ends_sentence(&s[..end]) {
+        return Some(end);
+    }
+    // Look ahead word by word; commit up to the last word with a separator.
+    let mut probe = end;
+    for _ in 0..MAX_PATH_WORDS {
+        let Some(after) = s[probe..].strip_prefix(' ') else {
             break;
         };
         let word_end = after.find(stop).unwrap_or(after.len());
         let word = &after[..word_end];
-        if word.contains(['/', '\\']) && !starts_path(word) {
-            end += 1 + word_end;
-        } else {
+        if word.is_empty() || starts_path(word) {
+            break;
+        }
+        probe += 1 + word_end;
+        if word.contains(['/', '\\']) {
+            end = probe;
+        }
+        if ends_sentence(word) {
             break;
         }
     }
@@ -268,6 +283,28 @@ mod tests {
         assert_eq!(
             redact_dirs("in '/srv/My Parts/x.step' now"),
             "in '…/x.step' now"
+        );
+        // Several words in one folder name, as in an open error.
+        assert_eq!(
+            redact_dirs("failed opening /mnt/Top Secret Client/part.step"),
+            "failed opening …/part.step"
+        );
+        assert_eq!(
+            redact_dirs("read /home/a/My Big Old Parts/sub dir/x.step: not found"),
+            "read …/x.step: not found"
+        );
+        assert_eq!(
+            redact_dirs(r"C:\Users\x\Client Work Files\a b.step failed"),
+            r"…/a b.step failed"
+        );
+        // A path ends at the end of a sentence; later words are kept.
+        assert_eq!(
+            redact_dirs("saved /a/b.step. Then it went to c/d"),
+            "saved …/b.step. Then it went to c/d"
+        );
+        assert_eq!(
+            redact_dirs("opened /a/b.step because it was there"),
+            "opened …/b.step because it was there"
         );
         // Code locations, URLs, fractions and relative paths stay.
         for keep in [

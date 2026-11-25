@@ -252,6 +252,22 @@ pub struct AppState {
     pub display: crate::report::system::Display,
     /// Report links opened (screenshot and test runs only record them).
     pub opened_urls: Vec<String>,
+    /// The data folder of the crash-report session `main` started
+    /// (`session.lock`); a clean exit ends it. `None` in capture and test
+    /// runs, which never touch the marker or the crash file.
+    pub crash_session: Option<PathBuf>,
+    /// The previous session's crash, offered after the recovery dialog.
+    pub previous_crash: Option<crate::report::crash::Failure>,
+}
+
+impl AppState {
+    /// The last session ended in this crash: offer a report for it once the
+    /// recovery dialog (which has priority) is done.
+    pub fn offer_previous_crash(&mut self, f: crate::report::crash::Failure) {
+        log::warn!("the previous session ended in a crash: {}", f.message);
+        self.reported.insert(f.key());
+        self.previous_crash = Some(f);
+    }
 }
 
 pub struct App {
@@ -289,12 +305,6 @@ impl App {
             vec![]
         } else {
             crate::jobs::find_recoverable(&paths, &prefs)
-        };
-        // Did the last session end in a crash? Offer a report (after the
-        // recovery dialog, which has priority).
-        let previous_crash = match (&paths.data, screenshot_mode) {
-            (Some(d), false) => crate::report::crash::begin_session(d),
-            _ => None,
         };
         let mut st = AppState {
             paths,
@@ -342,13 +352,10 @@ impl App {
             gpu_info: None,
             display: Default::default(),
             opened_urls: Vec::new(),
+            crash_session: None,
+            previous_crash: None,
         };
         st.ui.recovery = recovery;
-        if let Some(f) = previous_crash {
-            log::warn!("the previous session ended in a crash: {}", f.message);
-            st.reported.insert(f.key());
-            st.open_report(Some(f), crate::report::ui::Origin::PreviousCrash);
-        }
         st.view.camera.up = st.prefs.up;
         App {
             st,
@@ -516,7 +523,7 @@ impl App {
             crate::jobs::remove_autosaves(st);
         }
         log::info!("newtopo exiting");
-        if let Some(d) = &st.paths.data {
+        if let Some(d) = &st.crash_session {
             crate::report::crash::end_session(d);
         }
     }
