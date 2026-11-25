@@ -301,14 +301,11 @@ pub fn know_file(path: &Path) {
 /// `text` with every known folder (see [`know_dir`]) replaced by `…`, so
 /// only the file name after it remains.
 pub fn strip_known(text: &str) -> String {
-    // Copied out so nothing runs while the lock is held, and never waited
-    // for: the panic hook logs, and logging strips known folders. When the
-    // list is busy, `redact_dirs` still removes the folders of the line.
-    let dirs = match known().try_lock() {
-        Ok(k) => k.clone(),
-        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().clone(),
-        Err(std::sync::TryLockError::WouldBlock) => Vec::new(),
-    };
+    // Copied out so nothing runs while the lock is held. Waiting for it is
+    // safe: the only other holder is `know_dir`, whose locked part neither
+    // logs nor panics, so the panic hook (which logs) cannot find it held
+    // by its own thread. Skipping a busy list would let a folder through.
+    let dirs = known().lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut s = text.to_string();
     for d in &dirs {
         s = replace_dir(&s, d);
