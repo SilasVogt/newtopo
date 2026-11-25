@@ -666,8 +666,10 @@ feature.
   `~/.local/share/newtopo/`, Windows `%APPDATA%\newtopo\data\`, macOS
   `~/Library/Application Support/newtopo/`), moved to `newtopo.log.1` at
   1 MiB (one old file kept), plus the last 2,000 lines in memory. If the
-  file cannot be rotated, nothing more is written to it (the lines in
-  memory carry on), so it never grows past that bound. It
+  file cannot be moved aside it is emptied instead, and if that fails too
+  nothing more is written to it, so it never grows past that bound. An
+  oversized file that cannot be rotated at start is left alone and not
+  written this session. It
   records app start (version, commit, platform, graphics adapter), imports,
   every applied, refused or failed op (name and outcome, no geometry),
   undo/redo, preview apply/discard, open, save, autosave, export and
@@ -712,7 +714,11 @@ feature.
 - **Report contents** (one `newtopo-report-<date>.zip`):
   - always: `error.txt` (message, what the user was doing, location,
     thread, time, version, commit, backtrace) and `log.txt` (the end of the
-    log file, at most 256 KiB, earlier sessions included);
+    log file, at most 256 KiB, earlier sessions included; when the file
+    may lack lines of this session, because it could not be opened,
+    rotated or written, the lines kept in memory follow after a marker
+    line. A report offered at the next start after a crash reads only
+    the file, so in that state it can lack the crashed session's log);
   - **Steps taken** (on by default): `steps.json`, an op script
     (`version`, `input`, `ops`, §10) for the scene open when the report is
     made, which `newtopo-cli run` replays (`input` is the first CAD file

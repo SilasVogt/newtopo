@@ -237,10 +237,13 @@ fn missing_model_files_are_noted_not_fatal() {
     let path = dir.path().join("r.zip");
     let not_saved = write_zip(&path, &ps).unwrap();
     assert_eq!(not_saved, ["model/gone.step"], "the caller is told");
-    let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
-    assert!(z.by_name("missing.txt").is_ok());
-    assert!(z.by_name("model/gone.step").is_err());
-    assert!(z.by_name("error.txt").is_ok(), "the rest is saved");
+    {
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        assert!(z.by_name("missing.txt").is_ok());
+        assert!(z.by_name("model/gone.step").is_err());
+        assert!(z.by_name("error.txt").is_ok(), "the rest is saved");
+        // Closed here: Windows does not replace a file that is open.
+    }
     // Nothing missing: nothing reported.
     let ok = write_zip(&path, &ps[..1]).unwrap();
     assert!(ok.is_empty());

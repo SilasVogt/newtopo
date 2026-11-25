@@ -65,9 +65,13 @@ struct LogFile {
     path: PathBuf,
     file: std::fs::File,
     size: u64,
-    /// A rotation failed: nothing more is written, so the file stays
-    /// bounded. The in-memory ring carries on.
+    /// The file could be neither rotated nor emptied: nothing more is
+    /// written, so it stays bounded. The in-memory ring carries on.
     stopped: bool,
+    /// A line of this session may be missing from the file (it was
+    /// emptied, a write failed, or it stopped). A report then adds the
+    /// lines in memory (see [`report_log`]).
+    gap: bool,
 }
 
 impl LogFile {
@@ -89,6 +93,7 @@ impl LogFile {
             file,
             size,
             stopped: false,
+            gap: false,
         })
     }
 
@@ -97,24 +102,33 @@ impl LogFile {
             return;
         }
         if self.size > MAX_FILE {
-            if !rotate(&self.path) {
-                self.stopped = true;
-                return;
+            let rotated = rotate(&self.path);
+            // A full file that cannot be moved aside is emptied instead:
+            // the older lines are lost, the file stays bounded and keeps
+            // this session's lines from here on.
+            let mut open = std::fs::OpenOptions::new();
+            if rotated {
+                open.create(true).append(true);
+            } else {
+                self.gap = true;
+                open.write(true).truncate(true);
             }
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.path)
-            {
+            match open.open(&self.path) {
                 Ok(f) => {
                     self.file = f;
                     self.size = 0;
                 }
-                Err(_) => return,
+                Err(_) => {
+                    self.stopped = true;
+                    self.gap = true;
+                    return;
+                }
             }
         }
         if writeln!(self.file, "{line}").is_ok() {
             self.size += line.len() as u64 + 1;
+        } else {
+            self.gap = true;
         }
     }
 }
@@ -148,7 +162,24 @@ fn wanted(level: log::Level, target: &str) -> bool {
 struct AppLogger {
     stderr: env_logger::Logger,
     file: Mutex<Option<LogFile>>,
+    /// A log file was wanted but could not be opened.
+    no_file: bool,
 }
+
+/// Whether a line of this session may be missing from the log file.
+fn file_gap() -> bool {
+    LOGGER.get().is_some_and(|l| {
+        l.no_file
+            || l.file
+                .lock()
+                .map(|f| f.as_ref().is_some_and(|f| f.gap))
+                .unwrap_or(true)
+    })
+}
+
+/// Stands between the log file's text and the lines kept in memory when
+/// the file may lack lines of this session.
+pub const GAP_MARKER: &str = "--- the log file was not being written; the lines below were kept in memory (some may repeat) ---";
 
 static LOGGER: OnceLock<AppLogger> = OnceLock::new();
 
@@ -189,10 +220,12 @@ pub fn init(data: Option<&Path>) {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).build();
     let max = stderr.filter().max(log::LevelFilter::Info);
     let file = data.and_then(|d| LogFile::open(log_file(d)));
+    let no_file = data.is_some() && file.is_none();
     if LOGGER
         .set(AppLogger {
             stderr,
             file: Mutex::new(file),
+            no_file,
         })
         .is_err()
     {
@@ -204,9 +237,15 @@ pub fn init(data: Option<&Path>) {
 }
 
 /// The log for a report: the end of the log file (this and earlier
-/// sessions) when there is one, else the in-memory lines. At most
+/// sessions) when there is one, else the in-memory lines. When the file may
+/// lack lines of this session (it could not be opened, rotated or written),
+/// the in-memory lines follow it after [`GAP_MARKER`]. At most
 /// [`REPORT_LOG_BYTES`], cut at a line start.
 pub fn report_log(data: Option<&Path>) -> String {
+    report_log_from(data, file_gap(), &recent_lines())
+}
+
+fn report_log_from(data: Option<&Path>, gap: bool, ring: &[String]) -> String {
     let from_file = data.and_then(|d| {
         let path = log_file(d);
         let cur = std::fs::read(&path).ok()?;
@@ -218,11 +257,20 @@ pub fn report_log(data: Option<&Path>) -> String {
         all.extend_from_slice(&cur);
         Some(String::from_utf8_lossy(&all).into_owned())
     });
-    let text = from_file.unwrap_or_else(|| {
-        let mut s = recent_lines().join("\n");
-        s.push('\n');
-        s
-    });
+    let mut memory = ring.join("\n");
+    memory.push('\n');
+    let text = match from_file {
+        Some(mut file) if gap => {
+            if !file.ends_with('\n') && !file.is_empty() {
+                file.push('\n');
+            }
+            // The memory lines must survive the cut below.
+            let keep = REPORT_LOG_BYTES.saturating_sub(memory.len() + GAP_MARKER.len() + 1);
+            format!("{}{GAP_MARKER}\n{memory}", tail(&file, keep))
+        }
+        Some(file) => file,
+        None => memory,
+    };
     // Lines are scrubbed when written; scrub again in case the file came
     // from an older build or the home directory changed.
     tail(&scrub(&text), REPORT_LOG_BYTES)
@@ -262,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_rotation_stops_the_file_instead_of_growing_it() {
+    fn a_failed_rotation_keeps_the_file_bounded_and_the_report_complete() {
         let dir = tempfile::tempdir().unwrap();
         let path = log_file(dir.path());
         // Something that cannot be replaced sits where the old log goes.
@@ -275,9 +323,51 @@ mod tests {
         }
         let cur = std::fs::metadata(&path).unwrap().len();
         assert!(cur <= MAX_FILE + 2000, "current file {cur}");
-        assert!(f.stopped);
-        // An oversized file that cannot be rotated is not opened at all.
-        assert!(LogFile::open(path).is_none());
+        assert!(f.gap, "lines were dropped from the file");
+        assert!(!f.stopped, "the emptied file is written again");
+        f.write_line("after the failed rotation");
+        drop(f);
+        // The file has the line; the report also adds what memory kept.
+        let ring = vec!["kept in memory".to_string()];
+        let log = report_log_from(Some(dir.path()), true, &ring);
+        assert!(log.contains("after the failed rotation"));
+        assert!(log.contains(GAP_MARKER));
+        assert!(log.ends_with("kept in memory\n"));
+        assert!(log.len() <= REPORT_LOG_BYTES);
+    }
+
+    #[test]
+    fn a_log_file_that_cannot_be_opened_does_not_hide_this_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = log_file(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // An oversized file from earlier sessions that cannot be rotated.
+        std::fs::create_dir_all(path.with_extension("log.1").join("keep")).unwrap();
+        let mut old = "earlier session\n".repeat((MAX_FILE as usize / 16) + 10);
+        old.push_str("last line of the earlier session\n");
+        std::fs::write(&path, &old).unwrap();
+        assert!(LogFile::open(path.clone()).is_none());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), old.len() as u64);
+        let ring = vec!["logged this session".to_string()];
+        let log = report_log_from(Some(dir.path()), true, &ring);
+        let marker = log.find(GAP_MARKER).expect("marker");
+        assert!(log[..marker].contains("last line of the earlier session"));
+        assert!(log[marker..].contains("logged this session"));
+        assert!(log.len() <= REPORT_LOG_BYTES);
+        // Without a gap the file alone is the log, as before.
+        let log = report_log_from(Some(dir.path()), false, &ring);
+        assert!(!log.contains(GAP_MARKER) && !log.contains("logged this session"));
+    }
+
+    #[test]
+    fn a_failed_write_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = log_file(dir.path());
+        let mut f = LogFile::open(path.clone()).unwrap();
+        // A handle that cannot be written to.
+        f.file = std::fs::File::open(&path).unwrap();
+        f.write_line("lost");
+        assert!(f.gap);
     }
 
     #[test]
