@@ -1307,9 +1307,11 @@ never back to rules; while a body has mesh edits its rules are locked.
 - **Keep CAD and hard edges** in the tool panel is the Preserve toggle pair
   (both together).
 - Refused with a reason: empty mesh, invalid mesh (first problem named),
-  parameters out of range, empty selection, a selected pair that is not an
-  edge, a vertex that is not in the mesh, "all feature runs" on a mesh
-  without feature edges.
+  parameters out of range, an empty edge or vertex selection where the tool
+  runs on one (scopes that need no selection, such as Merge by Distance on
+  the whole mesh, "all feature runs" and Decimate, are not refused for it),
+  a selected pair that is not an edge, a vertex that is not in the mesh,
+  "all feature runs" on a mesh without feature edges.
 
 #### 9.5.3 Decimate
 Reduces the polygon count while keeping the shape, boundaries and feature
@@ -1328,8 +1330,10 @@ edges.
 - **Collapse**: repeatedly merge one vertex into a neighbour, cheapest first,
   until the triangle count reaches the target or no valid merge is left.
   The kept vertex stays where it is (*subset placement*), so every result
-  vertex is a baked vertex that lies exactly on the CAD surface and keeps its
-  exact normal. Cost: the quadric error of the merged vertex (sum of squared
+  vertex is an input vertex at its input position with its input normals.
+  On a mesh fresh from the bake that means exactly on the CAD surface with
+  exact normals; vertices an earlier edit moved off it (Relax, say) stay
+  where that edit put them. Cost: the quadric error of the merged vertex (sum of squared
   distances to the planes of the polygons around both vertices, plus
   constraint planes along feature edges so feature curves keep their shape).
   Merge targets are edge neighbours and, for free vertices with "Keep quads",
@@ -1382,9 +1386,14 @@ the seam between them has too many, too close or zig-zagging vertices.
   merge, the one with the stronger role is kept (corner over feature curve
   over free, run vertex over others, then the lower index).
 - **Shape guard** (slide and dissolve): a step may not leave its worst
-  neighbouring polygon worse than it was before or than a minimum shape
-  (smallest corner about 14° for a quad), so dissolving a long straight run
-  can't pile all cross edges into one fan of slivers. Merging close
+  neighbouring polygon worse than it was before or than a minimum shape,
+  so dissolving a long straight run can't pile all cross edges into one fan
+  of slivers. A polygon's shape is the smallest sine of its corner angles
+  relative to the ideal one (1 for a quad or larger polygon, sin 60° for a
+  triangle; a reflex corner counts as 0), and the minimum is 0.25. Because
+  it is a sine, it limits both sides of 90°: every quad corner between about
+  14.5° and 165.5° (a triangle's between about 12.5° and 167.5°), so nearly
+  straight corners count as badly as sharp ones. Merging close
   vertices and short edges is exempt: it removes degenerate shapes and may
   pass through worse ones.
 - **Slide**: a free run vertex moves along one of its non-run edges (at most

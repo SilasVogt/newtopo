@@ -759,7 +759,8 @@ impl AppState {
                 return true;
             }
         }
-        if resp.double_clicked() && !nav_primary {
+        // Face double-clicks (strips) use the CAD handling, as face clicks do.
+        if resp.double_clicked() && !nav_primary && !matches!(self.hover, Some(Hover::Face(..))) {
             if let Some(Hover::Edge(i, _)) = self.hover
                 && let Some(Pick::Edge(b, e)) =
                     self.pick_of_hover(Hover::Edge(i, Default::default()))
@@ -933,6 +934,10 @@ impl AppState {
         m: &EditMesh,
         input: &Input,
     ) -> Result<EditOutcome, Refusal> {
+        #[cfg(test)]
+        if COMPUTE_PANICS.get() {
+            panic!("test: mesh computation failed");
+        }
         let p = &self.mm.params;
         let preserve = p.preserve();
         let edges = |i: &Input| match i {
@@ -1185,6 +1190,10 @@ impl AppState {
                 Err(e) => {
                     failed = true;
                     refusals.push(e);
+                    // So does a redo that fails.
+                    if amend {
+                        changes.push((*b, had.then(|| (**m).clone())));
+                    }
                 }
             }
         }
@@ -2106,6 +2115,12 @@ fn tool_grid(
         });
     }
     out
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: mesh computations panic while set (the engine-failure path).
+    pub static COMPUTE_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]

@@ -1362,6 +1362,78 @@ fn saving_keeps_the_last_mesh_edit_adjustable() {
     assert!(!has_edits(&h, b), "still one undo step");
 }
 
+/// Double-clicking a face in mesh mode selects its face strip (the CAD
+/// handling runs; mesh mode only takes edge double-clicks).
+#[test]
+fn double_click_selects_a_face_strip_in_mesh_mode() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    h.key(Key::Num3, Modifiers::NONE);
+    assert_eq!(h.app.st.mode, Mode::Face);
+    h.frames(2);
+    // The polygon nearest the camera, clicked at its centre.
+    let m = h.app.st.mm.meshes[&b].clone();
+    let eye = h.app.st.view.camera.eye();
+    let centre = |p: &newtopo_core::meshedit::EditPolygon| {
+        p.verts
+            .iter()
+            .map(|&v| m.positions[v as usize])
+            .sum::<glam::DVec3>()
+            / p.verts.len() as f64
+    };
+    let (pi, c) = m
+        .polygons
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, centre(p)))
+        .min_by(|x, y| x.1.distance(eye).total_cmp(&y.1.distance(eye)))
+        .unwrap();
+    let at = h.screen_of(c.as_vec3());
+    h.frame(vec![Event::PointerMoved(at)]);
+    h.frames(1);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.frame(vec![Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+    }
+    h.frames(1);
+    let faces = &h.app.st.sel.faces;
+    assert!(
+        faces.contains(&(b, FaceId(pi as u32))),
+        "the clicked polygon {pi}: {faces:?}"
+    );
+    assert!(faces.len() > 1, "a strip, not one face: {faces:?}");
+}
+
+/// A redo with new values that panics puts the body back to the mesh the
+/// edit started from, as a refused redo does, not the old values' result.
+#[test]
+fn a_failed_value_change_restores_the_starting_mesh() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    let start = mesh_of(&h, b).unwrap();
+    // A second Relax starts from the first one's result.
+    h.app.st.run(Cmd::MeshRelax);
+    assert_ne!(*mesh_of(&h, b).unwrap(), *start);
+    crate::meshmode::COMPUTE_PANICS.set(true);
+    h.app.st.mm.params.relax_iterations = 25;
+    h.app.st.mesh_params_changed();
+    crate::meshmode::COMPUTE_PANICS.set(false);
+    assert_eq!(
+        *mesh_of(&h, b).unwrap(),
+        *start,
+        "the failed redo restores the starting mesh"
+    );
+}
+
 /// Edge Slide at factor 0 changes nothing; raising the factor then makes
 /// the slide's own step instead of rewriting the edit before it.
 #[test]
