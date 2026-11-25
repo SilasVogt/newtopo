@@ -598,3 +598,82 @@ fn occt_torus_slices_are_stable() {
     ];
     assert_eq!(got, expected);
 }
+
+fn unnamed_parts(b: &mut newtopo_testmodels::Builder) -> anyhow::Result<newtopo_testmodels::Nodes> {
+    use glam::{DMat4, DVec3};
+    use newtopo_testmodels::node;
+    let widget = b.boxed(DVec3::ZERO, DVec3::splat(10.0))? as i32;
+    let clamp = b.boxed(DVec3::ZERO, DVec3::new(10.0, 20.0, 5.0))? as i32;
+    let a = b.boxed(DVec3::new(30.0, 0.0, 0.0), DVec3::splat(10.0))?;
+    let c = b.boxed(DVec3::new(60.0, 0.0, 0.0), DVec3::splat(10.0))?;
+    let pair = b.fuse(a, &[c])? as i32;
+    let at = |y: f64| DMat4::from_translation(DVec3::Y * y);
+    Ok(vec![
+        node("Rig", -1, -1, "", None, DMat4::IDENTITY),
+        node("Widget", 0, widget, "", None, at(0.0)),
+        node("Clamp", 0, clamp, "", None, at(30.0)),
+        // Two separate solids in one shape without a name.
+        node("", 0, pair, "", None, at(60.0)),
+    ])
+}
+
+/// Sets the name of the instance (not of the part) called `from`.
+fn rename_instance(step: &str, from: &str, to: &str) -> String {
+    let key = "NEXT_ASSEMBLY_USAGE_OCCURRENCE";
+    let mut out = String::new();
+    let mut rest = step;
+    let mut hits = 0;
+    while let Some(i) = rest.find(key) {
+        let end = i + rest[i..].find(';').unwrap();
+        let entity = &rest[i..end];
+        out.push_str(&rest[..i]);
+        if entity.contains(&format!("'{from}'")) {
+            hits += 1;
+            out.push_str(&entity.replace(&format!("'{from}'"), &format!("'{to}'")));
+        } else {
+            out.push_str(entity);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    assert!(hits > 0, "no instance named {from}");
+    out
+}
+
+#[test]
+fn unnamed_instances_fall_back_and_real_names_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unnamed.step");
+    let model = newtopo_testmodels::RefModel {
+        name: "unnamed",
+        build: unnamed_parts,
+    };
+    newtopo_testmodels::write_model(&model, &path).unwrap();
+    // An instance with the placeholder an OCCT-based exporter writes for
+    // an unnamed one, and one whose real name happens to start like it.
+    let step = std::fs::read_to_string(&path).unwrap();
+    let step = rename_instance(&step, "Widget", "=>[0:1:1:7]");
+    let step = rename_instance(&step, "Clamp", "=>[Bracket]");
+    std::fs::write(&path, step).unwrap();
+
+    let k = OcctKernel::new();
+    let file = k.import_file(&path, CadFormat::Step, 0.001).unwrap();
+    let names: Vec<String> = file.bodies.iter().map(|b| b.attrs.name.clone()).collect();
+    assert_eq!(names.len(), 4, "{names:?}");
+    assert!(
+        names.contains(&"Widget".to_string()),
+        "prototype name: {names:?}"
+    );
+    assert!(
+        names.contains(&"=>[Bracket]".to_string()),
+        "real name: {names:?}"
+    );
+    for n in &names {
+        // No placeholder, and split parts never show up as a bare ".1".
+        assert!(!n.starts_with('.') && !n.starts_with("=>[0:"), "{names:?}");
+    }
+    let mut unique = names.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "{names:?}");
+}
