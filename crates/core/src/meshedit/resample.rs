@@ -84,15 +84,39 @@ pub fn resample(
     mark_selection(&mut w, sel)?;
     let cos_corner = p.corner_angle_deg.to_radians().cos();
     let all = runs(&w);
+    let added = all
+        .iter()
+        .map(|(chain, closed)| new_vertices(&w, chain, *closed, p.spacing, cos_corner))
+        .fold(0usize, usize::saturating_add);
+    #[cfg(test)]
+    LAST_ESTIMATE.with(|c| c.set(added));
+    if added > MAX_NEW_VERTICES {
+        return Err(Refusal::new(format!(
+            "Resampling would add about {added} vertices, more than the \
+             {MAX_NEW_VERTICES} this tool adds at once: select fewer edges, or \
+             use a smaller count or a longer edge length"
+        )));
+    }
     let mut skipped = Vec::new();
     let mut done = 0;
+    w.log_changes = true;
     for (chain, closed) in &all {
-        let saved = w.clone();
+        // `check_around` looks at what this run changes. A run that fails
+        // is undone from the undo record: a copy of the whole working mesh
+        // per run made long selections (Ctrl+A) quadratic.
+        w.changed.clear();
+        #[cfg(test)]
+        let copy = w.clone();
+        w.begin_undo();
         match resample_run(&mut w, chain, *closed, p, cos_corner) {
-            Ok(true) => done += 1,
-            Ok(false) => {}
+            Ok(changed) => {
+                w.commit_undo();
+                done += changed as usize;
+            }
             Err(reason) => {
-                w = saved;
+                w.rollback();
+                #[cfg(test)]
+                assert!(w.same_state(&copy), "the undo differs from a copy");
                 skipped.push(format!(
                     "run from vertex {} ({} vertices): {reason}",
                     chain[0],
@@ -122,24 +146,19 @@ pub fn resample(
     })
 }
 
-/// Resample one run. `Ok(false)`: nothing to change.
-fn resample_run(
-    w: &mut Work,
+/// One run split at its fixed vertices: the vertex sequence, the pieces
+/// (index ranges into it) and the number of edges each piece gets.
+type RunPlan = (Vec<u32>, Vec<(usize, usize)>, Vec<usize>);
+
+/// How a run of at least two vertices would be resampled. Reads only.
+fn run_plan(
+    w: &Work,
     chain: &[u32],
     closed: bool,
-    params: &ResampleParams,
+    spacing: Spacing,
     cos_corner: f64,
-) -> Result<bool, String> {
-    let spacing = params.spacing;
+) -> Result<RunPlan, String> {
     let n = chain.len();
-    if n < 2 {
-        return Ok(false);
-    }
-    // Runs are found up front; one that an earlier run changed (it can only
-    // share fixed vertices with it, so this is a safety net) is skipped.
-    if chain.iter().any(|&v| !w.valive[v as usize]) {
-        return Err("an earlier run removed one of its vertices".into());
-    }
     let at = |i: usize| chain[i % n];
     let fixed_at = |i: usize| -> bool {
         if !closed && (i == 0 || i == n - 1) {
@@ -217,18 +236,42 @@ fn resample_run(
     };
     // A closed run keeps at least three vertices: give the missing edges to
     // the longest pieces.
-    while closed && segs.iter().sum::<usize>() < 3 {
+    // (Sums saturate: a tiny edge length gives counts near `usize::MAX`.)
+    let total = |segs: &[usize]| segs.iter().fold(0usize, |a, &b| a.saturating_add(b));
+    while closed && total(&segs) < 3 {
         let i = (0..segs.len())
             .max_by(|&a, &b| (lens[a] / segs[a] as f64).total_cmp(&(lens[b] / segs[b] as f64)))
             .unwrap_or(0);
         segs[i] += 1;
     }
-    let edges: usize = segs.iter().sum();
+    let edges = total(&segs);
     if edges > MAX_RUN_EDGES {
         return Err(format!(
             "{edges} edges on one run is more than the {MAX_RUN_EDGES} this tool makes"
         ));
     }
+    Ok((seq, pieces, segs))
+}
+
+/// Resample one run. `Ok(false)`: nothing to change.
+fn resample_run(
+    w: &mut Work,
+    chain: &[u32],
+    closed: bool,
+    params: &ResampleParams,
+    cos_corner: f64,
+) -> Result<bool, String> {
+    let spacing = params.spacing;
+    let n = chain.len();
+    if n < 2 {
+        return Ok(false);
+    }
+    // Runs are found up front; one that an earlier run changed (it can only
+    // share fixed vertices with it, so this is a safety net) is skipped.
+    if chain.iter().any(|&v| !w.valive[v as usize]) {
+        return Err("an earlier run removed one of its vertices".into());
+    }
+    let (seq, pieces, segs) = run_plan(w, chain, closed, spacing, cos_corner)?;
     let mut changed = false;
     for (pi, &(a, b)) in pieces.iter().enumerate() {
         changed |= resample_piece(w, &seq[a..=b], segs[pi])?;
@@ -246,6 +289,37 @@ fn resample_run(
 
 /// Most edges one run may get (keeps the matching tables small).
 const MAX_RUN_EDGES: usize = 10_000;
+
+/// Most vertices one Resample may add, estimated before it starts (SPEC
+/// §9.5.5). The app runs the tool on its UI thread, again on every
+/// parameter change; a large count on a whole-mesh selection would
+/// otherwise stall it.
+pub(crate) const MAX_NEW_VERTICES: usize = 100_000;
+
+#[cfg(test)]
+thread_local! {
+    /// The estimate the last `resample` on this thread made (tests).
+    pub(crate) static LAST_ESTIMATE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Vertices resampling one run would add, piece by piece as the run is
+/// really split at its fixed vertices. Pieces that lose vertices do not
+/// offset the ones that gain, so this never underestimates what
+/// [`MAX_NEW_VERTICES`] guards against. A run that would be skipped adds
+/// nothing.
+fn new_vertices(w: &Work, chain: &[u32], closed: bool, spacing: Spacing, cos_corner: f64) -> usize {
+    if chain.len() < 2 {
+        return 0;
+    }
+    match run_plan(w, chain, closed, spacing, cos_corner) {
+        Ok((_, pieces, segs)) => pieces
+            .iter()
+            .zip(&segs)
+            .map(|(&(a, b), &k)| k.saturating_sub(b - a))
+            .fold(0usize, usize::saturating_add),
+        Err(_) => 0,
+    }
+}
 
 /// Resample the open piece `verts` (ends fixed) to `k` edges.
 fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String> {
@@ -359,7 +433,9 @@ fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String>
     Ok(true)
 }
 
-/// Every polygon touching the run keeps a valid shape and orientation.
+/// Every polygon touching the run, and every polygon the run changed,
+/// keeps a valid shape and orientation. (Polygons earlier runs changed
+/// passed this when they last changed.)
 fn check_around(w: &Work, seq: &[u32]) -> Result<(), String> {
     let mut polys: Vec<u32> = Vec::new();
     for &v in seq {
@@ -367,8 +443,8 @@ fn check_around(w: &Work, seq: &[u32]) -> Result<(), String> {
             polys.extend_from_slice(&w.vpolys[v as usize]);
         }
     }
-    // Inserted vertices are reached through their polygons' touched flag.
-    polys.extend(w.alive_polys().filter(|&q| w.polys[q as usize].touched));
+    // Inserted vertices are reached through the change log.
+    polys.extend_from_slice(&w.changed);
     polys.sort_unstable();
     polys.dedup();
     for q in polys {

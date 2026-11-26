@@ -82,7 +82,7 @@ impl Prov {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WPoly {
     pub verts: Vec<u32>,
     pub group: FaceId,
@@ -132,6 +132,25 @@ impl MergePlan {
     }
 }
 
+/// First values of everything changed since [`Work::begin_undo`], so a
+/// failed step can be undone at a cost proportional to what it changed
+/// (a full copy of the working mesh per step is quadratic over the many
+/// steps of one tool run). Entries created since are cut off instead.
+#[derive(Clone, Debug, Default)]
+struct Undo {
+    nv: usize,
+    np: usize,
+    nw: usize,
+    nchanged: usize,
+    /// Position, provenance, alive.
+    verts: HashMap<u32, (DVec3, Prov, bool)>,
+    vpolys: HashMap<u32, Vec<u32>>,
+    polys: HashMap<u32, WPoly>,
+    wit: HashMap<u32, Vec<u32>>,
+    flags: HashMap<(u32, u32), Option<u8>>,
+    pending: HashMap<u32, bool>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Work<'a> {
     pub src: &'a EditMesh,
@@ -159,6 +178,25 @@ pub(crate) struct Work<'a> {
     /// A polygon corner that was one of them takes its exact normal and UV
     /// from that input corner.
     pub aliases: HashMap<u32, Vec<u32>>,
+    /// Polygons whose refill ([`super::refill::fill_touched_ngons`]) may
+    /// come out differently than the last time it was tried: every polygon
+    /// changed since (verts or a corner position), and every polygon that
+    /// holds both ends of an edge that appeared or went away (the fill
+    /// refuses diagonals that are already edges). A tool that refills after
+    /// every step so tries each polygon once per change instead of
+    /// rescanning the mesh. Kept up to date by the `Work` methods; code that
+    /// rewrites polygons directly must call [`Work::touch`] and
+    /// [`Work::note_edges`] itself.
+    pub refill_pending: BTreeSet<u32>,
+    /// Polygons changed (touched) since the tool last cleared this, in
+    /// order, may repeat. Only kept while [`Work::log_changes`] is on.
+    pub changed: Vec<u32>,
+    /// Keep the change log. Off by default: only a tool that reads the log
+    /// (Resample) turns it on, so tools that move the same vertices many
+    /// times (Relax) do not grow it.
+    pub log_changes: bool,
+    /// Open undo record ([`Work::begin_undo`]).
+    undo: Option<Box<Undo>>,
     src_normals: HashMap<(u32, FaceId), DVec3>,
     /// Per input vertex: the distinct (chart, uv) pairs of its corners.
     src_uvs: HashMap<u32, Vec<(u32, DVec2)>>,
@@ -253,6 +291,10 @@ impl<'a> Work<'a> {
             min_cos: 0.5,
             min_quality: 0.0,
             aliases: HashMap::new(),
+            refill_pending: BTreeSet::new(),
+            changed: Vec::new(),
+            log_changes: false,
+            undo: None,
             src_normals,
             src_uvs,
         }
@@ -641,16 +683,214 @@ impl<'a> Work<'a> {
         assign_witnesses(&w, &surf, &self.src.positions, self.max_dev)
     }
 
+    // ------------------------------------------------------------------ undo
+
+    /// Start recording the first value of everything the `Work` methods
+    /// change, for [`Work::rollback`]. While a record is open, change the
+    /// working mesh only through its methods (direct writes to its fields
+    /// are not recorded). Replaces an open record.
+    pub fn begin_undo(&mut self) {
+        self.undo = Some(Box::new(Undo {
+            nv: self.pos.len(),
+            np: self.polys.len(),
+            nw: self.witnesses.as_ref().map_or(0, |w| w.len()),
+            nchanged: self.changed.len(),
+            ..Undo::default()
+        }));
+    }
+
+    /// Keep the changes since [`Work::begin_undo`].
+    pub fn commit_undo(&mut self) {
+        self.undo = None;
+    }
+
+    /// Undo everything since [`Work::begin_undo`] and close the record.
+    pub fn rollback(&mut self) {
+        let Some(u) = self.undo.take() else {
+            return;
+        };
+        self.pos.truncate(u.nv);
+        self.prov.truncate(u.nv);
+        self.valive.truncate(u.nv);
+        self.pinned.truncate(u.nv);
+        self.vpolys.truncate(u.nv);
+        self.polys.truncate(u.np);
+        self.changed.truncate(u.nchanged);
+        for (x, (p, pr, alive)) in u.verts {
+            self.pos[x as usize] = p;
+            self.prov[x as usize] = pr;
+            self.valive[x as usize] = alive;
+        }
+        for (x, vp) in u.vpolys {
+            self.vpolys[x as usize] = vp;
+        }
+        for (q, p) in u.polys {
+            self.polys[q as usize] = p;
+        }
+        if let Some(ws) = &mut self.witnesses {
+            ws.truncate(u.nw);
+            for (q, w) in u.wit {
+                ws[q as usize] = w;
+            }
+        }
+        for (k, f) in u.flags {
+            match f {
+                Some(f) => self.flags.insert(k, f),
+                None => self.flags.remove(&k),
+            };
+        }
+        for (q, was) in u.pending {
+            if was {
+                self.refill_pending.insert(q);
+            } else {
+                self.refill_pending.remove(&q);
+            }
+        }
+    }
+
+    fn save_vert(&mut self, x: u32) {
+        if let Some(u) = &mut self.undo
+            && (x as usize) < u.nv
+        {
+            let i = x as usize;
+            u.verts
+                .entry(x)
+                .or_insert_with(|| (self.pos[i], self.prov[i].clone(), self.valive[i]));
+        }
+    }
+
+    fn save_vpolys(&mut self, x: u32) {
+        if let Some(u) = &mut self.undo
+            && (x as usize) < u.nv
+        {
+            u.vpolys
+                .entry(x)
+                .or_insert_with(|| self.vpolys[x as usize].clone());
+        }
+    }
+
+    fn save_poly(&mut self, q: u32) {
+        if let Some(u) = &mut self.undo
+            && (q as usize) < u.np
+        {
+            u.polys
+                .entry(q)
+                .or_insert_with(|| self.polys[q as usize].clone());
+        }
+    }
+
+    fn save_wit(&mut self, q: u32) {
+        if let (Some(u), Some(ws)) = (&mut self.undo, &self.witnesses)
+            && (q as usize) < u.nw
+        {
+            u.wit.entry(q).or_insert_with(|| ws[q as usize].clone());
+        }
+    }
+
+    /// Witness list of polygon `q`, recorded for undo first.
+    pub fn wit_mut(&mut self, q: u32) -> Option<&mut Vec<u32>> {
+        self.save_wit(q);
+        self.witnesses.as_mut().map(|ws| &mut ws[q as usize])
+    }
+
+    fn save_flag(&mut self, k: (u32, u32)) {
+        if let Some(u) = &mut self.undo {
+            u.flags
+                .entry(k)
+                .or_insert_with(|| self.flags.get(&k).copied());
+        }
+    }
+
+    /// Put polygon `q` on [`Work::refill_pending`] (`on`) or take it off.
+    pub fn set_pending(&mut self, q: u32, on: bool) {
+        if let Some(u) = &mut self.undo {
+            u.pending
+                .entry(q)
+                .or_insert_with(|| self.refill_pending.contains(&q));
+        }
+        if on {
+            self.refill_pending.insert(q);
+        } else {
+            self.refill_pending.remove(&q);
+        }
+    }
+
+    /// Equal working state (tests: undo against a full copy).
+    #[cfg(test)]
+    pub fn same_state(&self, o: &Work) -> bool {
+        self.pos == o.pos
+            && self.prov == o.prov
+            && self.valive == o.valive
+            && self.pinned == o.pinned
+            && self.polys == o.polys
+            && self.vpolys == o.vpolys
+            && self.flags == o.flags
+            && self.witnesses == o.witnesses
+            && self.refill_pending == o.refill_pending
+            && self.changed == o.changed
+    }
+
+    /// Mark polygon `q` changed: its attributes are rebuilt on output, it
+    /// goes on the change log and its refill is due again.
+    pub fn touch(&mut self, q: u32) {
+        self.save_poly(q);
+        self.polys[q as usize].touched = true;
+        if self.log_changes {
+            self.changed.push(q);
+        }
+        self.set_pending(q, true);
+    }
+
+    /// The polygon cycles `old` became `new` (a structural change): every
+    /// live polygon holding both ends of an edge in one but not the other
+    /// has its refill due again (see [`Work::refill_pending`]). Call after
+    /// the vertex → polygon index is up to date.
+    pub fn note_edges<'b>(
+        &mut self,
+        old: impl IntoIterator<Item = &'b [u32]>,
+        new: impl IntoIterator<Item = &'b [u32]>,
+    ) {
+        let edges = |cycles: &mut dyn Iterator<Item = &'b [u32]>| {
+            let mut s = BTreeSet::new();
+            for v in cycles {
+                for i in 0..v.len() {
+                    s.insert(ekey(v[i], v[(i + 1) % v.len()]));
+                }
+            }
+            s
+        };
+        let (a, b) = (edges(&mut old.into_iter()), edges(&mut new.into_iter()));
+        let mut due = Vec::new();
+        for &(x, y) in a.symmetric_difference(&b) {
+            for &q in &self.vpolys[x as usize] {
+                let p = &self.polys[q as usize];
+                if p.alive && p.verts.contains(&y) {
+                    due.push(q);
+                }
+            }
+        }
+        for q in due {
+            self.set_pending(q, true);
+        }
+    }
+
     /// Apply a planned merge. Returns the ids of the polygons that now
     /// replace the affected ones.
     pub fn apply_merge(&mut self, plan: &MergePlan, wit: Vec<(u32, usize)>) -> Vec<u32> {
         let (u, v) = (plan.u, plan.v);
         // Detach affected polygons.
         for &p in &plan.affected {
+            self.save_poly(p);
             for &x in &self.polys[p as usize].verts.clone() {
+                self.save_vpolys(x);
                 self.vpolys[x as usize].retain(|&q| q != p);
             }
         }
+        let old_cycles: Vec<Vec<u32>> = plan
+            .affected
+            .iter()
+            .map(|&p| self.polys[p as usize].verts.clone())
+            .collect();
         let mut new_ids = Vec::new();
         for (i, &p) in plan.affected.iter().enumerate() {
             let parent = self.polys[p as usize].clone();
@@ -658,9 +898,8 @@ impl<'a> Work<'a> {
             for piece in &plan.pieces[i] {
                 let id = if first {
                     first = false;
-                    let w = &mut self.polys[p as usize];
-                    w.verts = piece.clone();
-                    w.touched = true;
+                    self.polys[p as usize].verts = piece.clone();
+                    self.touch(p);
                     p
                 } else {
                     self.polys.push(WPoly {
@@ -668,22 +907,25 @@ impl<'a> Work<'a> {
                         touched: true,
                         ..parent.clone()
                     });
+                    let id = (self.polys.len() - 1) as u32;
+                    self.touch(id);
                     if let Some(ws) = &mut self.witnesses {
                         ws.push(Vec::new());
                     }
-                    (self.polys.len() - 1) as u32
+                    id
                 };
                 new_ids.push(id);
             }
             if first {
                 self.polys[p as usize].alive = false;
             }
-            if let Some(ws) = &mut self.witnesses {
-                ws[p as usize].clear();
+            if let Some(ws) = self.wit_mut(p) {
+                ws.clear();
             }
         }
         for &id in &new_ids {
             for &x in &self.polys[id as usize].verts.clone() {
+                self.save_vpolys(x);
                 let vp = &mut self.vpolys[x as usize];
                 if let Err(at) = vp.binary_search(&id) {
                     vp.insert(at, id);
@@ -691,7 +933,7 @@ impl<'a> Work<'a> {
             }
         }
         // Witnesses: index into [kept pieces in order..., other polys of v].
-        if let Some(ws) = &mut self.witnesses {
+        if self.witnesses.is_some() {
             let aset: HashSet<u32> = plan.affected.iter().copied().collect();
             let mut targets: Vec<u32> = new_ids.clone();
             for &p in &self.vpolys[v as usize] {
@@ -703,10 +945,18 @@ impl<'a> Work<'a> {
             // merge; their order is unchanged (sorted vpolys minus the new).
             for (w, slot) in wit {
                 if let Some(&t) = targets.get(slot) {
-                    ws[t as usize].push(w);
+                    if let Some(ws) = self.wit_mut(t) {
+                        ws.push(w);
+                    }
+                    // The polygon's fill must keep its new witnesses too.
+                    self.set_pending(t, true);
                 }
             }
         }
+        self.note_edges(
+            old_cycles.iter().map(|v| v.as_slice()),
+            plan.kept_pieces().map(|v| v.as_slice()),
+        );
         // Flags: edges of u move to v.
         let moved: Vec<((u32, u32), u8)> = self
             .flags
@@ -717,15 +967,20 @@ impl<'a> Work<'a> {
         let mut moved = moved;
         moved.sort();
         for (k, f) in moved {
+            self.save_flag(k);
             self.flags.remove(&k);
             let w = if k.0 == u { k.1 } else { k.0 };
             if w != v {
+                self.save_flag(ekey(v, w));
                 *self.flags.entry(ekey(v, w)).or_default() |= f;
             }
         }
+        self.save_vert(u);
+        self.save_vpolys(u);
         self.valive[u as usize] = false;
         self.vpolys[u as usize].clear();
         for &d in &plan.dead {
+            self.save_vert(d);
             self.valive[d as usize] = false;
         }
         new_ids
@@ -825,16 +1080,18 @@ impl<'a> Work<'a> {
 
     /// Move `x` (unchecked) and record its provenance.
     pub fn set_position(&mut self, x: u32, p: DVec3, prov: Prov) {
+        self.save_vert(x);
         self.pos[x as usize] = p;
         self.prov[x as usize] = prov;
         for &q in &self.vpolys[x as usize].clone() {
-            self.polys[q as usize].touched = true;
+            self.touch(q);
         }
     }
 
     /// Checked move with witness redistribution. The normal limit is
     /// checked with the normals `prov` gives the moved corner.
     pub fn try_move(&mut self, x: u32, p: DVec3, prov: Prov) -> bool {
+        self.save_vert(x);
         let old = std::mem::replace(&mut self.prov[x as usize], prov);
         if !self.move_ok(x, p) {
             self.prov[x as usize] = old;
@@ -843,12 +1100,16 @@ impl<'a> Work<'a> {
         let prov = self.prov[x as usize].clone();
         let wit = self.move_deviation(x, p).unwrap_or_default();
         let around = self.vpolys[x as usize].clone();
-        if let Some(ws) = &mut self.witnesses {
+        if self.witnesses.is_some() {
             for &q in &around {
-                ws[q as usize].clear();
+                if let Some(ws) = self.wit_mut(q) {
+                    ws.clear();
+                }
             }
             for (w, slot) in wit {
-                ws[around[slot] as usize].push(w);
+                if let Some(ws) = self.wit_mut(around[slot]) {
+                    ws.push(w);
+                }
             }
         }
         self.set_position(x, p, prov);
@@ -868,6 +1129,7 @@ impl<'a> Work<'a> {
             ids.push((self.pos.len() - 1) as u32);
         }
         for q in self.edge_polys(a, b) {
+            self.save_poly(q);
             let w = &mut self.polys[q as usize];
             let n = w.verts.len();
             let i = (0..n)
@@ -883,7 +1145,7 @@ impl<'a> Work<'a> {
             };
             let at = i + 1;
             w.verts.splice(at..at, ins);
-            w.touched = true;
+            self.touch(q);
             for &id in &ids {
                 self.vpolys[id as usize].push(q);
             }
@@ -891,11 +1153,15 @@ impl<'a> Work<'a> {
         for &id in &ids {
             self.vpolys[id as usize].sort_unstable();
         }
+        // a-b is gone; the new edges only reach polygons just touched.
+        self.note_edges([[a, b].as_slice()], []);
+        self.save_flag(ekey(a, b));
         if let Some(f) = self.flags.remove(&ekey(a, b)) {
             let mut chain = vec![a];
             chain.extend_from_slice(&ids);
             chain.push(b);
             for w in chain.windows(2) {
+                self.save_flag(ekey(w[0], w[1]));
                 *self.flags.entry(ekey(w[0], w[1])).or_default() |= f;
             }
         }
@@ -904,25 +1170,21 @@ impl<'a> Work<'a> {
 
     /// Replace polygon `q` with `pieces` (same orientation, same vertices).
     pub fn replace_polygon(&mut self, q: u32, pieces: Vec<Vec<u32>>) {
+        self.save_poly(q);
         let parent = self.polys[q as usize].clone();
         for &x in &parent.verts {
+            self.save_vpolys(x);
             self.vpolys[x as usize].retain(|&p| p != q);
         }
-        let wit = self
-            .witnesses
-            .as_mut()
-            .map(|w| std::mem::take(&mut w[q as usize]));
+        let wit = self.wit_mut(q).map(std::mem::take);
         let mut ids = Vec::new();
         for (i, piece) in pieces.into_iter().enumerate() {
             let id = if i == 0 {
-                let w = &mut self.polys[q as usize];
-                w.verts = piece;
-                w.touched = true;
+                self.polys[q as usize].verts = piece;
                 q
             } else {
                 self.polys.push(WPoly {
                     verts: piece,
-                    touched: true,
                     ..parent.clone()
                 });
                 if let Some(ws) = &mut self.witnesses {
@@ -930,19 +1192,28 @@ impl<'a> Work<'a> {
                 }
                 (self.polys.len() - 1) as u32
             };
+            self.touch(id);
             ids.push(id);
         }
         for &id in &ids {
             for &x in &self.polys[id as usize].verts.clone() {
+                self.save_vpolys(x);
                 let vp = &mut self.vpolys[x as usize];
                 if let Err(at) = vp.binary_search(&id) {
                     vp.insert(at, id);
                 }
             }
         }
-        if let (Some(ws), Some(w)) = (&mut self.witnesses, wit) {
-            ws[ids[0] as usize] = w;
+        if let Some(w) = wit
+            && let Some(ws) = self.wit_mut(ids[0])
+        {
+            *ws = w;
         }
+        let new: Vec<Vec<u32>> = ids
+            .iter()
+            .map(|&id| self.polys[id as usize].verts.clone())
+            .collect();
+        self.note_edges([parent.verts.as_slice()], new.iter().map(|v| v.as_slice()));
     }
 
     // ------------------------------------------------------------- attributes

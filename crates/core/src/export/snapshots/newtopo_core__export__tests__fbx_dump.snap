@@ -15,10 +15,10 @@ FBXHeaderExtension:
     Minute: 0
     Second: 0
     Millisecond: 0
-  Creator: "newtopo 0.1.0"
+  Creator: "newtopo 0.2.0"
 FileId: "newtopo-fbx-7400"
 CreationTime: "2026-01-01 00:00:00:000"
-Creator: "newtopo 0.1.0"
+Creator: "newtopo 0.2.0"
 GlobalSettings:
   Version: 1000
   Properties70:

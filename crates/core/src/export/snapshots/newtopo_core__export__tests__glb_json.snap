@@ -90,7 +90,7 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
     }
   ],
   "asset": {
-    "generator": "newtopo 0.1.0",
+    "generator": "newtopo 0.2.0",
     "version": "2.0"
   },
   "bufferViews": [

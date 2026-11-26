@@ -889,6 +889,144 @@ fn resample_cube_features_stay_on_edges() {
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
 }
 
+/// Resample with every edge selected (Ctrl+A): one run per edge, each
+/// adding vertices to the polygons beside it. Returns the outcome, the
+/// number of runs and how many polygons the refill looked at.
+fn resample_every_edge(n: usize, spacing: Spacing) -> (EditOutcome, usize, usize) {
+    let m = heightfield(n, n, 1.0, |x, y| 0.15 * (3.0 * x).sin() * (2.0 * y).cos());
+    let edges: Vec<[u32; 2]> = m.edges().into_iter().map(|(a, b)| [a, b]).collect();
+    let p = ResampleParams {
+        spacing,
+        ..Default::default()
+    };
+    refill::FILL_ATTEMPTS.with(|c| c.set(0));
+    let r = resample(&m, &Selection::Edges(edges.clone()), &p).unwrap();
+    assert_outcome(&m, &r, "every edge");
+    (r, edges.len(), refill::FILL_ATTEMPTS.with(|c| c.get()))
+}
+
+#[test]
+fn resample_refills_only_what_each_run_changed() {
+    // Each run refills the polygons it changed, not every n-gon an earlier
+    // run grew: the refill work grows with the runs, not runs × n-gons
+    // (that took minutes on real parts of a few hundred vertices).
+    for (n, count) in [(6, 12), (12, 12), (6, 3)] {
+        let (_, runs, attempts) = resample_every_edge(n, Spacing::Count(count));
+        assert!(
+            attempts <= 4 * runs,
+            "{attempts} refill attempts for {runs} runs"
+        );
+    }
+}
+
+#[test]
+fn resample_refuses_to_add_too_many_vertices() {
+    // Ctrl+A on a 12 × 12 grid is 312 runs; 400 vertices each would add
+    // about 124 000.
+    let m = plane(12, 1.0);
+    let edges: Vec<[u32; 2]> = m.edges().into_iter().map(|(a, b)| [a, b]).collect();
+    for spacing in [Spacing::Count(400), Spacing::EdgeLength(1e-5)] {
+        let p = ResampleParams {
+            spacing,
+            ..Default::default()
+        };
+        let err = resample(&m, &Selection::Edges(edges.clone()), &p).unwrap_err();
+        assert!(
+            err.reason.contains("select fewer edges")
+                && err
+                    .reason
+                    .contains(&super::resample::MAX_NEW_VERTICES.to_string()),
+            "{}",
+            err.reason
+        );
+    }
+    // Even spacing adds nothing, whatever the selection.
+    let p = ResampleParams::default();
+    assert!(resample(&m, &Selection::Edges(edges), &p).is_ok());
+}
+
+#[test]
+fn resample_counts_new_vertices_piece_by_piece() {
+    // The border of a 10 x 1 sheet: four pieces between its corners, two
+    // long and two short, 8 edges each. With an edge length that keeps the
+    // border's total at 32 edges, the long sides gain what the short sides
+    // lose; the estimate must count the gain alone.
+    let n = 8;
+    let mut m = plane(n, 1.0);
+    for p in &mut m.positions {
+        p.x *= 10.0;
+    }
+    let border: Vec<[u32; 2]> = m
+        .boundary_edges()
+        .into_iter()
+        .map(|(a, b)| [a, b])
+        .collect();
+    assert_eq!(border.len(), 4 * n);
+    let l = 22.0 / (4 * n) as f64;
+    let p = ResampleParams {
+        spacing: Spacing::EdgeLength(l),
+        ..Default::default()
+    };
+    let _ = resample(&m, &Selection::Edges(border), &p);
+    let long = (10.0 / l).round() as usize;
+    assert!(long > n);
+    assert_eq!(
+        super::resample::LAST_ESTIMATE.with(|c| c.get()),
+        2 * (long - n),
+        "the two long sides, not offset by the two short ones"
+    );
+}
+
+#[test]
+fn resample_survives_an_absurdly_small_edge_length() {
+    // Every piece of the border wants about usize::MAX edges; their sum
+    // must not overflow. Each run is over the per-run limit, so nothing
+    // is resampled.
+    let m = plane(1, 1.0);
+    let border: Vec<[u32; 2]> = m
+        .boundary_edges()
+        .into_iter()
+        .map(|(a, b)| [a, b])
+        .collect();
+    let p = ResampleParams {
+        spacing: Spacing::EdgeLength(1e-20),
+        ..Default::default()
+    };
+    match resample(&m, &Selection::Edges(border), &p) {
+        Ok(r) => {
+            assert_eq!(r.mesh.positions.len(), m.positions.len(), "nothing added");
+            assert!(
+                !r.report.skipped.is_empty(),
+                "the run is reported as skipped"
+            );
+        }
+        Err(e) => assert!(!e.reason.is_empty()),
+    }
+}
+
+#[test]
+fn resample_undoes_a_skipped_run_exactly() {
+    // Count 3 folds the caps beside two of the rims: those runs are undone
+    // from the undo record, which in test builds `resample` compares with
+    // a full copy of the working mesh taken before the run.
+    let m = cylinder(24, 3, 1.0, 2.0);
+    let p = ResampleParams {
+        spacing: Spacing::Count(3),
+        ..Default::default()
+    };
+    let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
+    assert_outcome(&m, &r, "rims 3");
+    assert_eq!(r.report.skipped.len(), 2, "{:?}", r.report.skipped);
+    assert!(
+        r.report
+            .skipped
+            .iter()
+            .all(|s| s.contains("fold or flatten")),
+        "{:?}",
+        r.report.skipped
+    );
+}
+
 // -------------------------------------------------------------- vertex slide
 
 fn toward(x: u32, y: u32) -> SlideEdge {
@@ -1598,6 +1736,31 @@ fn planar_never_joins_into_a_duplicate_polygon() {
     );
     if let Ok(r) = r {
         assert_eq!(same_corners(&r.mesh), None, "{:?}", r.mesh.polygons);
+    }
+}
+
+#[test]
+fn merge_never_cuts_a_tube_through_a_pocket() {
+    // Torus rings of 4 (outer, top, inner, bottom). At distance 1.5 the
+    // first two rings each lose top and bottom to their outer vertex (√2
+    // away; inner is 2 away), all merges inside the surface. The two quads
+    // between those rings then lie on the same corners with opposite
+    // winding: cancelling that pocket would cut the tube and cap both ends
+    // (a sphere, χ 0 → 2) while every local check passes.
+    let m = torus(6, 4, 3.0, 1.0);
+    let p = MergeParams {
+        distance: 1.5,
+        ..MergeParams::default()
+    };
+    for position in [MergePosition::Centroid, MergePosition::Survivor] {
+        let p = MergeParams { position, ..p };
+        let r = merge_by_distance(&m, &VertexScope::Vertices((0..8).collect()), &p).unwrap();
+        assert_outcome(&m, &r, "pinched torus");
+        assert_eq!(r.mesh, m, "{position:?}: {}", r.report.message);
+        assert_eq!(
+            r.report.skipped,
+            ["2 cluster(s) not merged: it would change the topology of the mesh"]
+        );
     }
 }
 

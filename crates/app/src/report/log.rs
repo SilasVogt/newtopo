@@ -257,23 +257,27 @@ fn report_log_from(data: Option<&Path>, gap: bool, ring: &[String]) -> String {
         all.extend_from_slice(&cur);
         Some(String::from_utf8_lossy(&all).into_owned())
     });
-    let mut memory = ring.join("\n");
+    // Lines are scrubbed when written; scrub again in case the file came
+    // from an older build or the home directory changed. The parts are
+    // scrubbed before they are measured, so the cuts below are final.
+    let mut memory = scrub(&ring.join("\n"));
     memory.push('\n');
-    let text = match from_file {
-        Some(mut file) if gap => {
+    match from_file {
+        Some(file) if gap => {
+            let mut file = scrub(&file);
             if !file.ends_with('\n') && !file.is_empty() {
                 file.push('\n');
             }
-            // The memory lines must survive the cut below.
-            let keep = REPORT_LOG_BYTES.saturating_sub(memory.len() + GAP_MARKER.len() + 1);
-            format!("{}{GAP_MARKER}\n{memory}", tail(&file, keep))
+            // The marker always stays, then the newest lines in memory,
+            // then as much of the file as still fits.
+            let room = REPORT_LOG_BYTES - (GAP_MARKER.len() + 1);
+            let memory = tail(&memory, room);
+            let file = tail(&file, room - memory.len());
+            format!("{file}{GAP_MARKER}\n{memory}")
         }
-        Some(file) => file,
-        None => memory,
-    };
-    // Lines are scrubbed when written; scrub again in case the file came
-    // from an older build or the home directory changed.
-    tail(&scrub(&text), REPORT_LOG_BYTES)
+        Some(file) => tail(&scrub(&file), REPORT_LOG_BYTES),
+        None => tail(&memory, REPORT_LOG_BYTES),
+    }
 }
 
 /// The last `max` bytes of `s`, starting at a line.
@@ -286,6 +290,10 @@ pub fn tail(s: &str, max: usize) -> String {
         start += 1;
     }
     let cut = &s[start..];
+    // Already at a line start: nothing to skip.
+    if s[..start].ends_with('\n') {
+        return cut.to_string();
+    }
     match cut.find('\n') {
         Some(i) => cut[i + 1..].to_string(),
         None => cut.to_string(),
@@ -360,6 +368,39 @@ mod tests {
     }
 
     #[test]
+    fn tail_keeps_a_line_that_fits_exactly() {
+        assert_eq!(tail("old\nnewest\n", 7), "newest\n");
+        assert_eq!(tail("old\nnewest\n", 8), "newest\n");
+        assert_eq!(tail("old\nnewest\n", 6), "");
+        assert_eq!(tail("short\n", 100), "short\n");
+    }
+
+    #[test]
+    fn the_marker_survives_a_memory_log_larger_than_the_report() {
+        super::super::scrub::use_test_identity();
+        let dir = tempfile::tempdir().unwrap();
+        let path = log_file(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "from the file\n".repeat(50)).unwrap();
+        let ring: Vec<String> = (0..2000)
+            .map(|i| format!("line {i:04} {}", "m".repeat(130)))
+            .collect();
+        assert!(ring.iter().map(|l| l.len() + 1).sum::<usize>() > REPORT_LOG_BYTES);
+        let log = report_log_from(Some(dir.path()), true, &ring);
+        assert!(log.len() <= REPORT_LOG_BYTES);
+        let marker = log.find(GAP_MARKER).expect("the marker is kept");
+        assert!(
+            log.ends_with(&format!("{}\n", ring[1999])),
+            "the newest line"
+        );
+        // Whole lines only: file lines before the marker, memory lines after.
+        assert!(log[..marker].lines().all(|l| l == "from the file"));
+        let after: Vec<&str> = log[marker..].lines().skip(1).collect();
+        let known: std::collections::HashSet<&str> = ring.iter().map(|l| l.as_str()).collect();
+        assert!(after.len() > 1000 && after.iter().all(|l| known.contains(l)));
+    }
+
+    #[test]
     fn a_failed_write_is_remembered() {
         let dir = tempfile::tempdir().unwrap();
         let path = log_file(dir.path());
@@ -393,7 +434,9 @@ mod tests {
     #[test]
     fn tail_cuts_at_lines() {
         assert_eq!(tail("a\nb\nc\n", 100), "a\nb\nc\n");
-        assert_eq!(tail("aaaa\nbb\ncc\n", 6), "cc\n");
+        // Both lines fit exactly, so both stay.
+        assert_eq!(tail("aaaa\nbb\ncc\n", 6), "bb\ncc\n");
+        assert_eq!(tail("aaaa\nbb\ncc\n", 5), "cc\n");
         assert_eq!(tail("ääää\nö\n", 5), "ö\n");
     }
 }

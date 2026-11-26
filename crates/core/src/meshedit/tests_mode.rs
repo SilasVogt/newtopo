@@ -289,11 +289,33 @@ fn relax_keeps_features_and_refuses_when_nothing_moves() {
     let n = 4;
     let m = plane(n, 1.0);
     let r = relax(&m, &Selection::Edges(row(n, n, 0)), &RelaxParams::default());
-    assert!(r.unwrap_err().reason.contains("Nothing to relax"));
+    let reason = r.unwrap_err().reason;
+    assert!(reason.contains("Nothing to relax"), "{reason}");
+    // A border stays whatever is preserved: no hint at the toggle.
+    assert!(!reason.contains("Keep CAD"), "{reason}");
     // Cube edges: corners and CAD-edge vertices stay.
     let c = cube(3, 1.0);
     let r = relax(&c, &Selection::AllFeatures, &RelaxParams::default());
     assert!(r.is_err());
+    // Selected as edges, they stay while CAD edges are kept (the message
+    // names the panel toggle) and may move once they are not.
+    let cube_edges: Vec<[u32; 2]> = c
+        .flagged
+        .iter()
+        .filter(|e| e.flags.cad)
+        .map(|e| [e.a, e.b])
+        .collect();
+    let sel = Selection::Edges(cube_edges);
+    let reason = relax(&c, &sel, &RelaxParams::default()).unwrap_err().reason;
+    assert!(reason.contains("\"Keep CAD and hard edges\""), "{reason}");
+    let off = RelaxParams {
+        preserve: Preserve {
+            cad_edges: false,
+            hard_edges: false,
+        },
+        ..Default::default()
+    };
+    assert!(relax(&c, &sel, &off).is_ok());
     assert!(
         relax(
             &m,

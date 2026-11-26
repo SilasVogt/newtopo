@@ -11,7 +11,7 @@ triangles using only existing vertices, and you export FBX, OBJ or glTF, or
 send the mesh straight to Blender. Every rule stays editable: change a count
 and the mesh regenerates.
 
-**Status: early access (v0.1).** The product and engineering spec is
+**Status: early access (v0.2).** The product and engineering spec is
 [`SPEC.md`](SPEC.md). What's done and what's still open is tracked in
 [`docs/STATUS.md`](docs/STATUS.md).
 

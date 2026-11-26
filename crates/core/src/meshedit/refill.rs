@@ -8,129 +8,159 @@ use crate::fill::{FillInput, fill_polygon, geom};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+thread_local! {
+    /// Polygons [`fill_touched_ngons`] tried to refill on this thread.
+    pub(crate) static FILL_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Refill every touched polygon with more than four sides (and touched
 /// concave quads) with quads and triangles. Polygons whose fill would add a
 /// diagonal that already exists elsewhere, or would flip, stay as they are.
 /// Returns how many polygons were refilled.
+///
+/// Only polygons in [`Work::refill_pending`] are looked at, in index order
+/// (polygons this pass creates wait for the next one): any other polygon
+/// needs no fill or was tried since it last changed, with the same inputs,
+/// and would fail the same way. So a tool can call this after every step
+/// at a cost proportional to what the step changed.
 pub(crate) fn fill_touched_ngons(w: &mut Work) -> usize {
+    let limit = w.polys.len() as u32;
     let mut count = 0;
-    let ids: Vec<u32> = w
-        .alive_polys()
-        .filter(|&q| {
-            let p = &w.polys[q as usize];
-            p.touched
-                && (p.verts.len() > 4
-                    || p.verts.len() == 4 && !polygon_shape_ok(&w.poly_pos(&p.verts), w.diag))
-        })
-        .collect();
-    for q in ids {
-        let verts = w.polys[q as usize].verts.clone();
-        let pos = w.poly_pos(&verts);
-        let Some(uv) = geom::project_best_fit(&pos) else {
-            continue;
-        };
-        let iso = principal_dirs(&uv);
-        let rank: Vec<u32> = verts.clone();
-        let pieces: Vec<Vec<u32>> = if verts.len() == 4 {
-            // A bad quad (concave, or a straight corner where a triangle
-            // gained a vertex): split along the diagonal that gives the
-            // better-shaped pair of triangles.
-            let split = |a: usize| {
-                vec![
-                    vec![verts[a], verts[(a + 1) % 4], verts[(a + 2) % 4]],
-                    vec![verts[a], verts[(a + 2) % 4], verts[(a + 3) % 4]],
-                ]
-            };
-            let parent = &w.polys[q as usize];
-            let qn = area_vec(&pos).normalize_or_zero();
-            let valid = |ps: &Vec<Vec<u32>>| {
-                ps.iter().all(|p| {
-                    let pp = w.poly_pos(p);
-                    let n = area_vec(&pp).normalize_or_zero();
-                    polygon_shape_ok(&pp, w.diag)
-                        && n.dot(qn) > 0.0
-                        && n.dot(w.reference_normal(p, parent)) >= w.min_cos
-                })
-            };
-            let score = |ps: &Vec<Vec<u32>>| {
-                ps.iter()
-                    .map(|p| quad_quality(&w.poly_pos(p)))
-                    .fold(1.0, f64::min)
-            };
-            let mut best: Option<(f64, Vec<Vec<u32>>)> = None;
-            for c in [split(0), split(1)] {
-                if valid(&c) && best.as_ref().is_none_or(|b| score(&c) > b.0) {
-                    best = Some((score(&c), c));
-                }
-            }
-            match best {
-                Some((_, c)) => c,
-                None => continue,
-            }
-        } else {
-            let res = fill_polygon(&FillInput {
-                uv: &uv,
-                pos: &pos,
-                rank: &rank,
-                iso_dirs: iso,
-            });
-            if res.polys.len() < 2 {
-                continue;
-            }
-            res.polys
-                .iter()
-                .map(|p| p.iter().map(|&i| verts[i as usize]).collect())
-                .collect()
-        };
-        // New diagonals must not already be edges.
-        let own: BTreeSet<(u32, u32)> = (0..verts.len())
-            .map(|i| ekey(verts[i], verts[(i + 1) % verts.len()]))
-            .collect();
-        let mut ok = true;
-        for p in &pieces {
-            for i in 0..p.len() {
-                let (a, b) = (p[i], p[(i + 1) % p.len()]);
-                if !own.contains(&ekey(a, b)) && w.neighbors(a).contains(&b) {
-                    ok = false;
-                }
-            }
-            let pp = w.poly_pos(p);
-            let n = area_vec(&pp).normalize_or_zero();
-            let r = w.reference_normal(p, &w.polys[q as usize]);
-            if !polygon_shape_ok(&pp, w.diag) || n.dot(r) < w.min_cos {
-                ok = false;
-            }
-        }
-        if !ok {
+    let mut next = 0;
+    while let Some(q) = w.refill_pending.range(next..limit).next().copied() {
+        w.set_pending(q, false);
+        next = q + 1;
+        if !needs_fill(w, q) {
             continue;
         }
-        // Witnesses go to their nearest piece and must stay within the
-        // deviation bound of it; otherwise the polygon stays as it was.
-        let wit = w
-            .witnesses
-            .as_ref()
-            .map(|ws| ws[q as usize].clone())
-            .unwrap_or_default();
-        let piece_pos: Vec<Vec<DVec3>> = pieces.iter().map(|p| w.poly_pos(p)).collect();
-        let Some(assigned) = assign_witnesses(&wit, &piece_pos, &w.src.positions, w.max_dev) else {
+        #[cfg(test)]
+        FILL_ATTEMPTS.with(|c| c.set(c.get() + 1));
+        let Some((pieces, wit, assigned)) = plan_fill(w, q) else {
             continue;
         };
         let first_new = w.polys.len() as u32;
         w.replace_polygon(q, pieces);
-        if let Some(ws) = &mut w.witnesses {
-            ws[q as usize].clear();
+        if let Some(ws) = w.wit_mut(q) {
+            ws.clear();
             if assigned.is_empty() {
                 // No bound (infinite): keep them on the first piece.
-                ws[q as usize].extend(wit);
+                ws.extend(wit);
             }
-            for (x, i) in assigned {
-                let id = if i == 0 { q } else { first_new + i as u32 - 1 };
-                ws[id as usize].push(x);
+        }
+        for (x, i) in assigned {
+            let id = if i == 0 { q } else { first_new + i as u32 - 1 };
+            if let Some(ws) = w.wit_mut(id) {
+                ws.push(x);
             }
         }
         count += 1;
     }
     count
+}
+
+/// A live touched polygon with more than four sides, or a bad quad.
+fn needs_fill(w: &Work, q: u32) -> bool {
+    let p = &w.polys[q as usize];
+    p.alive
+        && p.touched
+        && (p.verts.len() > 4
+            || p.verts.len() == 4 && !polygon_shape_ok(&w.poly_pos(&p.verts), w.diag))
+}
+
+/// One refill: the pieces, polygon `q`'s witnesses and their assignment
+/// to the pieces.
+type FillPlan = (Vec<Vec<u32>>, Vec<u32>, Vec<(u32, usize)>);
+
+/// How polygon `q` would be refilled, or `None` if it stays as it is.
+/// Depends only on `q` itself (corners, their positions and provenance,
+/// witnesses) and on which pairs of its corners are already edges.
+fn plan_fill(w: &Work, q: u32) -> Option<FillPlan> {
+    let verts = w.polys[q as usize].verts.clone();
+    let pos = w.poly_pos(&verts);
+    let uv = geom::project_best_fit(&pos)?;
+    let iso = principal_dirs(&uv);
+    let rank: Vec<u32> = verts.clone();
+    let pieces: Vec<Vec<u32>> = if verts.len() == 4 {
+        // A bad quad (concave, or a straight corner where a triangle
+        // gained a vertex): split along the diagonal that gives the
+        // better-shaped pair of triangles.
+        let split = |a: usize| {
+            vec![
+                vec![verts[a], verts[(a + 1) % 4], verts[(a + 2) % 4]],
+                vec![verts[a], verts[(a + 2) % 4], verts[(a + 3) % 4]],
+            ]
+        };
+        let parent = &w.polys[q as usize];
+        let qn = area_vec(&pos).normalize_or_zero();
+        let valid = |ps: &Vec<Vec<u32>>| {
+            ps.iter().all(|p| {
+                let pp = w.poly_pos(p);
+                let n = area_vec(&pp).normalize_or_zero();
+                polygon_shape_ok(&pp, w.diag)
+                    && n.dot(qn) > 0.0
+                    && n.dot(w.reference_normal(p, parent)) >= w.min_cos
+            })
+        };
+        let score = |ps: &Vec<Vec<u32>>| {
+            ps.iter()
+                .map(|p| quad_quality(&w.poly_pos(p)))
+                .fold(1.0, f64::min)
+        };
+        let mut best: Option<(f64, Vec<Vec<u32>>)> = None;
+        for c in [split(0), split(1)] {
+            if valid(&c) && best.as_ref().is_none_or(|b| score(&c) > b.0) {
+                best = Some((score(&c), c));
+            }
+        }
+        best?.1
+    } else {
+        let res = fill_polygon(&FillInput {
+            uv: &uv,
+            pos: &pos,
+            rank: &rank,
+            iso_dirs: iso,
+        });
+        if res.polys.len() < 2 {
+            return None;
+        }
+        res.polys
+            .iter()
+            .map(|p| p.iter().map(|&i| verts[i as usize]).collect())
+            .collect()
+    };
+    // New diagonals must not already be edges.
+    let own: BTreeSet<(u32, u32)> = (0..verts.len())
+        .map(|i| ekey(verts[i], verts[(i + 1) % verts.len()]))
+        .collect();
+    let mut ok = true;
+    for p in &pieces {
+        for i in 0..p.len() {
+            let (a, b) = (p[i], p[(i + 1) % p.len()]);
+            if !own.contains(&ekey(a, b)) && w.neighbors(a).contains(&b) {
+                ok = false;
+            }
+        }
+        let pp = w.poly_pos(p);
+        let n = area_vec(&pp).normalize_or_zero();
+        let r = w.reference_normal(p, &w.polys[q as usize]);
+        if !polygon_shape_ok(&pp, w.diag) || n.dot(r) < w.min_cos {
+            ok = false;
+        }
+    }
+    if !ok {
+        return None;
+    }
+    // Witnesses go to their nearest piece and must stay within the
+    // deviation bound of it; otherwise the polygon stays as it was.
+    let wit = w
+        .witnesses
+        .as_ref()
+        .map(|ws| ws[q as usize].clone())
+        .unwrap_or_default();
+    let piece_pos: Vec<Vec<DVec3>> = pieces.iter().map(|p| w.poly_pos(p)).collect();
+    let assigned = assign_witnesses(&wit, &piece_pos, &w.src.positions, w.max_dev)?;
+    Some((pieces, wit, assigned))
 }
 
 /// Two orthogonal unit directions for fill quality: the longest boundary
