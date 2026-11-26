@@ -412,10 +412,28 @@ fn apply_clusters(w: &mut Work, clusters: &[Cluster]) -> (Vec<Cluster>, Vec<Stri
         let (changed, pockets) = commit(&mut trial, &to);
         let survivors: BTreeSet<u32> = live.iter().map(|&i| clusters[i].survivor).collect();
         let checked = check(&trial, w, &changed, &survivors).and_then(|()| {
-            match pocket_cut(&trial, w, &pockets) {
-                Some(bad) => Err((bad, "it would change the topology of the mesh".into())),
-                None => Ok(()),
+            let Some(corners) = one_part_pocket_corners(w, &pockets) else {
+                return Ok(());
+            };
+            // The clusters around the pockets, applied on their own: a weld
+            // elsewhere in the trial could cancel out their change of the
+            // whole-mesh numbers.
+            let around: BTreeSet<usize> = corners
+                .iter()
+                .filter_map(|v| owner.get(v).copied())
+                .collect();
+            let alone_to: HashMap<u32, u32> = to
+                .iter()
+                .filter(|(m, _)| owner.get(*m).is_some_and(|i| around.contains(i)))
+                .map(|(m, s)| (*m, *s))
+                .collect();
+            let mut alone = w.clone();
+            commit(&mut alone, &alone_to);
+            let before = topology(w);
+            if topology(&trial) != before || topology(&alone) != before {
+                return Err((corners, "it would change the topology of the mesh".into()));
             }
+            Ok(())
         });
         match checked {
             Ok(()) => {
@@ -579,10 +597,10 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> (Vec<u32>, Vec<[u32; 2]>) {
 /// the surface and caps both sides, which the local checks can't see. Such
 /// a pocket may only go if the topology stays; a pocket between two parts
 /// welds them face to face and goes as before. Returns the corners in
-/// `base` of the one-part pockets if `trial` changed the topology (also
-/// when a weld elsewhere in the trial changed it: those clusters are then
-/// dropped and tried again in the next round, after the weld).
-fn pocket_cut(trial: &Work, base: &Work, pockets: &[[u32; 2]]) -> Option<Vec<u32>> {
+/// `base` of the one-part pockets, if there are any; the caller then
+/// compares the topology (of the whole trial, and of the clusters around
+/// these pockets applied on their own).
+fn one_part_pocket_corners(base: &Work, pockets: &[[u32; 2]]) -> Option<Vec<u32>> {
     if pockets.is_empty() {
         return None;
     }
@@ -610,7 +628,7 @@ fn pocket_cut(trial: &Work, base: &Work, pockets: &[[u32; 2]]) -> Option<Vec<u32
             corners.extend(vp.iter().chain(vq).copied());
         }
     }
-    if corners.is_empty() || topology(trial) == topology(base) {
+    if corners.is_empty() {
         return None;
     }
     Some(corners.into_iter().collect())
