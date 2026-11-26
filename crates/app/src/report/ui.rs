@@ -128,6 +128,7 @@ impl AppState {
             log: super::clean(&super::log::report_log(self.paths.data.as_deref())),
             steps_json: self.session.steps_json(),
             op_count: self.session.op_count(),
+            mesh_edits: self.session.mesh_edit_count(),
             system: super::system::system_text(m, gpu, self.display),
             system_summary: super::system::summary(m, gpu),
             model: source_files(&self.session.sources),

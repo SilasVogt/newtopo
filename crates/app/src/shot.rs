@@ -431,6 +431,7 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
             frames(6),
         ),
     ];
+    let scenarios = scenarios.into_iter().chain(mesh_scenarios());
     for (name, setup, fr) in scenarios {
         let ctx = egui::Context::default();
         let mut app = App::new(&ctx, Paths::default(), true, true);
@@ -455,6 +456,166 @@ pub fn run(dir: &Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------- mesh mode
+
+/// A tube (mock kernel): a cylinder with a 16 × 8 grid on its side and
+/// auto-filled caps.
+fn mesh_scene() -> (newtopo_core::scene::Scene, BodyId) {
+    use newtopo_core::Op;
+    use newtopo_core::ops::PatchSel;
+    let k = std::sync::Arc::new(newtopo_kernel::mock::MockKernel::new());
+    let mut s = newtopo_core::scene::Scene::new(k);
+    let body = newtopo_kernel::mock::MockBody::cylinder(20.0, 50.0);
+    let b = s
+        .add_body(
+            &body.to_brep_bytes(),
+            newtopo_kernel::BodyAttributes {
+                name: "Tube".into(),
+                transform: glam::DMat4::IDENTITY,
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .expect("mock body");
+    let _ = s.apply(Op::SetAutofill { on: true });
+    let nf = s.ctx(b).map(|c| c.topo.faces.len()).unwrap_or(0) as u32;
+    for f in 0..nf {
+        let _ = s.apply(Op::Grid {
+            patches: PatchSel {
+                faces: vec![f],
+                ..Default::default()
+            },
+            u: 16,
+            v: 8,
+            start_on_seam: false,
+            spacing: newtopo_core::doc::Spacing::ArcLength,
+        });
+    }
+    (s, b)
+}
+
+/// The ring loop of the tube half way up, as sorted vertex pairs.
+fn mid_ring(m: &newtopo_core::meshedit::EditMesh) -> Vec<[u32; 2]> {
+    let zmid = 25.0;
+    let e = m
+        .edges()
+        .into_iter()
+        .filter(|&(a, b)| {
+            let (p, q) = (m.positions[a as usize], m.positions[b as usize]);
+            (p.z - q.z).abs() < 1e-6 && p.length() > 1.0
+        })
+        .min_by(|x, y| {
+            let d = |e: (u32, u32)| (m.positions[e.0 as usize].z - zmid).abs();
+            d(*x).total_cmp(&d(*y))
+        })
+        .expect("a ring edge");
+    newtopo_core::meshedit::edge_loop(m, e.0, e.1).unwrap_or_default()
+}
+
+fn select_mesh_edges(a: &mut App, b: BodyId, edges: &[[u32; 2]]) {
+    a.st.ensure_view_data();
+    let table = a.st.mm.edges.get(&b).cloned().unwrap_or_default();
+    for e in edges {
+        if let Ok(i) = table.binary_search(&(e[0].min(e[1]), e[0].max(e[1]))) {
+            a.st.sel.edges.insert(EdgeSel::Index(b, i as u32));
+        }
+    }
+}
+
+fn mesh_app(a: &mut App) -> BodyId {
+    let (s, b) = mesh_scene();
+    a.st.doc.set_scene(s, None);
+    a.st.prefs.mesh_warning = false;
+    a.st.request_edit_mode(crate::meshmode::EditMode::Mesh);
+    a.st.mode = Mode::Edge;
+    a.st.view.camera.pitch = 0.35;
+    b
+}
+
+/// Mesh mode: the entry warning, a selected loop with the tool panel, and
+/// Relax before and after on a jagged loop.
+fn mesh_scenarios() -> Vec<(&'static str, Setup, Vec<Vec<Event>>)> {
+    vec![
+        (
+            "30-mesh-entry-dialog.png",
+            Box::new(|a: &mut App| {
+                let (s, _) = mesh_scene();
+                a.st.doc.set_scene(s, None);
+                a.st.request_edit_mode(crate::meshmode::EditMode::Mesh);
+            }),
+            frames(8),
+        ),
+        (
+            "31-mesh-mode-loop.png",
+            Box::new(|a: &mut App| {
+                let b = mesh_app(a);
+                a.st.ensure_meshes();
+                let m = a.st.mm.meshes[&b].clone();
+                select_mesh_edges(a, b, &mid_ring(&m));
+                a.st.mm.tool = crate::meshmode::MeshTool::Relax;
+                full_tool_panel(a);
+            }),
+            frames(8),
+        ),
+        (
+            "32-mesh-relax-before.png",
+            Box::new(|a: &mut App| {
+                let b = jagged(a);
+                let _ = b;
+                a.st.mm.tool = crate::meshmode::MeshTool::Relax;
+            }),
+            frames(8),
+        ),
+        (
+            "33-mesh-relax-after.png",
+            Box::new(|a: &mut App| {
+                jagged(a);
+                a.st.mm.params.relax_iterations = 10;
+                a.st.mesh_pick_tool(crate::meshmode::MeshTool::Relax);
+                full_tool_panel(a);
+            }),
+            frames(8),
+        ),
+        (
+            "34-mesh-light-loop-cleanup.png",
+            Box::new(|a: &mut App| {
+                a.st.set_theme("Paper (light)");
+                let b = jagged(a);
+                let _ = b;
+                a.st.mm.tool = crate::meshmode::MeshTool::LoopCleanup;
+            }),
+            frames(8),
+        ),
+    ]
+}
+
+/// Close Statistics and History so the tool panel has the full height.
+fn full_tool_panel(a: &mut App) {
+    for t in [crate::app::Tab::Stats, crate::app::Tab::History] {
+        a.st.ui.dock_actions.push(crate::app::DockAction::Toggle(t));
+    }
+}
+
+/// Mesh mode with the tube's middle ring pushed into a zig-zag (stored as
+/// a mesh edit) and selected.
+fn jagged(a: &mut App) -> BodyId {
+    let b = mesh_app(a);
+    a.st.ensure_meshes();
+    let mut m = (*a.st.mm.meshes[&b]).clone();
+    let ring = mid_ring(&m);
+    let mut verts: Vec<u32> = ring.iter().flatten().copied().collect();
+    verts.sort_unstable();
+    verts.dedup();
+    for (k, v) in verts.iter().enumerate() {
+        let p = &mut m.positions[*v as usize];
+        p.z += if k % 2 == 0 { 1.8 } else { -1.8 };
+    }
+    let _ = a.st.doc.set_meshes(vec![(b, Some(m.clone()))], false);
+    a.st.ensure_meshes();
+    select_mesh_edges(a, b, &ring);
+    b
 }
 
 // ---------------------------------------------------------------- real models
@@ -575,6 +736,14 @@ fn first_body(app: &App) -> BodyId {
 pub fn run_real(dir: &Path, models: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut s = Shooter::new()?;
+    // Mesh mode works on a mock scene: the same pictures with or without
+    // the reference models.
+    for (name, setup, fr) in mesh_scenarios() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(&ctx, Paths::default(), true, true);
+        setup(&mut app);
+        s.shoot(&ctx, &mut app, fr, &dir.join(name))?;
+    }
     let tmp = dir.join("e2e");
     std::fs::create_dir_all(&tmp)?;
     let new_app = || {

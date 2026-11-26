@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c777bf619fa379655075b901bc4fa1990ad617ebd9f1180f917f86395f7016b3 # shrinks to shape = Sphere(4, 8), amount = 0.056928996380965456, tools = [Merge(0.5294458465019286, 0, false)]
+cc d15fed1788c91a6090a13b6db352d51bc64a15b4cc9b011052ba3a83eef39c72 # shrinks to shape = Torus(5, 5), amount = 0.0, tools = [Decimate(0.05, false), Slide(25901710, 1.1590186835275098, false, false)]
+cc 17c359e35abd3a20967445e0826669a1ee740f1e1f36d887e9f7d52ddda9acd5 # shrinks to shape = Height(5, 7, 0.0, 0.5), amount = 0.0, tools = [Slide(6540473, 1.12061427523527, false, false), Slide(46464415, -0.9211090680747365, false, false)]
+cc 7bce4d65659736a84d5818985412cc2eae57ea268b5922b98d12d14d2f9ac8e5 # shrinks to shape = Torus(8, 6), amount = 0.2349443677643497, tools = [Decimate(0.05, false), Planar(7.153504964094007)]

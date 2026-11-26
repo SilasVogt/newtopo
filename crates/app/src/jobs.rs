@@ -221,6 +221,7 @@ pub fn unit_mm(u: &str) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Modal {
     Confirm,
+    MeshWarning,
     Unsaved,
     Recovery,
     ImportList,
@@ -990,6 +991,8 @@ impl AppState {
     pub fn active_modal(&self) -> Option<Modal> {
         if self.ui.confirm.is_some() {
             Some(Modal::Confirm)
+        } else if self.mm.dialog {
+            Some(Modal::MeshWarning)
         } else if self.ui.unsaved_prompt.is_some() {
             Some(Modal::Unsaved)
         } else if !self.ui.recovery.is_empty() {
@@ -1013,6 +1016,7 @@ impl AppState {
     pub fn modal_open(&self, m: Modal) -> bool {
         match m {
             Modal::Confirm => self.ui.confirm.is_some(),
+            Modal::MeshWarning => self.mm.dialog,
             Modal::Unsaved => self.ui.unsaved_prompt.is_some(),
             Modal::Recovery => !self.ui.recovery.is_empty(),
             Modal::ImportList => self.ui.import_list.is_some(),
@@ -1028,6 +1032,7 @@ impl AppState {
     pub fn dismiss_modal(&mut self, m: Modal) {
         match m {
             Modal::Confirm => self.ui.confirm = None,
+            Modal::MeshWarning => self.mm.dialog = false,
             Modal::Unsaved => self.ui.unsaved_prompt = None,
             Modal::Recovery => {}
             Modal::ImportList => self.ui.import_list = None,
@@ -1070,6 +1075,10 @@ impl AppState {
             } else if close {
                 self.ui.confirm = None;
             }
+        }
+
+        if active == Some(Modal::MeshWarning) {
+            self.mesh_warning_ui(ctx);
         }
 
         // Unsaved changes.

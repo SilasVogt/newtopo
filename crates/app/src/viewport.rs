@@ -340,6 +340,12 @@ impl AppState {
     // ------------------------------------------------------------ hover & picking
 
     fn pick_kind(&self) -> Mode {
+        if self.in_mesh_mode() {
+            return match self.mm.tool {
+                crate::meshmode::MeshTool::TargetMerge => Mode::Vertex,
+                _ => self.mode,
+            };
+        }
         match self.tool.active {
             Tool::Weld => Mode::Vertex,
             Tool::Iso | Tool::Cut => Mode::Face,
@@ -456,6 +462,9 @@ impl AppState {
         let mods = ui.input(|i| i.modifiers);
         let nav_primary = nav_for(self.prefs.nav, egui::PointerButton::Primary, mods).is_some();
         let nav_secondary = nav_for(self.prefs.nav, egui::PointerButton::Secondary, mods).is_some();
+        if self.in_mesh_mode() && self.mesh_clicks(ui, resp, nav_primary) {
+            return;
+        }
 
         // Target Weld drag from one vertex to another.
         if self.tool.active == Tool::Weld
@@ -950,6 +959,8 @@ impl AppState {
             .map(|s| (s.symmetry, s.link, format!("{:?}", s.symmetry_axes)))
             .hash(&mut h);
         self.prefs.show_symmetry_planes.hash(&mut h);
+        self.edit.hash(&mut h);
+        self.mm.merge_from.hash(&mut h);
         h.finish()
     }
 
@@ -1099,6 +1110,16 @@ impl AppState {
                     o.add_polyline(&self.vd.edges[i].path, with_alpha(c.warning, 1.0), 4.0);
                 }
             }
+        }
+        if self.in_mesh_mode() {
+            // Target Merge: the vertex picked first.
+            if let Some((b, v)) = self.mm.merge_from
+                && let Some(i) = self.vd.vert_index(&VertSel::Index(b, v))
+            {
+                o.add_point(self.vd.verts[i].pos, c.weld_from, 11.0);
+            }
+            self.overlay = Arc::new(o);
+            return;
         }
         self.connect_arrows(&mut o, &c);
         self.symmetry_planes(&mut o, &c);
@@ -1421,7 +1442,10 @@ impl AppState {
         if self.has_content() {
             label(p, y, txt, pal.text_dim);
             y += 17.0;
-            if self.view.preview {
+            if self.in_mesh_mode() {
+                label(p, y, S::MESH_HUD, pal.mesh_accent);
+                y += 17.0;
+            } else if self.view.preview {
                 label(
                     p,
                     y,
@@ -1445,6 +1469,9 @@ impl AppState {
             if self.is_demo() {
                 label(p, y, S::DEMO_BADGE, pal.text_dim);
             }
+        }
+        if self.in_mesh_mode() && self.has_content() {
+            self.mesh_badge(ui, rect);
         }
         // Tool chip at the bottom centre.
         if self.tool.active != Tool::Select {

@@ -44,6 +44,7 @@ fn contents(model: bool) -> Contents {
         )),
         steps_json: s.steps_json(),
         op_count: s.op_count(),
+        mesh_edits: s.mesh_edit_count(),
         system: format!("OS: TestOS\nCPU: {SYSTEM_MARK}\n"),
         system_summary: "TestOS · TestGPU · 16 GB".into(),
         model: if model {

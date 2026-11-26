@@ -205,6 +205,68 @@ impl DocState {
         }
     }
 
+    /// Store mesh-mode edits (SPEC §9.5): one undo step, or with `amend`
+    /// a replacement of the last mesh step (a tool redone with new values).
+    /// Returns whether the document changed (an amend always counts); a
+    /// new step that changes nothing makes no undo step and no revision.
+    pub fn set_meshes(
+        &mut self,
+        changes: Vec<(
+            newtopo_kernel::BodyId,
+            Option<newtopo_core::meshedit::EditMesh>,
+        )>,
+        amend: bool,
+    ) -> Result<bool, ApplyError> {
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(ApplyError::NoScene);
+        };
+        match guard(|| {
+            if amend {
+                scene.amend_meshes(changes).map(|()| true)
+            } else {
+                scene.set_meshes(changes)
+            }
+        }) {
+            Ok(Ok(changed)) => {
+                if changed {
+                    self.bump();
+                }
+                Ok(changed)
+            }
+            Ok(Err(r)) => Err(ApplyError::Refused(r)),
+            Err(e) => {
+                self.bump();
+                Err(ApplyError::Engine(e))
+            }
+        }
+    }
+
+    /// Drop the mesh edits of these bodies (one undo step).
+    pub fn discard_meshes(
+        &mut self,
+        bodies: &[newtopo_kernel::BodyId],
+    ) -> Result<usize, ApplyError> {
+        let Some(scene) = self.scene.as_mut() else {
+            return Err(ApplyError::NoScene);
+        };
+        match guard(|| scene.discard_mesh_edits(bodies)) {
+            Ok(Ok(n)) => {
+                if n > 0 {
+                    self.bump();
+                }
+                Ok(n)
+            }
+            Ok(Err(r)) => Err(ApplyError::Refused(r)),
+            Err(e) => Err(ApplyError::Engine(e)),
+        }
+    }
+
+    pub fn can_amend_meshes(&self) -> bool {
+        self.scene
+            .as_ref()
+            .is_some_and(|s| guard(|| s.can_amend_meshes()).unwrap_or(false))
+    }
+
     /// Open a preview (no-op without a scene or if one is open).
     pub fn begin_preview(&mut self) {
         if !self.in_preview() {

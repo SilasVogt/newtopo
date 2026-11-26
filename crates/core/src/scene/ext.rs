@@ -213,7 +213,9 @@ impl Scene {
         }
         let mut d = (*self.doc).clone();
         d.camera = camera;
-        self.doc = Arc::new(d);
+        let old = std::mem::replace(&mut self.doc, Arc::new(d));
+        // The camera is not an edit: the last mesh edit stays adjustable.
+        self.carry_amend_mark(&old);
     }
 
     /// Faces congruent to `face` in the same body (its link set, including
@@ -355,7 +357,9 @@ impl Scene {
             .unwrap_or(old))
     }
 
-    /// [`Scene::replace_body`] with a report of what matched.
+    /// [`Scene::replace_body`] with a report of what matched. Refused for a
+    /// body with mesh edits (SPEC §9.5.1): replacing changes its CAD stage,
+    /// and the edited mesh belongs to the old body.
     pub fn replace_body_with_report(
         &mut self,
         old: BodyId,
@@ -364,13 +368,16 @@ impl Scene {
         heal: HealReport,
     ) -> anyhow::Result<ReplaceReport> {
         let entry = self.doc.body(old).cloned().context("no such body")?;
+        if self.has_mesh_edits(old) {
+            anyhow::bail!("{}", self.mesh_lock_refusal(old).reason);
+        }
         anyhow::ensure!(self.bodies.contains_key(&old), "body without kernel data");
         let kbody = self
             .kernel
             .load_brep(brep)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        // Nothing below fails once the new body has a context; until then
-        // the scene does not own it, so unload it here.
+        // Until the new body is inserted below the scene does not own it,
+        // so every failure from here on unloads it.
         let ctx = match BodyCtx::build(self.kernel.clone(), kbody) {
             Ok(c) => c,
             Err(e) => {
@@ -454,6 +461,14 @@ impl Scene {
             heal,
             ..entry
         };
+        // A rule that also names patches of another body was rewritten
+        // above: refused if that body has mesh edits (its CAD stage is
+        // locked). The scene does not own the new body yet.
+        if let Err(r) = self.check_mesh_locks(&doc) {
+            drop(ctx);
+            self.kernel.unload(kbody);
+            anyhow::bail!("{}", r.reason);
+        }
         let edge_polylines = ctx.topo.edge_ids().map(|e| ctx.edge_polyline(e)).collect();
         self.bodies.insert(
             id,

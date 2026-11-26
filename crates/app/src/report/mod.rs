@@ -214,6 +214,9 @@ enum Event {
     Op(Op, Outcome),
     /// "undo", "redo", "apply_preview", …
     Step(&'static str),
+    /// A mesh-mode edit (SPEC §9.5): the tool's name. Not an op, so a
+    /// replay of `ops` does not include it.
+    Mesh(&'static str, Outcome),
     /// A step about a file: (step, file name, already scrubbed).
     File(&'static str, String),
 }
@@ -233,6 +236,9 @@ pub struct Session {
     inputs: Vec<String>,
     /// Full paths of imported CAD files, for "The model".
     pub sources: Vec<PathBuf>,
+    /// Mesh edits (and discards) applied to the open scene: its state is
+    /// then not what replaying `ops` gives.
+    mesh_steps: usize,
     truncated: bool,
 }
 
@@ -279,19 +285,43 @@ impl Session {
         self.push_event(Event::Op(op.clone(), outcome));
     }
 
+    /// Mesh edits applied to the open scene so far (discards included).
+    pub fn mesh_edit_count(&self) -> usize {
+        self.mesh_steps
+    }
+
+    /// A mesh-mode edit with `tool` (its first apply; changing its values
+    /// live amends the same step and is not logged again).
+    pub fn mesh_edit(&mut self, tool: &'static str, outcome: Outcome) {
+        ::log::info!("mesh edit {tool}: {}", outcome.as_str());
+        if outcome == Outcome::Applied {
+            self.mesh_steps += 1;
+        }
+        self.push_event(Event::Mesh(tool, outcome));
+    }
+
+    /// "Discard mesh edits" ran: like a mesh edit, not an op.
+    pub fn mesh_discard(&mut self) {
+        self.event("discard_mesh_edits");
+        self.mesh_steps += 1;
+    }
+
     /// File > New: the replay script starts over (the timeline keeps the
     /// earlier scene).
     pub fn new_scene(&mut self) {
         self.event("new_scene");
         self.ops.clear();
         self.input = None;
+        self.mesh_steps = 0;
     }
 
-    /// A scene file was opened: it is the replay script's input from now on.
+    /// A scene file was opened: it is the replay script's input from now on
+    /// (mesh edits saved in it are part of that input).
     pub fn open(&mut self, path: &Path) {
         self.file_event("open", path);
         self.ops.clear();
         self.input = Some(file_name(path));
+        self.mesh_steps = 0;
     }
 
     /// A step without an op: "undo", "redo", "apply_preview", …
@@ -345,24 +375,42 @@ impl Session {
                     "outcome": outcome.as_str(),
                 }),
                 Event::Step(step) => serde_json::json!({ "step": step }),
+                Event::Mesh(tool, outcome) => serde_json::json!({
+                    "step": "mesh_edit",
+                    "tool": tool,
+                    "outcome": outcome.as_str(),
+                }),
                 Event::File(step, name) => serde_json::json!({ "step": step, "file": name }),
             })
             .collect();
+        let mut note = String::from(
+            "`input` and `ops` describe the scene that was open: every \
+             op applied to it (or failed) in order, ready for \
+             `newtopo-cli run steps.json --input <model>`, including ops \
+             that were later undone or discarded with a preview: `run` \
+             replays them all. `session` is the full timeline, including \
+             earlier scenes (before `new_scene` or `open`), refused ops, \
+             undo, redo and discarded previews, and shows which ops \
+             really stayed. `inputs` lists every CAD file imported.",
+        );
+        if self.mesh_steps > 0 {
+            note.push_str(&format!(
+                " The open scene also had {} mesh edit(s) (`mesh_edit` and \
+                 `discard_mesh_edits` steps in `session`, mesh mode): they are \
+                 not ops, `run` does not replay them, so the replayed scene \
+                 does not have them; only a copy of the scene file has.",
+                self.mesh_steps
+            ));
+        }
         let v = serde_json::json!({
             "version": 1,
             "input": self.input,
             "ops": ops,
+            "mesh_edits": self.mesh_steps,
             "session": events,
             "inputs": self.inputs,
             "truncated": self.truncated,
-            "note": "`input` and `ops` describe the scene that was open: every \
-                     op applied to it (or failed) in order, ready for \
-                     `newtopo-cli run steps.json --input <model>`, including ops \
-                     that were later undone or discarded with a preview: `run` \
-                     replays them all. `session` is the full timeline, including \
-                     earlier scenes (before `new_scene` or `open`), refused ops, \
-                     undo, redo and discarded previews, and shows which ops \
-                     really stayed. `inputs` lists every CAD file imported.",
+            "note": note,
         });
         serde_json::to_string_pretty(&v).unwrap_or_default()
     }
@@ -492,6 +540,8 @@ pub struct Contents {
     pub log: String,
     pub steps_json: String,
     pub op_count: usize,
+    /// Mesh edits of the open scene, which `steps.json` cannot replay.
+    pub mesh_edits: usize,
     pub system: String,
     /// One line for the dialog ("Windows 11 · RTX 4070 · 32 GB").
     pub system_summary: String,
@@ -862,6 +912,13 @@ pub fn agent_prompt(c: &Contents, ch: &Choices, zip: &str) -> String {
              from what the user saw; its `session` list is the full timeline (refused ops, \
              undo, redo, preview apply and discard) and shows which ops really stayed",
         );
+        if c.mesh_edits > 0 {
+            s.push_str(
+                "; the scene also had mesh-mode edits (`mesh_edit` steps), which are not ops \
+                 and which `run` does not replay, so reproduce those by hand or from the \
+                 scene copy",
+            );
+        }
     }
     if ch.model && !c.model.is_empty() {
         s.push_str("; the model files are in the zip's `model/` folder");
