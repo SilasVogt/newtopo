@@ -189,8 +189,12 @@ pub(crate) struct Work<'a> {
     /// [`Work::note_edges`] itself.
     pub refill_pending: BTreeSet<u32>,
     /// Polygons changed (touched) since the tool last cleared this, in
-    /// order, may repeat.
+    /// order, may repeat. Only kept while [`Work::log_changes`] is on.
     pub changed: Vec<u32>,
+    /// Keep the change log. Off by default: only a tool that reads the log
+    /// (Resample) turns it on, so tools that move the same vertices many
+    /// times (Relax) do not grow it.
+    pub log_changes: bool,
     /// Open undo record ([`Work::begin_undo`]).
     undo: Option<Box<Undo>>,
     src_normals: HashMap<(u32, FaceId), DVec3>,
@@ -289,6 +293,7 @@ impl<'a> Work<'a> {
             aliases: HashMap::new(),
             refill_pending: BTreeSet::new(),
             changed: Vec::new(),
+            log_changes: false,
             undo: None,
             src_normals,
             src_uvs,
@@ -830,7 +835,9 @@ impl<'a> Work<'a> {
     pub fn touch(&mut self, q: u32) {
         self.save_poly(q);
         self.polys[q as usize].touched = true;
-        self.changed.push(q);
+        if self.log_changes {
+            self.changed.push(q);
+        }
         self.set_pending(q, true);
     }
 

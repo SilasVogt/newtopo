@@ -97,6 +97,7 @@ pub fn resample(
     }
     let mut skipped = Vec::new();
     let mut done = 0;
+    w.log_changes = true;
     for (chain, closed) in &all {
         // `check_around` looks at what this run changes. A run that fails
         // is undone from the undo record: a copy of the whole working mesh

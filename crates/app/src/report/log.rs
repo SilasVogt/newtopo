@@ -290,6 +290,10 @@ pub fn tail(s: &str, max: usize) -> String {
         start += 1;
     }
     let cut = &s[start..];
+    // Already at a line start: nothing to skip.
+    if s[..start].ends_with('\n') {
+        return cut.to_string();
+    }
     match cut.find('\n') {
         Some(i) => cut[i + 1..].to_string(),
         None => cut.to_string(),
@@ -364,7 +368,16 @@ mod tests {
     }
 
     #[test]
+    fn tail_keeps_a_line_that_fits_exactly() {
+        assert_eq!(tail("old\nnewest\n", 7), "newest\n");
+        assert_eq!(tail("old\nnewest\n", 8), "newest\n");
+        assert_eq!(tail("old\nnewest\n", 6), "");
+        assert_eq!(tail("short\n", 100), "short\n");
+    }
+
+    #[test]
     fn the_marker_survives_a_memory_log_larger_than_the_report() {
+        super::super::scrub::use_test_identity();
         let dir = tempfile::tempdir().unwrap();
         let path = log_file(dir.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -421,7 +434,9 @@ mod tests {
     #[test]
     fn tail_cuts_at_lines() {
         assert_eq!(tail("a\nb\nc\n", 100), "a\nb\nc\n");
-        assert_eq!(tail("aaaa\nbb\ncc\n", 6), "cc\n");
+        // Both lines fit exactly, so both stay.
+        assert_eq!(tail("aaaa\nbb\ncc\n", 6), "bb\ncc\n");
+        assert_eq!(tail("aaaa\nbb\ncc\n", 5), "cc\n");
         assert_eq!(tail("ääää\nö\n", 5), "ö\n");
     }
 }
