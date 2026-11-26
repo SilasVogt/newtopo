@@ -1442,6 +1442,16 @@ vertex count or edge length.
   for more than 10 000 edges on one run. A closed run keeps at least three
   vertices. Vertices where the selection does not run straight through
   (junctions shared by several runs) stay fixed.
+- Refused before it starts if it would add more than 100 000 vertices
+  (estimated per run from its count, or its length over the edge length,
+  before corners split it), with a message to select fewer edges or use a
+  smaller count or a longer edge length: the app runs mesh tools on its UI
+  thread, and again on every parameter change.
+- Cost follows what it changes: after each run only the polygons that run
+  changed (or whose corners gained or lost an edge) are refilled and
+  checked again, and a run that fails is undone from a record of what it
+  changed. Every edge selected (Ctrl+A, one run per edge) on a part of a
+  few hundred vertices takes well under a second.
 - **AC**: an unevenly spaced straight run comes out with equal edge lengths
   (1e-9) and resampling again changes nothing; a 10-edge run resampled to
   21 / 6 / 11 vertices has 20 / 5 / 10 equal edges, no n-gons and the same
@@ -1626,7 +1636,10 @@ on). Run ends, junctions, corners and feature-edge vertices stay. A step
 that would break a polygon (§9.5.2 checks; a polygon that was already bad
 keeps its area and orientation) is halved, halved again, then skipped for
 that iteration and reported. Refused when no selected run has a free vertex
-between its ends.
+between its ends; while CAD or hard edges are preserved, the message says
+that turning off "Keep CAD and hard edges" lets vertices on those edges
+move (off the edge, as free vertices), and that Space evens them out
+along their edges instead.
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |

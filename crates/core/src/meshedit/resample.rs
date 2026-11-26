@@ -84,15 +84,36 @@ pub fn resample(
     mark_selection(&mut w, sel)?;
     let cos_corner = p.corner_angle_deg.to_radians().cos();
     let all = runs(&w);
+    let added = all
+        .iter()
+        .map(|(chain, closed)| new_vertices(&w, chain, *closed, p.spacing))
+        .fold(0usize, usize::saturating_add);
+    if added > MAX_NEW_VERTICES {
+        return Err(Refusal::new(format!(
+            "Resampling would add about {added} vertices, more than the \
+             {MAX_NEW_VERTICES} this tool adds at once: select fewer edges, or \
+             use a smaller count or a longer edge length"
+        )));
+    }
     let mut skipped = Vec::new();
     let mut done = 0;
     for (chain, closed) in &all {
-        let saved = w.clone();
+        // `check_around` looks at what this run changes. A run that fails
+        // is undone from the undo record: a copy of the whole working mesh
+        // per run made long selections (Ctrl+A) quadratic.
+        w.changed.clear();
+        #[cfg(test)]
+        let copy = w.clone();
+        w.begin_undo();
         match resample_run(&mut w, chain, *closed, p, cos_corner) {
-            Ok(true) => done += 1,
-            Ok(false) => {}
+            Ok(changed) => {
+                w.commit_undo();
+                done += changed as usize;
+            }
             Err(reason) => {
-                w = saved;
+                w.rollback();
+                #[cfg(test)]
+                assert!(w.same_state(&copy), "the undo differs from a copy");
                 skipped.push(format!(
                     "run from vertex {} ({} vertices): {reason}",
                     chain[0],
@@ -247,6 +268,32 @@ fn resample_run(
 /// Most edges one run may get (keeps the matching tables small).
 const MAX_RUN_EDGES: usize = 10_000;
 
+/// Most vertices one Resample may add, estimated before it starts (SPEC
+/// §9.5.5). The app runs the tool on its UI thread, again on every
+/// parameter change; a large count on a whole-mesh selection would
+/// otherwise stall it.
+pub(crate) const MAX_NEW_VERTICES: usize = 100_000;
+
+/// Vertices resampling one run would add (before fixed corners split it
+/// into pieces; an estimate for [`MAX_NEW_VERTICES`]).
+fn new_vertices(w: &Work, chain: &[u32], closed: bool, spacing: Spacing) -> usize {
+    let n = chain.len();
+    let edges = if closed { n } else { n.saturating_sub(1) };
+    let want = match spacing {
+        Spacing::Even => edges,
+        Spacing::Count(c) if closed => c as usize,
+        Spacing::Count(c) => (c as usize).saturating_sub(1),
+        Spacing::EdgeLength(l) => {
+            let len: f64 = (0..edges)
+                .map(|i| w.pos[chain[i] as usize].distance(w.pos[chain[(i + 1) % n] as usize]))
+                .sum();
+            // Saturates for huge ratios.
+            ((len / l).round() as usize).max(1)
+        }
+    };
+    want.saturating_sub(edges)
+}
+
 /// Resample the open piece `verts` (ends fixed) to `k` edges.
 fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String> {
     let m = verts.len() - 2; // old interior vertices
@@ -359,7 +406,9 @@ fn resample_piece(w: &mut Work, verts: &[u32], k: usize) -> Result<bool, String>
     Ok(true)
 }
 
-/// Every polygon touching the run keeps a valid shape and orientation.
+/// Every polygon touching the run, and every polygon the run changed,
+/// keeps a valid shape and orientation. (Polygons earlier runs changed
+/// passed this when they last changed.)
 fn check_around(w: &Work, seq: &[u32]) -> Result<(), String> {
     let mut polys: Vec<u32> = Vec::new();
     for &v in seq {
@@ -367,8 +416,8 @@ fn check_around(w: &Work, seq: &[u32]) -> Result<(), String> {
             polys.extend_from_slice(&w.vpolys[v as usize]);
         }
     }
-    // Inserted vertices are reached through their polygons' touched flag.
-    polys.extend(w.alive_polys().filter(|&q| w.polys[q as usize].touched));
+    // Inserted vertices are reached through the change log.
+    polys.extend_from_slice(&w.changed);
     polys.sort_unstable();
     polys.dedup();
     for q in polys {

@@ -144,6 +144,20 @@ fn movable_along(w: &Work, v: u32) -> bool {
     }
 }
 
+/// Would a selected run have a free vertex if CAD and hard edges were not
+/// preserved?
+fn frees_with_edges_off(mesh: &EditMesh, sel: &Selection) -> bool {
+    let off = Preserve {
+        cad_edges: false,
+        hard_edges: false,
+    };
+    let mut w = Work::new(mesh, off.mask());
+    mark_selection(&mut w, sel).is_ok()
+        && runs(&w)
+            .iter()
+            .any(|(chain, _)| chain.iter().any(|&v| movable_free(&w, v)))
+}
+
 /// A run vertex that may move freely (Relax).
 fn movable_free(w: &Work, v: u32) -> bool {
     run_neighbors(w, v).len() == 2 && w.vclass(v) == VClass::Free
@@ -423,9 +437,13 @@ pub fn relax(mesh: &EditMesh, sel: &Selection, p: &RelaxParams) -> Result<EditOu
         }
     }
     if !any_movable {
-        return Err(Refusal::new(
-            "Nothing to relax: the selected runs have no free vertices between their ends (run ends, corners and feature-edge vertices stay)",
-        ));
+        let mut msg = "Nothing to relax: the selected runs have no free vertices between their ends (run ends, corners and feature-edge vertices stay)".to_string();
+        // Most vertices of a baked CAD part lie on CAD edges: say how to
+        // move them when that is what holds the runs.
+        if (p.preserve.cad_edges || p.preserve.hard_edges) && frees_with_edges_off(mesh, sel) {
+            msg.push_str(". Turn off \"Keep CAD and hard edges\" to relax vertices on CAD and hard edges too, or use Space to even them out along those edges");
+        }
+        return Err(Refusal::new(msg));
     }
     let moved = touched
         .iter()

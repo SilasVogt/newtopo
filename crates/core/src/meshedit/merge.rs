@@ -467,16 +467,16 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
         let parent = w.polys[q as usize].clone();
         for (i, piece) in pieces.into_iter().enumerate() {
             if i == 0 {
-                let p = &mut w.polys[q as usize];
-                p.verts = piece;
-                p.touched = true;
+                w.polys[q as usize].verts = piece;
+                w.touch(q);
             } else {
                 w.polys.push(WPoly {
                     verts: piece,
-                    touched: true,
                     ..parent.clone()
                 });
-                changed.push((w.polys.len() - 1) as u32);
+                let id = (w.polys.len() - 1) as u32;
+                w.touch(id);
+                changed.push(id);
             }
         }
     }
@@ -531,6 +531,15 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
     }
     for x in 0..w.pos.len() {
         w.valive[x] = !w.vpolys[x].is_empty();
+    }
+    // Edges appeared and went away around every changed polygon: the
+    // refill of anything sharing a corner with one is due again (a
+    // superset of `Work::note_edges`, simpler for a bulk rewrite).
+    for &q in &changed {
+        for &x in &w.polys[q as usize].verts {
+            w.refill_pending
+                .extend(w.vpolys[x as usize].iter().copied());
+        }
     }
     // Edge flags follow their vertices; collapsed edges lose theirs.
     let old: Vec<((u32, u32), u8)> = {

@@ -889,6 +889,85 @@ fn resample_cube_features_stay_on_edges() {
     assert!(hausdorff(&m, &r.mesh) < 1e-9);
 }
 
+/// Resample with every edge selected (Ctrl+A): one run per edge, each
+/// adding vertices to the polygons beside it. Returns the outcome, the
+/// number of runs and how many polygons the refill looked at.
+fn resample_every_edge(n: usize, spacing: Spacing) -> (EditOutcome, usize, usize) {
+    let m = heightfield(n, n, 1.0, |x, y| 0.15 * (3.0 * x).sin() * (2.0 * y).cos());
+    let edges: Vec<[u32; 2]> = m.edges().into_iter().map(|(a, b)| [a, b]).collect();
+    let p = ResampleParams {
+        spacing,
+        ..Default::default()
+    };
+    refill::FILL_ATTEMPTS.with(|c| c.set(0));
+    let r = resample(&m, &Selection::Edges(edges.clone()), &p).unwrap();
+    assert_outcome(&m, &r, "every edge");
+    (r, edges.len(), refill::FILL_ATTEMPTS.with(|c| c.get()))
+}
+
+#[test]
+fn resample_refills_only_what_each_run_changed() {
+    // Each run refills the polygons it changed, not every n-gon an earlier
+    // run grew: the refill work grows with the runs, not runs × n-gons
+    // (that took minutes on real parts of a few hundred vertices).
+    for (n, count) in [(6, 12), (12, 12), (6, 3)] {
+        let (_, runs, attempts) = resample_every_edge(n, Spacing::Count(count));
+        assert!(
+            attempts <= 4 * runs,
+            "{attempts} refill attempts for {runs} runs"
+        );
+    }
+}
+
+#[test]
+fn resample_refuses_to_add_too_many_vertices() {
+    // Ctrl+A on a 12 × 12 grid is 312 runs; 400 vertices each would add
+    // about 124 000.
+    let m = plane(12, 1.0);
+    let edges: Vec<[u32; 2]> = m.edges().into_iter().map(|(a, b)| [a, b]).collect();
+    for spacing in [Spacing::Count(400), Spacing::EdgeLength(1e-5)] {
+        let p = ResampleParams {
+            spacing,
+            ..Default::default()
+        };
+        let err = resample(&m, &Selection::Edges(edges.clone()), &p).unwrap_err();
+        assert!(
+            err.reason.contains("select fewer edges")
+                && err
+                    .reason
+                    .contains(&super::resample::MAX_NEW_VERTICES.to_string()),
+            "{}",
+            err.reason
+        );
+    }
+    // Even spacing adds nothing, whatever the selection.
+    let p = ResampleParams::default();
+    assert!(resample(&m, &Selection::Edges(edges), &p).is_ok());
+}
+
+#[test]
+fn resample_undoes_a_skipped_run_exactly() {
+    // Count 3 folds the caps beside two of the rims: those runs are undone
+    // from the undo record, which in test builds `resample` compares with
+    // a full copy of the working mesh taken before the run.
+    let m = cylinder(24, 3, 1.0, 2.0);
+    let p = ResampleParams {
+        spacing: Spacing::Count(3),
+        ..Default::default()
+    };
+    let r = resample(&m, &Selection::AllFeatures, &p).unwrap();
+    assert_outcome(&m, &r, "rims 3");
+    assert_eq!(r.report.skipped.len(), 2, "{:?}", r.report.skipped);
+    assert!(
+        r.report
+            .skipped
+            .iter()
+            .all(|s| s.contains("fold or flatten")),
+        "{:?}",
+        r.report.skipped
+    );
+}
+
 // -------------------------------------------------------------- vertex slide
 
 fn toward(x: u32, y: u32) -> SlideEdge {
