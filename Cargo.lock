@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-import"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-kernel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glam",
  "log",
@@ -2644,7 +2644,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-occt-shim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2670,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "newtopo-testmodels"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "glam",
