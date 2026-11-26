@@ -946,6 +946,38 @@ fn resample_refuses_to_add_too_many_vertices() {
 }
 
 #[test]
+fn resample_counts_new_vertices_piece_by_piece() {
+    // The border of a 10 x 1 sheet: four pieces between its corners, two
+    // long and two short, 8 edges each. With an edge length that keeps the
+    // border's total at 32 edges, the long sides gain what the short sides
+    // lose; the estimate must count the gain alone.
+    let n = 8;
+    let mut m = plane(n, 1.0);
+    for p in &mut m.positions {
+        p.x *= 10.0;
+    }
+    let border: Vec<[u32; 2]> = m
+        .boundary_edges()
+        .into_iter()
+        .map(|(a, b)| [a, b])
+        .collect();
+    assert_eq!(border.len(), 4 * n);
+    let l = 22.0 / (4 * n) as f64;
+    let p = ResampleParams {
+        spacing: Spacing::EdgeLength(l),
+        ..Default::default()
+    };
+    let _ = resample(&m, &Selection::Edges(border), &p);
+    let long = (10.0 / l).round() as usize;
+    assert!(long > n);
+    assert_eq!(
+        super::resample::LAST_ESTIMATE.with(|c| c.get()),
+        2 * (long - n),
+        "the two long sides, not offset by the two short ones"
+    );
+}
+
+#[test]
 fn resample_undoes_a_skipped_run_exactly() {
     // Count 3 folds the caps beside two of the rims: those runs are undone
     // from the undo record, which in test builds `resample` compares with

@@ -86,8 +86,10 @@ pub fn resample(
     let all = runs(&w);
     let added = all
         .iter()
-        .map(|(chain, closed)| new_vertices(&w, chain, *closed, p.spacing))
+        .map(|(chain, closed)| new_vertices(&w, chain, *closed, p.spacing, cos_corner))
         .fold(0usize, usize::saturating_add);
+    #[cfg(test)]
+    LAST_ESTIMATE.with(|c| c.set(added));
     if added > MAX_NEW_VERTICES {
         return Err(Refusal::new(format!(
             "Resampling would add about {added} vertices, more than the \
@@ -144,24 +146,19 @@ pub fn resample(
     })
 }
 
-/// Resample one run. `Ok(false)`: nothing to change.
-fn resample_run(
-    w: &mut Work,
+/// One run split at its fixed vertices: the vertex sequence, the pieces
+/// (index ranges into it) and the number of edges each piece gets.
+type RunPlan = (Vec<u32>, Vec<(usize, usize)>, Vec<usize>);
+
+/// How a run of at least two vertices would be resampled. Reads only.
+fn run_plan(
+    w: &Work,
     chain: &[u32],
     closed: bool,
-    params: &ResampleParams,
+    spacing: Spacing,
     cos_corner: f64,
-) -> Result<bool, String> {
-    let spacing = params.spacing;
+) -> Result<RunPlan, String> {
     let n = chain.len();
-    if n < 2 {
-        return Ok(false);
-    }
-    // Runs are found up front; one that an earlier run changed (it can only
-    // share fixed vertices with it, so this is a safety net) is skipped.
-    if chain.iter().any(|&v| !w.valive[v as usize]) {
-        return Err("an earlier run removed one of its vertices".into());
-    }
     let at = |i: usize| chain[i % n];
     let fixed_at = |i: usize| -> bool {
         if !closed && (i == 0 || i == n - 1) {
@@ -251,6 +248,28 @@ fn resample_run(
             "{edges} edges on one run is more than the {MAX_RUN_EDGES} this tool makes"
         ));
     }
+    Ok((seq, pieces, segs))
+}
+
+/// Resample one run. `Ok(false)`: nothing to change.
+fn resample_run(
+    w: &mut Work,
+    chain: &[u32],
+    closed: bool,
+    params: &ResampleParams,
+    cos_corner: f64,
+) -> Result<bool, String> {
+    let spacing = params.spacing;
+    let n = chain.len();
+    if n < 2 {
+        return Ok(false);
+    }
+    // Runs are found up front; one that an earlier run changed (it can only
+    // share fixed vertices with it, so this is a safety net) is skipped.
+    if chain.iter().any(|&v| !w.valive[v as usize]) {
+        return Err("an earlier run removed one of its vertices".into());
+    }
+    let (seq, pieces, segs) = run_plan(w, chain, closed, spacing, cos_corner)?;
     let mut changed = false;
     for (pi, &(a, b)) in pieces.iter().enumerate() {
         changed |= resample_piece(w, &seq[a..=b], segs[pi])?;
@@ -275,24 +294,29 @@ const MAX_RUN_EDGES: usize = 10_000;
 /// otherwise stall it.
 pub(crate) const MAX_NEW_VERTICES: usize = 100_000;
 
-/// Vertices resampling one run would add (before fixed corners split it
-/// into pieces; an estimate for [`MAX_NEW_VERTICES`]).
-fn new_vertices(w: &Work, chain: &[u32], closed: bool, spacing: Spacing) -> usize {
-    let n = chain.len();
-    let edges = if closed { n } else { n.saturating_sub(1) };
-    let want = match spacing {
-        Spacing::Even => edges,
-        Spacing::Count(c) if closed => c as usize,
-        Spacing::Count(c) => (c as usize).saturating_sub(1),
-        Spacing::EdgeLength(l) => {
-            let len: f64 = (0..edges)
-                .map(|i| w.pos[chain[i] as usize].distance(w.pos[chain[(i + 1) % n] as usize]))
-                .sum();
-            // Saturates for huge ratios.
-            ((len / l).round() as usize).max(1)
-        }
-    };
-    want.saturating_sub(edges)
+#[cfg(test)]
+thread_local! {
+    /// The estimate the last `resample` on this thread made (tests).
+    pub(crate) static LAST_ESTIMATE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Vertices resampling one run would add, piece by piece as the run is
+/// really split at its fixed vertices. Pieces that lose vertices do not
+/// offset the ones that gain, so this never underestimates what
+/// [`MAX_NEW_VERTICES`] guards against. A run that would be skipped adds
+/// nothing.
+fn new_vertices(w: &Work, chain: &[u32], closed: bool, spacing: Spacing, cos_corner: f64) -> usize {
+    if chain.len() < 2 {
+        return 0;
+    }
+    match run_plan(w, chain, closed, spacing, cos_corner) {
+        Ok((_, pieces, segs)) => pieces
+            .iter()
+            .zip(&segs)
+            .map(|(&(a, b), &k)| k.saturating_sub(b - a))
+            .fold(0usize, usize::saturating_add),
+        Err(_) => 0,
+    }
 }
 
 /// Resample the open piece `verts` (ends fixed) to `k` edges.
