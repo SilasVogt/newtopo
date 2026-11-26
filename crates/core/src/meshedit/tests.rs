@@ -1681,6 +1681,31 @@ fn planar_never_joins_into_a_duplicate_polygon() {
 }
 
 #[test]
+fn merge_never_cuts_a_tube_through_a_pocket() {
+    // Torus rings of 4 (outer, top, inner, bottom). At distance 1.5 the
+    // first two rings each lose top and bottom to their outer vertex (√2
+    // away; inner is 2 away), all merges inside the surface. The two quads
+    // between those rings then lie on the same corners with opposite
+    // winding: cancelling that pocket would cut the tube and cap both ends
+    // (a sphere, χ 0 → 2) while every local check passes.
+    let m = torus(6, 4, 3.0, 1.0);
+    let p = MergeParams {
+        distance: 1.5,
+        ..MergeParams::default()
+    };
+    for position in [MergePosition::Centroid, MergePosition::Survivor] {
+        let p = MergeParams { position, ..p };
+        let r = merge_by_distance(&m, &VertexScope::Vertices((0..8).collect()), &p).unwrap();
+        assert_outcome(&m, &r, "pinched torus");
+        assert_eq!(r.mesh, m, "{position:?}: {}", r.report.message);
+        assert_eq!(
+            r.report.skipped,
+            ["2 cluster(s) not merged: it would change the topology of the mesh"]
+        );
+    }
+}
+
+#[test]
 fn unconnected_merge_never_collapses_an_edge_between_members() {
     // Left sheet: a quad whose right border runs L(0)-T(1). Right sheet:
     // triangle [R1, C, R2] and quad [R2, C, D, T'], with R1 and R2 both

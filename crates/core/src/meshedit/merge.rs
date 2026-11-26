@@ -15,8 +15,10 @@
 //!    pocket) both go.
 //! 3. The result is checked around every changed polygon: manifold edges
 //!    and vertex fans, no duplicate faces, no degenerate, concave or flipped
-//!    polygon, normal limit. Clusters around a failure are dropped (and
-//!    reported) and the rest is tried again.
+//!    polygon, normal limit; a pocket cancelled within one part must leave
+//!    the topology as it was (it would cut a tube and cap both ends).
+//!    Clusters around a failure are dropped (and reported) and the rest is
+//!    tried again.
 //! 4. With centroid placement, free survivors then move to the mean of their
 //!    cluster if that is valid. The rounds repeat until nothing merges, so
 //!    applying the tool to its own result changes nothing.
@@ -407,9 +409,15 @@ fn apply_clusters(w: &mut Work, clusters: &[Cluster]) -> (Vec<Cluster>, Vec<Stri
             }
         }
         let mut trial = w.clone();
-        let changed = commit(&mut trial, &to);
+        let (changed, pockets) = commit(&mut trial, &to);
         let survivors: BTreeSet<u32> = live.iter().map(|&i| clusters[i].survivor).collect();
-        match check(&trial, w, &changed, &survivors) {
+        let checked = check(&trial, w, &changed, &survivors).and_then(|()| {
+            match pocket_cut(&trial, w, &pockets) {
+                Some(bad) => Err((bad, "it would change the topology of the mesh".into())),
+                None => Ok(()),
+            }
+        });
+        match checked {
             Ok(()) => {
                 *w = trial;
                 // Input vertices merged into each survivor, including the
@@ -450,8 +458,12 @@ fn apply_clusters(w: &mut Work, clusters: &[Cluster]) -> (Vec<Cluster>, Vec<Stri
 }
 
 /// Rewrite every polygon of a merged vertex. Returns the ids of the
-/// polygons that changed (alive or not).
-fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
+/// polygons that changed (alive or not), and the cancelled pockets as
+/// pairs of the polygons before the rewrite they come from (ids of `w` as
+/// it was; a split-off piece names the polygon it was split from).
+fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> (Vec<u32>, Vec<[u32; 2]>) {
+    let base_len = w.polys.len() as u32;
+    let mut origin: HashMap<u32, u32> = HashMap::new();
     let mut polys: BTreeSet<u32> = BTreeSet::new();
     for &m in to.keys() {
         polys.extend(w.vpolys[m as usize].iter().copied());
@@ -477,11 +489,13 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
                 let id = (w.polys.len() - 1) as u32;
                 w.touch(id);
                 changed.push(id);
+                origin.insert(id, q);
             }
         }
     }
     // Pockets: a changed polygon and another polygon on the same corners
     // with opposite winding both go.
+    let mut pockets: Vec<[u32; 2]> = Vec::new();
     let mut by_set: BTreeMap<Vec<u32>, Vec<u32>> = BTreeMap::new();
     let mut near: BTreeSet<u32> = BTreeSet::new();
     for &q in &changed {
@@ -508,6 +522,8 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
             );
             let rb: Vec<u32> = b.iter().rev().copied().collect();
             if same_cycle(a, &rb) {
+                let from = |q: u32| if q < base_len { q } else { origin[&q] };
+                pockets.push([from(qs[0]), from(qs[1])]);
                 for q in qs {
                     w.polys[q as usize].alive = false;
                     if !changed.contains(&q) {
@@ -555,7 +571,69 @@ fn commit(w: &mut Work, to: &HashMap<u32, u32>) -> Vec<u32> {
         }
     }
     changed.sort_unstable();
-    changed
+    (changed, pockets)
+}
+
+/// A cancelled pocket whose two polygons were on one part of `base` folds
+/// the surface onto itself (a tube collapsed across): taking it out cuts
+/// the surface and caps both sides, which the local checks can't see. Such
+/// a pocket may only go if the topology stays; a pocket between two parts
+/// welds them face to face and goes as before. Returns the corners in
+/// `base` of the one-part pockets if `trial` changed the topology (also
+/// when a weld elsewhere in the trial changed it: those clusters are then
+/// dropped and tried again in the next round, after the weld).
+fn pocket_cut(trial: &Work, base: &Work, pockets: &[[u32; 2]]) -> Option<Vec<u32>> {
+    if pockets.is_empty() {
+        return None;
+    }
+    // Parts of `base`: a label per vertex.
+    let mut part: Vec<u32> = (0..base.pos.len() as u32).collect();
+    fn find(p: &mut [u32], x: u32) -> u32 {
+        let mut r = x;
+        while p[r as usize] != r {
+            r = p[r as usize];
+        }
+        p[x as usize] = r;
+        r
+    }
+    for q in base.alive_polys() {
+        let v = &base.polys[q as usize].verts;
+        for &y in &v[1..] {
+            let (a, b) = (find(&mut part, v[0]), find(&mut part, y));
+            part[a.max(b) as usize] = a.min(b);
+        }
+    }
+    let mut corners: BTreeSet<u32> = BTreeSet::new();
+    for &[p, q] in pockets {
+        let (vp, vq) = (&base.polys[p as usize].verts, &base.polys[q as usize].verts);
+        if find(&mut part, vp[0]) == find(&mut part, vq[0]) {
+            corners.extend(vp.iter().chain(vq).copied());
+        }
+    }
+    if corners.is_empty() || topology(trial) == topology(base) {
+        return None;
+    }
+    Some(corners.into_iter().collect())
+}
+
+/// [`EditMesh::topology`] of the alive polygons of `w`.
+fn topology(w: &Work) -> (i64, usize, usize) {
+    EditMesh {
+        body: w.src.body,
+        positions: w.pos.clone(),
+        pinned: w.pinned.clone(),
+        polygons: w
+            .alive_polys()
+            .map(|q| super::mesh::EditPolygon {
+                verts: w.polys[q as usize].verts.clone(),
+                group: w.polys[q as usize].group,
+                normals: Vec::new(),
+                uvs: None,
+            })
+            .collect(),
+        flagged: Vec::new(),
+    }
+    .topology()
 }
 
 /// Validate the changed region of `trial` (`base` is the state before).

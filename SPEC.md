@@ -1547,7 +1547,10 @@ parts that should be one surface, and very short edges.
   stay manifold (edges used at most twice and once per direction, one fan
   per vertex), without duplicate polygons, degenerate, concave or flipped
   polygons, and within the normal limit; no survivor or pinned vertex may
-  be left without polygons (a whole piece of the surface collapsing).
+  be left without polygons (a whole piece of the surface collapsing); a
+  pocket whose two polygons were on one part may only go if the topology
+  stays (a tube folded across would otherwise be cut and capped at both
+  ends).
   Clusters around a failure are
   dropped and the rest is tried again; the report counts the dropped
   clusters by reason ("2 cluster(s) not merged: it would make a
