@@ -1443,8 +1443,8 @@ vertex count or edge length.
   vertices. Vertices where the selection does not run straight through
   (junctions shared by several runs) stay fixed.
 - Refused before it starts if it would add more than 100 000 vertices
-  (estimated per run from its count, or its length over the edge length,
-  before corners split it), with a message to select fewer edges or use a
+  (counted per run the way the run is split at its fixed vertices; only
+  the pieces that gain vertices count), with a message to select fewer edges or use a
   smaller count or a longer edge length: the app runs mesh tools on its UI
   thread, and again on every parameter change.
 - Cost follows what it changes: after each run only the polygons that run

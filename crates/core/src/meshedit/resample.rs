@@ -236,13 +236,15 @@ fn run_plan(
     };
     // A closed run keeps at least three vertices: give the missing edges to
     // the longest pieces.
-    while closed && segs.iter().sum::<usize>() < 3 {
+    // (Sums saturate: a tiny edge length gives counts near `usize::MAX`.)
+    let total = |segs: &[usize]| segs.iter().fold(0usize, |a, &b| a.saturating_add(b));
+    while closed && total(&segs) < 3 {
         let i = (0..segs.len())
             .max_by(|&a, &b| (lens[a] / segs[a] as f64).total_cmp(&(lens[b] / segs[b] as f64)))
             .unwrap_or(0);
         segs[i] += 1;
     }
-    let edges: usize = segs.iter().sum();
+    let edges = total(&segs);
     if edges > MAX_RUN_EDGES {
         return Err(format!(
             "{edges} edges on one run is more than the {MAX_RUN_EDGES} this tool makes"

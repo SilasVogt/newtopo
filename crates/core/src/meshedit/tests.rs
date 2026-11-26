@@ -978,6 +978,33 @@ fn resample_counts_new_vertices_piece_by_piece() {
 }
 
 #[test]
+fn resample_survives_an_absurdly_small_edge_length() {
+    // Every piece of the border wants about usize::MAX edges; their sum
+    // must not overflow. Each run is over the per-run limit, so nothing
+    // is resampled.
+    let m = plane(1, 1.0);
+    let border: Vec<[u32; 2]> = m
+        .boundary_edges()
+        .into_iter()
+        .map(|(a, b)| [a, b])
+        .collect();
+    let p = ResampleParams {
+        spacing: Spacing::EdgeLength(1e-20),
+        ..Default::default()
+    };
+    match resample(&m, &Selection::Edges(border), &p) {
+        Ok(r) => {
+            assert_eq!(r.mesh.positions.len(), m.positions.len(), "nothing added");
+            assert!(
+                !r.report.skipped.is_empty(),
+                "the run is reported as skipped"
+            );
+        }
+        Err(e) => assert!(!e.reason.is_empty()),
+    }
+}
+
+#[test]
 fn resample_undoes_a_skipped_run_exactly() {
     // Count 3 folds the caps beside two of the rims: those runs are undone
     // from the undo record, which in test builds `resample` compares with
