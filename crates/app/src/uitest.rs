@@ -1335,6 +1335,51 @@ fn mesh_of(h: &Harness, b: BodyId) -> Option<std::sync::Arc<newtopo_core::meshed
     h.app.st.doc.scene.as_ref().unwrap().mesh_edit(b)
 }
 
+/// A refused new run ends the previous edit's live values: changing the
+/// tool's value afterwards neither redoes the earlier edit nor touches its
+/// undo step, and the selection stays where it is.
+#[test]
+fn a_refused_run_leaves_the_previous_edit_alone() {
+    let (mut h, b) = mesh_harness(false);
+    enter_mesh(&mut h);
+    select_loop(&mut h);
+    h.app.st.mm.params.relax_iterations = 3;
+    h.app.st.run(Cmd::MeshRelax);
+    let edited = mesh_of(&h, b).unwrap();
+    let rev = h.app.st.doc.revision;
+    // One edge: both its vertices are run ends, so Relax refuses.
+    h.frames(10);
+    let i = near_edge(&h);
+    h.click(edge_mid(&h, i), Modifiers::NONE);
+    assert_eq!(h.app.st.sel.edges.len(), 1);
+    let one = h.app.st.sel.edges.clone();
+    h.app.st.run(Cmd::MeshRelax);
+    assert!(
+        h.app
+            .st
+            .toasts
+            .items
+            .last()
+            .is_some_and(|t| t.text.contains("Nothing to relax")),
+        "{:?}",
+        h.app.st.toasts.items.last()
+    );
+    h.app.st.mm.params.relax_iterations = 25;
+    h.app.st.mesh_params_changed();
+    assert_eq!(
+        *mesh_of(&h, b).unwrap(),
+        *edited,
+        "the first edit is unchanged"
+    );
+    assert_eq!(
+        h.app.st.doc.revision, rev,
+        "no undo step added or rewritten"
+    );
+    assert_eq!(h.app.st.sel.edges, one, "the selection stays");
+    h.app.st.run(Cmd::Undo);
+    assert!(!has_edits(&h, b), "the first edit is still one undo step");
+}
+
 /// Save and autosave store the camera; that is not an edit, so a value
 /// change afterwards still redoes the last edit as the same single step.
 #[test]

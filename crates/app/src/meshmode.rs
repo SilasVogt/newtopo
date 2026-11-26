@@ -649,12 +649,9 @@ impl AppState {
             let Some(m) = self.mm.meshes.get(&b).cloned() else {
                 continue;
             };
-            let mut all = Vec::new();
-            for e in es {
-                if let Ok(l) = me::edge_loop(&m, e[0], e[1]) {
-                    all.extend(l);
-                }
-            }
+            // One mesh check and adjacency build per body; seeds on a loop
+            // already found are not walked again.
+            let all = me::edge_loops(&m, &es).unwrap_or_default();
             self.combine_elements(b, &all, &[], Combine::Add);
         }
         self.on_selection_changed();
@@ -1156,6 +1153,7 @@ impl AppState {
             self.toast(ToastKind::Info, S::TOAST_LOCKED_SKIPPED);
             return;
         }
+        let new_run = !amend;
         let amend = amend && op.stepped;
         // What a crash report says the user was doing.
         let _action = crate::report::crash::action(format!("Mesh edit: {}", op.tool.title()));
@@ -1199,6 +1197,11 @@ impl AppState {
         }
         use crate::report::Outcome;
         if results.is_empty() && !amend {
+            // A refused new run ends the previous edit's live values: they
+            // now belong to this run, which made nothing to adjust.
+            if new_run {
+                self.mm.last = None;
+            }
             if let Some(r) = refusals.first() {
                 self.toast(ToastKind::Warn, r.clone());
                 let o = if failed {

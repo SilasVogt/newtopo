@@ -37,10 +37,12 @@ fn xn(m: &DMat4, n: DVec3) -> Vec3 {
     m.transform_vector3(n).normalize_or_zero().as_vec3()
 }
 
-/// Fan-triangulate a polygon (good enough for display of convex output
-/// polygons; the app uses ear clipping).
-fn fan(n: usize) -> impl Iterator<Item = [usize; 3]> {
-    (1..n.saturating_sub(1)).map(|k| [0, k, k + 1])
+/// Triangulate an output polygon for shading, concave n-gons included (the
+/// same triangulation export uses: ear clipping in the best-fit plane).
+fn poly_triangles(pos: &[DVec3]) -> impl Iterator<Item = [usize; 3]> {
+    newtopo_core::fill::triangulate_3d(pos)
+        .into_iter()
+        .map(|t| t.map(|i| i as usize))
 }
 
 /// Bodies to draw: visible themselves and on a visible layer (the app's
@@ -73,7 +75,12 @@ pub fn build(scene: &mut Scene, d: &CoreDisplay) -> RenderScene {
             let pos: Vec<Vec3> = out.vertices.iter().map(|v| xf(&m, v.position)).collect();
             let surface = if d.preview { c.preview_surface } else { color };
             for poly in &out.polygons {
-                for t in fan(poly.verts.len()) {
+                let local: Vec<DVec3> = poly
+                    .verts
+                    .iter()
+                    .map(|&v| out.vertices[v as usize].position)
+                    .collect();
+                for t in poly_triangles(&local) {
                     let base = rs.mesh.vertices.len() as u32;
                     for k in t {
                         let n = poly.normals.get(k).map(|n| xn(&m, *n)).unwrap_or(Vec3::Z);
@@ -204,6 +211,37 @@ mod tests {
             heal: Default::default(),
             source_sha256: None,
         }
+    }
+
+    /// A concave n-gon (a U) is shaded without covering its notch, and its
+    /// triangles add up to the polygon's area (a fan from vertex 0 gave 11).
+    #[test]
+    fn concave_polygon_is_not_fan_filled() {
+        let uv = [
+            (0.0, 0.0),
+            (3.0, 0.0),
+            (3.0, 3.0),
+            (2.0, 3.0),
+            (2.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 3.0),
+            (0.0, 3.0),
+        ];
+        let pos: Vec<DVec3> = uv.iter().map(|&(x, y)| DVec3::new(x, y, 0.0)).collect();
+        let tris: Vec<[usize; 3]> = poly_triangles(&pos).collect();
+        assert_eq!(tris.len(), 6);
+        let notch = glam::DVec2::new(1.5, 1.75);
+        let mut area = 0.0;
+        for t in &tris {
+            let [a, b, c] = t.map(|i| pos[i].truncate());
+            let cr = |o: glam::DVec2, p: glam::DVec2, q: glam::DVec2| (p - o).perp_dot(q - o);
+            let signed = cr(a, b, c);
+            assert!(signed > 0.0, "triangle {t:?} keeps the polygon's winding");
+            area += signed * 0.5;
+            let inside = cr(a, b, notch) >= 0.0 && cr(b, c, notch) >= 0.0 && cr(c, a, notch) >= 0.0;
+            assert!(!inside, "triangle {t:?} covers the notch");
+        }
+        assert!((area - 7.0).abs() < 1e-9, "area {area}");
     }
 
     /// Without `--preview`, a body with mesh edits is shaded from its edited

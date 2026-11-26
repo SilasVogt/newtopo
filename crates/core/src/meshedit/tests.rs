@@ -1701,3 +1701,31 @@ fn deviation_to_a_concave_ngon_is_never_underestimated() {
         .collect();
     assert!(work::polygon_distance(DVec3::new(0.1, 0.2, 0.3), &hex) - 0.3 < 1e-12);
 }
+
+/// Loop Select on every edge of a large grid: one mesh check and adjacency
+/// build, each loop walked once, and every edge listed exactly once.
+#[test]
+fn edge_loops_of_all_edges_is_linear() {
+    let n = 200;
+    let m = plane(n, 1.0);
+    let seeds: Vec<[u32; 2]> = m.edges().iter().map(|&(a, b)| [a, b]).collect();
+    // Interior lines both ways, plus the closed outer boundary.
+    let loops = 2 * (n - 1) + 1;
+    let _ = pick::take_counts();
+    let all = edge_loops(&m, &seeds).unwrap();
+    let (builds, steps) = pick::take_counts();
+    assert_eq!(builds, 1);
+    assert!(
+        steps <= seeds.len() + 2 * loops,
+        "{steps} walk steps for {} edges",
+        seeds.len()
+    );
+    let mut got: Vec<(u32, u32)> = all.iter().map(|&[a, b]| (a, b)).collect();
+    got.sort_unstable();
+    assert_eq!(got, m.edges(), "every edge exactly once");
+    // The single-edge API gives the same loop as the batch one.
+    let [a, b] = seeds[seeds.len() / 2];
+    let one = edge_loop(&m, a, b).unwrap();
+    assert_eq!(edge_loops(&m, &[[a, b]]).unwrap(), one);
+    assert_eq!(one.len(), n);
+}

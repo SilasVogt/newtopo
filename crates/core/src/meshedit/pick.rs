@@ -81,13 +81,61 @@ fn check_edge(m: &EditMesh, adj: &Adj, a: u32, b: u32) -> Result<(), Refusal> {
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test counters: adjacency builds and loop-walk steps.
+    static COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Take (and reset) this thread's counters.
+#[cfg(test)]
+pub(super) fn take_counts() -> (usize, usize) {
+    COUNTS.with(|c| c.replace((0, 0)))
+}
+
+fn count(builds: usize, steps: usize) {
+    #[cfg(test)]
+    COUNTS.with(|c| {
+        let (b, s) = c.get();
+        c.set((b + builds, s + steps));
+    });
+    let _ = (builds, steps);
+}
+
 /// The edge loop through the edge `a`-`b`, in walk order (each edge as a
 /// sorted pair, the given edge first among them in loop order). A closed
 /// loop lists every edge once.
 pub fn edge_loop(mesh: &EditMesh, a: u32, b: u32) -> Result<Vec<[u32; 2]>, Refusal> {
     check_input(mesh)?;
     let adj = Adj::new(mesh);
+    count(1, 0);
     check_edge(mesh, &adj, a, b)?;
+    Ok(walk_loop(mesh, &adj, a, b))
+}
+
+/// The edge loops through several edges, one after another (each as
+/// [`edge_loop`] gives it). The mesh is checked and its adjacency built
+/// once; a seed already on a loop found earlier is not walked again, and
+/// seeds that are not edges of the mesh are skipped.
+pub fn edge_loops(mesh: &EditMesh, seeds: &[[u32; 2]]) -> Result<Vec<[u32; 2]>, Refusal> {
+    check_input(mesh)?;
+    let adj = Adj::new(mesh);
+    count(1, 0);
+    let mut done: BTreeSet<(u32, u32)> = BTreeSet::new();
+    let mut out = Vec::new();
+    for &[a, b] in seeds {
+        if done.contains(&ekey(a, b)) || check_edge(mesh, &adj, a, b).is_err() {
+            continue;
+        }
+        let l = walk_loop(mesh, &adj, a, b);
+        done.extend(l.iter().map(|&[x, y]| (x, y)));
+        out.extend(l);
+    }
+    Ok(out)
+}
+
+/// The loop through the (checked) edge `a`-`b`.
+fn walk_loop(mesh: &EditMesh, adj: &Adj, a: u32, b: u32) -> Vec<[u32; 2]> {
     let start = ekey(a, b);
     let mut seen: BTreeSet<(u32, u32)> = BTreeSet::from([start]);
     // Walk forward from b, then backward from a.
@@ -95,6 +143,7 @@ pub fn edge_loop(mesh: &EditMesh, a: u32, b: u32) -> Result<Vec<[u32; 2]>, Refus
         let (mut prev, mut v) = (from, to);
         let mut out = Vec::new();
         loop {
+            count(0, 1);
             let Some(x) = adj.next(mesh, prev, v) else {
                 return (out, false);
             };
@@ -119,7 +168,7 @@ pub fn edge_loop(mesh: &EditMesh, a: u32, b: u32) -> Result<Vec<[u32; 2]>, Refus
     let mut out: Vec<[u32; 2]> = back.iter().rev().map(|&(x, y)| [x, y]).collect();
     out.push([start.0, start.1]);
     out.extend(fwd.iter().map(|&(x, y)| [x, y]));
-    Ok(out)
+    out
 }
 
 #[derive(PartialEq)]

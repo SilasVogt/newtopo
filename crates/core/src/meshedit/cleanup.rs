@@ -73,8 +73,11 @@ impl Default for CleanupParams {
 }
 
 const MAX_ROUNDS: usize = 32;
-/// Shape guard: no step may leave a polygon whose worst corner is below
-/// this (relative sine, about 14° for a quad), unless it was already worse.
+/// Shape guard: no step may leave a polygon whose worst corner sine,
+/// relative to the ideal corner (`quad_quality`), is below this, unless it
+/// was already worse. A sine limits corners on both sides of 90°: 0.25
+/// keeps a quad's corners between about 14.5° and 165.5° (a triangle's
+/// between about 12.5° and 167.5°).
 const MIN_QUALITY: f64 = 0.25;
 
 pub fn cleanup(

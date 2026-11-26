@@ -2,9 +2,10 @@
 //!
 //! **Collapse** mode: greedy vertex merges ordered by quadric error
 //! (Garland & Heckbert 1997) with *subset placement*: a vertex is merged
-//! into a neighbour and every remaining vertex keeps its baked position, so
-//! the result still lies exactly on the CAD surface at its vertices and the
-//! baked normals stay exact. Merge targets are edge neighbours and, to keep
+//! into a neighbour and every remaining vertex keeps its input position and
+//! normal (on a freshly baked mesh those lie exactly on the CAD surface and
+//! are its exact normals; after other edits they are what the input has).
+//! Merge targets are edge neighbours and, to keep
 //! quads, the opposite corner of a quad ("diagonal collapse", as used for
 //! quad meshes by Daniels et al., "Quadrilateral mesh simplification",
 //! SIGGRAPH Asia 2008, and Tarini et al., "Practical quad mesh

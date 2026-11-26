@@ -1711,8 +1711,9 @@ its quads concave is refused.
   Vertex Slide `Shift+S`, Edge Slide `Shift+E`, Relax `Shift+R`, Space
   `Alt+S`, Target Merge `Shift+W`, Merge by Distance `Alt+M`, Loop Cleanup
   `Shift+C`, Resample `Alt+R`, Decimate `Shift+D`; Discard mesh edits and
-  Select shortest path from the palette. Esc cancels a slide drag, then a
-  first Target Merge pick, then the tool; with nothing of those, it exits
+  Select shortest path from the palette. Esc ends a slide drag (the slide
+  so far stays, as one undo step that Undo reverts), then cancels a first
+  Target Merge pick, then the tool; with nothing of those, it exits
   isolate as in CAD mode.
 - A mesh edit, undo or redo that changes a body's mesh drops that body's
   mesh-mode selection (its indices no longer fit); a mesh tool's own edit

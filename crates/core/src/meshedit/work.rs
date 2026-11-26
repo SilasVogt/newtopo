@@ -1398,7 +1398,9 @@ pub(crate) fn assign_witnesses(
 
 /// Distance from `p` to a polygon as it will be exported. A quad may be
 /// split along either diagonal, so it counts the worse of the two
-/// triangulations; larger polygons use a fan from the centroid.
+/// triangulations; larger polygons use a fan from the centroid while that
+/// fan stays inside the polygon, and the distance to the polygon's boundary
+/// when it does not (a concave n-gon).
 pub(crate) fn polygon_distance(p: DVec3, poly: &[DVec3]) -> f64 {
     let tri = |a: usize, b: usize, c: usize| point_triangle_distance(p, poly[a], poly[b], poly[c]);
     match poly.len() {

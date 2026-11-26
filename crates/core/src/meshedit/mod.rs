@@ -53,7 +53,7 @@ pub use edgeslide::{
 };
 pub use merge::{MergeMode, MergeParams, MergePosition, VertexScope, merge_by_distance};
 pub use mesh::{EdgeFlags, EditMesh, EditPolygon, FlaggedEdge};
-pub use pick::{edge_loop, shortest_edge_path, shortest_path};
+pub use pick::{edge_loop, edge_loops, shortest_edge_path, shortest_path};
 pub use project::{Projector, stay_on_surface};
 pub use resample::{ResampleParams, Spacing, resample};
 pub use slide::{SlideEdge, SlideMove, SlideParams, SlidePlan, vertex_slide};
