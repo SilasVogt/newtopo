@@ -519,6 +519,10 @@ of a 2,000-face body (auto-fill on).
   changes are undo steps by default (setting). A wheel gesture that changes a
   count is coalesced into one undo step once the wheel stops for 400 ms.
 - Depth: 500 steps default.
+- **Importing a body is not an undo step.** Undo and redo never unload an
+  imported body: it is added to every stored snapshot, so steps from before
+  the import still undo, with the body in place. Replacing a body on import
+  (§8.1) stays one undo step.
 - **Preview transactions** (§5.10): while a preview is open, ops change the
   scene provisionally. Commit turns everything applied since the preview
   opened into one undo step; cancel restores the document and the undo and
