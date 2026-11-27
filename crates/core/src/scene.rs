@@ -139,7 +139,7 @@ impl Scene {
     }
 
     /// Add a body from B-rep bytes (from the import helper or a `.ntopo`).
-    /// One undo step.
+    /// Not an undo step: Undo never unloads an imported body.
     pub fn add_body(
         &mut self,
         brep: &[u8],
@@ -158,7 +158,7 @@ impl Scene {
     }
 
     /// Add a body already loaded into the kernel (tests, import helper
-    /// in-process). One undo step. On success the scene owns the kernel
+    /// in-process). Not an undo step. On success the scene owns the kernel
     /// body and unloads it when dropped; on failure the caller still owns
     /// it.
     pub fn add_kernel_body(
@@ -215,7 +215,23 @@ impl Scene {
                 edge_polylines,
             },
         );
-        self.commit(doc);
+        // An import is not an undo step (SPEC §4.7): the new body is added to
+        // every stored snapshot too, so Undo and Redo never unload it.
+        let entry = doc.bodies.last().cloned();
+        let layer_rec = doc.layers.iter().find(|l| l.id == layer).cloned();
+        let next_id = doc.next_id;
+        self.coalesce = None;
+        self.doc = Arc::new(doc);
+        if let (Some(entry), Some(layer_rec)) = (entry, layer_rec) {
+            let mark = self.preview.iter_mut().flat_map(|m| {
+                std::iter::once(&mut m.doc)
+                    .chain(m.undo.iter_mut())
+                    .chain(m.redo.iter_mut())
+            });
+            for snap in self.undo.iter_mut().chain(self.redo.iter_mut()).chain(mark) {
+                adopt_body(Arc::make_mut(snap), &entry, &layer_rec, next_id);
+            }
+        }
         Ok(id)
     }
 
@@ -1137,6 +1153,84 @@ pub fn issue_reason(i: &Issue) -> &'static str {
         OpenBoundary | MissingEdge => "the mesh would get a hole",
         AnchorOff => "a vertex would leave its CAD anchor",
         FanFallback => "a polygon could only be fan-filled",
+    }
+}
+
+/// Add an imported body to a stored snapshot. The body goes on the layer it
+/// was imported to; a snapshot that doesn't have that layer uses its layer
+/// of the same name, or gets the layer.
+fn adopt_body(snap: &mut Document, entry: &BodyEntry, layer: &Layer, next_id: u32) {
+    if snap.body(entry.id).is_some() {
+        return;
+    }
+    let mut entry = entry.clone();
+    if !snap.layers.iter().any(|l| l.id == layer.id) {
+        match snap.layers.iter().find(|l| l.name == layer.name) {
+            Some(l) => entry.layer = l.id,
+            None => snap.layers.push(layer.clone()),
+        }
+    }
+    snap.bodies.push(entry);
+    snap.next_id = snap.next_id.max(next_id);
+}
+
+#[cfg(test)]
+mod import_undo_tests {
+    use super::*;
+
+    #[test]
+    fn undo_and_redo_never_unload_an_imported_body() {
+        let k = Arc::new(newtopo_kernel::mock::MockKernel::default());
+        let mut scene = Scene::new(k.clone());
+        let a = scene
+            .add_kernel_body(
+                k.add_box([1.0, 1.0, 1.0].into()),
+                Default::default(),
+                Default::default(),
+                None,
+            )
+            .unwrap();
+        assert!(!scene.can_undo(), "an import is not an undo step");
+        assert!(!scene.undo());
+        assert!(scene.doc().body(a).is_some());
+
+        let rename = |name: &str| Op::RenameBody {
+            body: a,
+            name: name.into(),
+        };
+        scene.apply(rename("one")).unwrap();
+        scene.apply(rename("two")).unwrap();
+        assert!(scene.undo());
+        // A second import, on a layer of its own, with undo and redo history.
+        let attrs = BodyAttributes {
+            layer: Some("Imported".into()),
+            ..Default::default()
+        };
+        let b = scene
+            .add_kernel_body(
+                k.add_box([2.0, 1.0, 1.0].into()),
+                attrs,
+                Default::default(),
+                None,
+            )
+            .unwrap();
+        let layer = scene.doc().body(b).unwrap().layer;
+        let next_id = scene.doc().next_id;
+
+        assert!(scene.undo(), "the rename is undone");
+        assert!(!scene.undo(), "nothing else to undo");
+        for _ in 0..2 {
+            assert!(scene.redo());
+        }
+        assert!(!scene.redo());
+        assert_eq!(scene.doc().body(a).unwrap().name, "two");
+        for _ in 0..2 {
+            let d = scene.doc();
+            assert_eq!(d.body(b).map(|e| e.layer), Some(layer));
+            assert!(d.layers.iter().any(|l| l.id == layer));
+            assert_eq!(d.next_id, next_id, "ids handed out stay unique");
+            scene.undo();
+        }
     }
 }
 

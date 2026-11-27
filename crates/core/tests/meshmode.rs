@@ -302,17 +302,16 @@ fn the_unchanged_bake_is_not_stored() {
     assert!(s.has_mesh_edits(b));
 }
 
-/// Mesh edits only for bodies of the document: after undoing the import
-/// the kernel may still hold the body, but storing a mesh for it is
-/// refused (the loader would refuse the saved file).
+/// Mesh edits only for bodies of the document: storing a mesh for any
+/// other id is refused (the loader would refuse the saved file). Undo
+/// never takes an imported body out of the document.
 #[test]
 fn meshes_for_bodies_not_in_the_document_are_refused() {
     let (mut s, b) = gridded_box();
     let m = s.editable_mesh(b).unwrap();
-    while s.doc().body(b).is_some() {
-        assert!(s.undo());
-    }
-    let r = s.set_meshes(vec![(b, Some(edited(&m)))]);
+    while s.undo() {}
+    assert!(s.doc().body(b).is_some(), "undo keeps the import");
+    let r = s.set_meshes(vec![(BodyId(b.0 + 1000), Some(edited(&m)))]);
     assert!(r.unwrap_err().reason.contains("no object"));
     assert!(s.mesh_edited_bodies().is_empty());
 }
