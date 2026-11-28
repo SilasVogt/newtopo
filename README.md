@@ -76,6 +76,12 @@ An op script:
 | `packaging/` | Installers for Windows, macOS and Linux |
 | `site/` | The marketing page (GitHub Pages) |
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to build, test and send a
+pull request, and for the clean-room and licence rules. Coding agents start
+at [`AGENTS.md`](AGENTS.md).
+
 ## Licence
 
 newtopo is MIT-licensed ([`LICENSE`](LICENSE)). It links
